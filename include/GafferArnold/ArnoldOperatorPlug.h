@@ -1,7 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2012, John Haddon. All rights reserved.
-//  Copyright (c) 2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2017, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -35,31 +34,43 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_TYPEIDS_H
-#define GAFFERARNOLD_TYPEIDS_H
+#ifndef GAFFERARNOLD_ARNOLDOPERATORPLUG_H
+#define GAFFERARNOLD_ARNOLDOPERATORPLUG_H
+
+#include "GafferArnold/Export.h"
+#include "GafferArnold/TypeIds.h"
+
+#include "Gaffer/Plug.h"
+
+#include "IECore/CompoundObject.h"
 
 namespace GafferArnold
 {
 
-enum TypeId
+/// Plug that provides a proxy for representing closure types when
+/// loader a shader from OSL or a renderer.  We probably won't be able
+/// to set or get closure plugs, but we need to be able to connect
+/// them, and they should only connect to other closure plugs.
+class GAFFERARNOLD_API ArnoldOperatorPlug : public Gaffer::Plug
 {
-	ArnoldShaderTypeId = 110900,
-	ArnoldOptionsTypeId = 110901,
-	ArnoldAttributesTypeId = 110902,
-	ArnoldLightTypeId = 110903,
-	ArnoldVDBTypeId = 110904,
-	InteractiveArnoldRenderTypeId = 110905,
-	ArnoldRenderTypeId = 110906,
-	ArnoldDisplacementTypeId = 110907,
-	ArnoldMeshLightTypeId = 110908,
-	ArnoldAOVShaderTypeId = 110909,
-	ArnoldAtmosphereTypeId = 110910,
-	ArnoldBackgroundTypeId = 110911,
-	ArnoldOperatorPlugTypeId = 110999,
 
-	LastTypeId = 110924
+	public :
+
+		ArnoldOperatorPlug( const std::string &name=defaultName<ArnoldOperatorPlug>(), Direction direction=In, unsigned flags=Default );
+		~ArnoldOperatorPlug() override;
+
+		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( GafferArnold::ArnoldOperatorPlug, ArnoldOperatorPlugTypeId, Plug );
+
+		bool acceptsChild( const Gaffer::GraphComponent *potentialChild ) const override;
+		Gaffer::PlugPtr createCounterpart( const std::string &name, Direction direction ) const override;
+		bool acceptsInput( const Gaffer::Plug *input ) const override;
+
+	private:
+
 };
+
+IE_CORE_DECLAREPTR( ArnoldOperatorPlug );
 
 } // namespace GafferArnold
 
-#endif // GAFFERARNOLD_TYPEIDS_H
+#endif // GAFFERARNOLD_ARNOLDOPERATORPLUG_H
