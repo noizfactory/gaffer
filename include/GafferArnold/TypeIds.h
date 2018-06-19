@@ -55,7 +55,7 @@ enum TypeId
 	ArnoldAOVShaderTypeId = 110909,
 	ArnoldAtmosphereTypeId = 110910,
 	ArnoldBackgroundTypeId = 110911,
-	ArnoldOperatorPlugTypeId = 110999,
+	ArnoldOperatorPlugTypeId = 110912,
 
 	LastTypeId = 110924
 };
