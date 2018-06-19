@@ -36,6 +36,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "GafferArnold/ParameterHandler.h"
+#include "GafferArnold/ArnoldOperatorPlug.h"
 
 #include "GafferOSL/ClosurePlug.h"
 
@@ -214,6 +215,25 @@ Gaffer::Plug *setupClosurePlug( const IECore::InternedString &parameterName, Gaf
 	}
 
 	GafferOSL::ClosurePlugPtr plug = new GafferOSL::ClosurePlug( parameterName, direction );
+
+	PlugAlgo::replacePlug( plugParent, plug );
+
+	return plug.get();
+}
+
+Gaffer::Plug *setupOperatorPlug( const IECore::InternedString &parameterName, Gaffer::GraphComponent *plugParent, Gaffer::Plug::Direction direction )
+{
+	GafferArnold::ArnoldOperatorPlug *existingPlug = plugParent->getChild<GafferArnold::ArnoldOperatorPlug>( parameterName );
+	if(
+		existingPlug &&
+		existingPlug->direction() == direction
+	)
+	{
+		existingPlug->setFlags( Gaffer::Plug::Dynamic, false );
+		return existingPlug;
+	}
+
+	GafferArnold::ArnoldOperatorPlugPtr plug = new GafferArnold::ArnoldOperatorPlug( parameterName, direction );
 
 	PlugAlgo::replacePlug( plugParent, plug );
 
