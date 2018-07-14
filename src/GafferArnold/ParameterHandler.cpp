@@ -35,6 +35,8 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
+#define GAFFER_AI_TYPE_OPERATOR -1
+
 #include "GafferArnold/ParameterHandler.h"
 #include "GafferArnold/ArnoldOperatorPlug.h"
 
@@ -305,6 +307,10 @@ Gaffer::Plug *ParameterHandler::setupPlug( const IECore::InternedString &paramet
 
 			return setupTypedPlug<BoolPlug>( parameterName, plugParent, direction, false );
 
+		case GAFFER_AI_TYPE_OPERATOR :
+
+			return setupOperatorPlug( parameterName, plugParent, direction );
+
 		default :
 
 			msg(
@@ -461,6 +467,15 @@ Gaffer::Plug *ParameterHandler::setupPlug( const AtNodeEntry *node, const AtPara
 		case AI_TYPE_CLOSURE :
 
 			plug = setupClosurePlug(
+				AiParamGetName( parameter ).c_str(),
+				plugParent,
+				direction
+			);
+			break;
+
+		case GAFFER_AI_TYPE_OPERATOR :
+
+			plug = setupOperatorPlug(
 				AiParamGetName( parameter ).c_str(),
 				plugParent,
 				direction

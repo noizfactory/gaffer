@@ -1,7 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2012, John Haddon. All rights reserved.
-//  Copyright (c) 2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2018, John Haddon. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -41,12 +40,12 @@
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
 
-#include "GafferScene/Shader.h"
+#include "GafferScene/GlobalShader.h"
 
 namespace GafferArnold
 {
 
-class GAFFERARNOLD_API ArnoldOperator : public GafferScene::Shader
+class GAFFERSCENE_API ArnoldOperator : public GafferScene::GlobalShader
 {
 
 	public :
@@ -54,23 +53,18 @@ class GAFFERARNOLD_API ArnoldOperator : public GafferScene::Shader
 		ArnoldOperator( const std::string &name=defaultName<ArnoldOperator>() );
 		~ArnoldOperator() override;
 
-		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( GafferArnold::ArnoldOperator, ArnoldOperatorTypeId, GafferScene::Shader );
+		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( GafferArnold::ArnoldOperator, ArnoldOperatorTypeId, GafferScene::GlobalShader );
 
-		/// Implemented for outPlug(), returning the parameter named in the "primaryInput"
-		/// shader annotation if it has been specified.
-		Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) override;
-		const Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) const override;
+	protected :
 
-		void loadShader( const std::string &shaderName, bool keepExistingValues=false ) override;
+		bool affectsOptionName( const Gaffer::Plug *input ) const override;
+		void hashOptionName( const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		std::string computeOptionName( const Gaffer::Context *context ) const override;
 
 	private :
 
-		// Shader metadata is stored in a "shader" member of the result and
-		// parameter metadata is stored indexed by name inside a
-		// "parameter" member of the result.
-		const IECore::CompoundData *metadata() const;
+		static size_t g_firstPlugIndex;
 
-		mutable IECore::ConstCompoundDataPtr m_metadata;
 };
 
 IE_CORE_DECLAREPTR( ArnoldOperator )

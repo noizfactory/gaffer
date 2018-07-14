@@ -34,7 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#include "GafferOSL/ArnoldOperatorPlug.h"
+#include "GafferArnold/ArnoldOperatorPlug.h"
 
 #include "GafferScene/ShaderSwitch.h"
 
@@ -46,7 +46,7 @@
 
 using namespace IECore;
 using namespace Gaffer;
-using namespace GafferOSL;
+using namespace GafferArnold;
 
 //////////////////////////////////////////////////////////////////////////
 // ArnoldOperatorPlug

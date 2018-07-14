@@ -229,6 +229,7 @@ const AtString g_aovShadersArnoldString( "aov_shaders" );
 const AtString g_autoArnoldString( "auto" );
 const AtString g_atmosphereArnoldString( "atmosphere" );
 const AtString g_backgroundArnoldString( "background" );
+const AtString g_operatorArnoldString( "operator" );
 const AtString g_boxArnoldString("box");
 const AtString g_cameraArnoldString( "camera" );
 const AtString g_catclarkArnoldString("catclark");
@@ -2217,6 +2218,7 @@ IECore::InternedString g_aaSeedOptionName( "ai:AA_seed" );
 IECore::InternedString g_sampleMotionOptionName( "sampleMotion" );
 IECore::InternedString g_atmosphereOptionName( "ai:atmosphere" );
 IECore::InternedString g_backgroundOptionName( "ai:background" );
+IECore::InternedString g_operatorOptionName( "ai:operator" );
 
 std::string g_logFlagsOptionPrefix( "ai:log:" );
 std::string g_consoleFlagsOptionPrefix( "ai:console:" );
@@ -2387,6 +2389,19 @@ class ArnoldGlobals
 					}
 				}
 				AiNodeSetPtr( options, g_backgroundArnoldString, m_background ? m_background->root() : nullptr );
+				return;
+			}
+			else if( name == g_operatorOptionName )
+			{
+				m_operator = nullptr;
+				if( value )
+				{
+					if( const IECore::ObjectVector *d = reportedCast<const IECore::ObjectVector>( value, "option", name ) )
+					{
+						m_operator = m_shaderCache->get( d );
+					}
+				}
+				AiNodeSetPtr( options, g_operatorArnoldString, m_operator ? m_operator->root() : nullptr );
 				return;
 			}
 			else if( boost::starts_with( name.c_str(), "ai:aov_shader:" ) )
@@ -2757,6 +2772,7 @@ class ArnoldGlobals
 
 		ArnoldShaderPtr m_atmosphere;
 		ArnoldShaderPtr m_background;
+		ArnoldShaderPtr m_operator;
 
 		std::string m_cameraName;
 		typedef tbb::concurrent_unordered_map<std::string, IECoreScene::ConstCameraPtr> CameraMap;
