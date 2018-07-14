@@ -46,6 +46,7 @@
 #include "GafferArnold/ArnoldOptions.h"
 #include "GafferArnold/ArnoldRender.h"
 #include "GafferArnold/ArnoldShader.h"
+#include "GafferArnold/ArnoldOperator.h"
 #include "GafferArnold/ArnoldVDB.h"
 #include "GafferArnold/InteractiveArnoldRender.h"
 
