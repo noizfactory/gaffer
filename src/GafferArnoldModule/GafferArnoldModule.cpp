@@ -71,6 +71,7 @@ BOOST_PYTHON_MODULE( _GafferArnold )
 {
 
 	GafferBindings::DependencyNodeClass<ArnoldShader>();
+	GafferBindings::DependencyNodeClass<ArnoldOperator>();
 	GafferBindings::DependencyNodeClass<ArnoldAtmosphere>();
 	GafferBindings::DependencyNodeClass<ArnoldBackground>();
 
