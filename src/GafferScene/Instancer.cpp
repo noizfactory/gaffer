@@ -134,6 +134,7 @@ class Instancer::EngineData : public Data
 					throw IECore::Exception( "Orientation primitive variable has incorrect size" );
 				}
 			}
+			// Support euler rotation vectors as users can easily construct those using OSL
 			else if( const V3fVectorData *o = m_primitive->variableData<V3fVectorData>( orientation ) )
 			{
 				m_rotations = &o->readable();
@@ -214,6 +215,7 @@ class Instancer::EngineData : public Data
 			{
 				result = (*m_orientations)[pointIndex].toMatrix44() * result;
 			}
+			// If we find euler rotations then use the rotate() function to update the matrix.
 			if( m_rotations )
 			{
 				result.rotate( (*m_rotations)[pointIndex] );
