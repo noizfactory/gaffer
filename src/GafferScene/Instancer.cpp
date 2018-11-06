@@ -89,6 +89,7 @@ class Instancer::EngineData : public Data
 				m_ids( nullptr ),
 				m_positions( nullptr ),
 				m_orientations( nullptr ),
+				m_rotations( nullptr ),
 				m_scales( nullptr ),
 				m_uniformScales( nullptr )
 		{
@@ -131,6 +132,14 @@ class Instancer::EngineData : public Data
 				if( m_orientations->size() != numPoints() )
 				{
 					throw IECore::Exception( "Orientation primitive variable has incorrect size" );
+				}
+			}
+			else if( const V3fVectorData *o = m_primitive->variableData<V3fVectorData>( orientation ) )
+			{
+				m_rotations = &o->readable();
+				if( m_rotations->size() != numPoints() )
+				{
+					throw IECore::Exception( "Position primitive variable has incorrect size" );
 				}
 			}
 
@@ -204,6 +213,10 @@ class Instancer::EngineData : public Data
 			if( m_orientations )
 			{
 				result = (*m_orientations)[pointIndex].toMatrix44() * result;
+			}
+			if( m_rotations )
+			{
+				result.rotate( (*m_rotations)[pointIndex] );
 			}
 			if( m_scales )
 			{
@@ -323,6 +336,7 @@ class Instancer::EngineData : public Data
 		const std::vector<int> *m_ids;
 		const std::vector<Imath::V3f> *m_positions;
 		const std::vector<Imath::Quatf> *m_orientations;
+		const std::vector<Imath::V3f> *m_rotations;
 		const std::vector<Imath::V3f> *m_scales;
 		const std::vector<float> *m_uniformScales;
 
