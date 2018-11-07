@@ -342,9 +342,10 @@ env = Environment(
 
 )
 
-# Override the gcc env forcefully as the script does not seem to use the
-# correct environment by default
+# Override the gcc and sphinx env forcefully as the script does not seem to
+# use the correct environment by default
 env["CXX"] = "/opt/rh/devtoolset-6/root/usr/bin/g++"
+env["SPHINX"] = "/opt/rh/python27/root/usr/bin/sphinx-build"
 
 # include 3rd party headers with -isystem rather than -I.
 # this should turn off warnings from those headers, allowing us to
