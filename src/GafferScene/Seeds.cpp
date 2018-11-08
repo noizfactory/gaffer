@@ -100,22 +100,22 @@ const Gaffer::StringPlug *Seeds::densityPrimitiveVariablePlug() const
 
 Gaffer::StringPlug *Seeds::colorPrimitiveVariablePlug()
 {
-	return getChild<StringPlug>( g_firstPlugIndex + 2 );
+	return getChild<StringPlug>( g_firstPlugIndex + 3 );
 }
 
 const Gaffer::StringPlug *Seeds::colorPrimitiveVariablePlug() const
 {
-	return getChild<StringPlug>( g_firstPlugIndex + 2 );
+	return getChild<StringPlug>( g_firstPlugIndex + 3 );
 }
 
 Gaffer::StringPlug *Seeds::pointTypePlug()
 {
-	return getChild<StringPlug>( g_firstPlugIndex + 3 );
+	return getChild<StringPlug>( g_firstPlugIndex + 4 );
 }
 
 const Gaffer::StringPlug *Seeds::pointTypePlug() const
 {
-	return getChild<StringPlug>( g_firstPlugIndex + 3 );
+	return getChild<StringPlug>( g_firstPlugIndex + 4 );
 }
 
 void Seeds::affects( const Plug *input, AffectedPlugsContainer &outputs ) const
@@ -205,6 +205,7 @@ IECore::ConstObjectPtr Seeds::computeBranchObject( const ScenePath &parentPath, 
 			densityPrimitiveVariablePlug()->getValue(),
 			colorPrimitiveVariablePlug()->getValue()
 		);
+		result->variables["user:Cs"] = PrimitiveVariable( PrimitiveVariable::Constant, new StringData( colorPrimitiveVariablePlug()->getValue() ) );
 		result->variables["type"] = PrimitiveVariable( PrimitiveVariable::Constant, new StringData( pointTypePlug()->getValue() ) );
 
 		return result;
