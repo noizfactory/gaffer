@@ -59,6 +59,8 @@ Seeds::Seeds( const std::string &name )
 	addChild( new StringPlug( "name", Plug::In, "seeds" ) );
 	addChild( new FloatPlug( "density", Plug::In, 1.0f, 0.0f ) );
 	addChild( new StringPlug( "densityPrimitiveVariable" ) );
+	// https://github.com/noizfactory/gaffer/issues/1
+	addChild( new StringPlug( "colorPrimitiveVariable" ) );
 	addChild( new StringPlug( "pointType", Plug::In, "gl:point" ) );
 }
 
@@ -96,6 +98,16 @@ const Gaffer::StringPlug *Seeds::densityPrimitiveVariablePlug() const
 	return getChild<StringPlug>( g_firstPlugIndex + 2 );
 }
 
+Gaffer::StringPlug *Seeds::colorPrimitiveVariablePlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 2 );
+}
+
+const Gaffer::StringPlug *Seeds::colorPrimitiveVariablePlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 2 );
+}
+
 Gaffer::StringPlug *Seeds::pointTypePlug()
 {
 	return getChild<StringPlug>( g_firstPlugIndex + 3 );
@@ -110,7 +122,7 @@ void Seeds::affects( const Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	BranchCreator::affects( input, outputs );
 
-	if( input == densityPlug() || input == densityPrimitiveVariablePlug() || input == pointTypePlug() )
+	if( input == densityPlug() || input == densityPrimitiveVariablePlug() || input == colorPrimitiveVariablePlug() || input == pointTypePlug() )
 	{
 		outputs.push_back( outPlug()->objectPlug() );
 	}
@@ -167,6 +179,7 @@ void Seeds::hashBranchObject( const ScenePath &parentPath, const ScenePath &bran
 		h.append( inPlug()->objectHash( parentPath ) );
 		densityPlug()->hash( h );
 		densityPrimitiveVariablePlug()->hash( h );
+		colorPrimitiveVariablePlug()->hash( h );
 		pointTypePlug()->hash( h );
 		return;
 	}
@@ -189,7 +202,8 @@ IECore::ConstObjectPtr Seeds::computeBranchObject( const ScenePath &parentPath, 
 			mesh.get(),
 			densityPlug()->getValue(),
 			V2f( 0 ),
-			densityPrimitiveVariablePlug()->getValue()
+			densityPrimitiveVariablePlug()->getValue(),
+			colorPrimitiveVariablePlug()->getValue()
 		);
 		result->variables["type"] = PrimitiveVariable( PrimitiveVariable::Constant, new StringData( pointTypePlug()->getValue() ) );
 

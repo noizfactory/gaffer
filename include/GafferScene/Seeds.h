@@ -62,6 +62,10 @@ class GAFFERSCENE_API Seeds : public BranchCreator
 		Gaffer::StringPlug *densityPrimitiveVariablePlug();
 		const Gaffer::StringPlug *densityPrimitiveVariablePlug() const;
 
+		// https://github.com/noizfactory/gaffer/issues/1
+		Gaffer::StringPlug *colorPrimitiveVariablePlug();
+		const Gaffer::StringPlug *colorPrimitiveVariablePlug() const;
+
 		Gaffer::StringPlug *pointTypePlug();
 		const Gaffer::StringPlug *pointTypePlug() const;
 
