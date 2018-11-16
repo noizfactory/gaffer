@@ -59,7 +59,7 @@ Seeds::Seeds( const std::string &name )
 	addChild( new StringPlug( "name", Plug::In, "seeds" ) );
 	addChild( new FloatPlug( "density", Plug::In, 1.0f, 0.0f ) );
 	addChild( new StringPlug( "densityPrimitiveVariable" ) );
-	// https://github.com/noizfactory/gaffer/issues/1
+	// Add color primvar support
 	addChild( new StringPlug( "colorPrimitiveVariable" ) );
 	addChild( new StringPlug( "pointType", Plug::In, "gl:point" ) );
 }

@@ -89,6 +89,7 @@ class Instancer::EngineData : public Data
 				m_ids( nullptr ),
 				m_positions( nullptr ),
 				m_orientations( nullptr ),
+				// Support euler rotation vectors as users can easily construct those using OSL
 				m_rotations( nullptr ),
 				m_scales( nullptr ),
 				m_uniformScales( nullptr )
