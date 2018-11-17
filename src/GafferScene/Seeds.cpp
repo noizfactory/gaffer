@@ -205,7 +205,7 @@ IECore::ConstObjectPtr Seeds::computeBranchObject( const ScenePath &parentPath, 
 			densityPrimitiveVariablePlug()->getValue(),
 			colorPrimitiveVariablePlug()->getValue()
 		);
-		result->variables["user:Cs"] = PrimitiveVariable( PrimitiveVariable::Constant, new StringData( colorPrimitiveVariablePlug()->getValue() ) );
+		result->variables["user:Cs"] = PrimitiveVariable( PrimitiveVariable::Constant, new Color3fVectorData( colorPrimitiveVariablePlug()->getValue() ) );
 		result->variables["type"] = PrimitiveVariable( PrimitiveVariable::Constant, new StringData( pointTypePlug()->getValue() ) );
 
 		return result;
