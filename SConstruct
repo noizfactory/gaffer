@@ -357,6 +357,9 @@ env = Environment(
 
 )
 
+env["CXX"] = "/opt/rh/devtoolset-6/root/usr/bin/g++"
+env["SPHINX"] = "/opt/rh/python27/root/usr/bin/sphinx-build"
+
 # include 3rd party headers with -isystem rather than -I.
 # this should turn off warnings from those headers, allowing us to
 # build with -Werror. there are so many warnings from boost
@@ -488,7 +491,10 @@ def checkQtVersion( context ) :
 	}
 	"""
 
-	result = context.TryRun( program, ".cpp" )
+	# Override the default Qt as a workaround to scons not detecting the
+	# Qt version correctly
+	# result = context.TryRun( program, ".cpp" )
+	result = [1, 5]
 	if result[0] :
 		context.sconf.env["QT_VERSION"] = result[1]
 
