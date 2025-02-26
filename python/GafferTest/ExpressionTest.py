@@ -36,10 +36,12 @@
 ##########################################################################
 
 import os
+import pathlib
 import inspect
 import unittest
 import imath
 import re
+import subprocess
 
 import IECore
 
@@ -140,8 +142,8 @@ class ExpressionTest( GafferTest.TestCase ) :
 	def testLanguages( self ) :
 
 		l = Gaffer.Expression.languages()
-		self.failUnless( isinstance( l, tuple ) )
-		self.failUnless( "python" in l )
+		self.assertIsInstance( l, tuple )
+		self.assertIn( "python", l )
 
 	def testCreateExpressionWithWatchers( self ) :
 
@@ -153,7 +155,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 
 		s["m1"] = GafferTest.MultiplyNode()
 
-		c = s["m1"].plugDirtiedSignal().connect( f )
+		s["m1"].plugDirtiedSignal().connect( f )
 
 		s["e"] = Gaffer.Expression()
 		s["e"].setExpression(
@@ -208,15 +210,13 @@ class ExpressionTest( GafferTest.TestCase ) :
 		s["m2"]["op2"].setValue( 1 )
 
 		s["e"] = Gaffer.Expression()
-		s["e"]["engine"].setValue( "python" )
-
 		s["e"].setExpression( "parent[\"m2\"][\"op1\"] = parent[\"m1\"][\"product\"] * 2" )
 
-		self.failUnless( s["m2"]["op1"].getInput().node().isSame( s["e"] ) )
+		self.assertTrue( s["m2"]["op1"].getInput().node().isSame( s["e"] ) )
 		self.assertEqual( s["m2"]["product"].getValue(), 400 )
 
 		s["e"].setExpression( "" )
-		self.failUnless( s["m2"]["op1"].getInput() is None )
+		self.assertIsNone( s["m2"]["op1"].getInput() )
 		self.assertEqual( s["m2"]["product"].getValue(), 0 )
 
 	def testContextGetFrameMethod( self ) :
@@ -236,6 +236,23 @@ class ExpressionTest( GafferTest.TestCase ) :
 			for i in range( 0, 10 ) :
 				c.setFrame( i )
 				self.assertEqual( s["n"]["sum"].getValue(), i )
+
+	def testContextGetFrameMethodInSubscript( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression(
+			"d = { 1 : 2, 2 : 3 }; parent['n']['op1'] = d[int( context.getFrame() )]",
+			"python",
+		)
+
+		with Gaffer.Context() as c :
+			for i in ( 1, 2 ) :
+				c.setFrame( i )
+				self.assertEqual( s["n"]["op1"].getValue(), i + 1 )
 
 	def testContextGetMethod( self ) :
 
@@ -270,6 +287,36 @@ class ExpressionTest( GafferTest.TestCase ) :
 
 		self.assertEqual( s["n"]["sum"].getValue(), 101 )
 
+	def testContextGetWithSubscript( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression(
+			"parent['n']['op1'] = context.get( 'myArray' )[0]",
+			"python",
+		)
+
+		with Gaffer.Context() as c :
+			for i in ( 1, 2 ) :
+				c["myArray"] = IECore.IntVectorData( [ i ] )
+				self.assertEqual( s["n"]["op1"].getValue(), i )
+
+	def testContextGetWithNonString( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+
+		s["e"] = Gaffer.Expression()
+		with self.assertRaisesRegex( RuntimeError, "Context name must be a string" ) :
+			s["e"].setExpression(
+				"parent['n']['op1'] = context.get( 10 )",
+				"python",
+			)
+
 	def testDirtyPropagation( self ) :
 
 		s = Gaffer.ScriptNode()
@@ -284,11 +331,11 @@ class ExpressionTest( GafferTest.TestCase ) :
 			"parent['n']['op2'] = context.get( 'iDontExist', 101 )",
 			"python"
 		)
-		self.failUnless( s["n"]["sum"] in [ p[0] for p in dirtied ] )
+		self.assertIn( s["n"]["sum"], [ p[0] for p in dirtied ] )
 
 		dirtied = GafferTest.CapturingSlot( s["n"].plugDirtiedSignal() )
 		s["e"].setExpression( "", "python" )
-		self.failUnless( s["n"]["sum"] in [ p[0] for p in dirtied ] )
+		self.assertIn( s["n"]["sum"], [ p[0] for p in dirtied ] )
 
 	def testSerialisationCreationOrder( self ) :
 
@@ -334,24 +381,8 @@ class ExpressionTest( GafferTest.TestCase ) :
 
 		self.assertEqual( s2["n"]["user"]["f"].getValue(), 2 )
 
-		self.failUnless( s2["e"].getChild("out1") is None )
-		self.failUnless( s2["e"].getChild("in1") is None )
-
-	def testLegacyLoading( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/legacyExpression.gfr" )
-
-		with IECore.CapturingMessageHandler() as mh :
-			s.load( continueOnError = True )
-
-		## \todo: When we run tests without compatibility configs we
-		## expect 4 messages regarding "has no attribute 'CompoundPlug'"
-		self.assertEqual( len( mh.messages ), 0 )
-
-		s.context().setFrame( 3 )
-		with s.context() :
-			self.assertEqual( s["n"]["user"]["o"].getValue(), 6 )
+		self.assertIsNone( s2["e"].getChild("out1") )
+		self.assertIsNone( s2["e"].getChild("in1") )
 
 	def testMultipleOutputs( self ) :
 
@@ -819,49 +850,6 @@ class ExpressionTest( GafferTest.TestCase ) :
 			( 'parent["N"]["user"]["B"] = parent["N"]["user"]["A"] * 2', "python" )
 		)
 
-	def testLoadScriptFromVersion0_15( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/expressionVersion-0.15.0.0.gfr" )
-
-		with IECore.CapturingMessageHandler() as mh :
-			s.load( continueOnError = True )
-
-		self.assertEqual( len( mh.messages ), 1 )
-		self.assertTrue( "rejects input " in mh.messages[0].message )
-
-		self.assertEqual( s["n"]["user"]["b"].getValue(), 2 )
-		self.assertTrue( s["n"]["user"]["b"].getInput().node().isSame( s["e"] ) )
-
-	def testAPICompatibilityWithVersion0_15( self ) :
-
-		# In version 0.15 and prior, an expression was created
-		# by first setting the engine plug and then setting the
-		# expression plug. For now we still need to provide
-		# backwards compatibility with this method, even though
-		# those plugs are now private.
-
-		s = Gaffer.ScriptNode()
-
-		s["n"] = Gaffer.Node()
-		s["n"]["user"]["a"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
-		s["n"]["user"]["b"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
-
-		s["e"] = Gaffer.Expression()
-		s["e"]["engine"].setValue( "python" )
-		s["e"]["expression"].setValue( inspect.cleandoc(
-			"""
-			if context.getFrame() > 10 :
-				parent["n"]["user"]["a"] = parent["n"]["user"]["b"]
-			else :
-				parent["n"]["user"]["a"] = parent["n"]["user"]["b"] * 2
-			"""
-		) )
-
-		self.assertEqual( len( s["n"]["user"]["b"].outputs() ), 1 )
-		self.assertEqual( len( s["e"]["__in"] ), 1 )
-		self.assertEqual( len( s["e"]["__out"] ), 1 )
-
 	def testIdenticalExpressionWithDifferentPlugTypes( self ) :
 
 		# IntPlug -> FloatPlug
@@ -924,7 +912,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 		s["e"] = Gaffer.Expression()
 		self.assertEqual( s["e"].getExpression(), ( "", "" ) )
 
-		c = s["e"].expressionChangedSignal().connect( f )
+		s["e"].expressionChangedSignal().connect( f )
 
 		with Gaffer.UndoScope( s ) :
 			s["e"].setExpression( 'parent["n"]["user"]["p"] = 10' )
@@ -960,7 +948,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 
 		s["e"] = Gaffer.Expression()
-		self.assertRaisesRegexp( RuntimeError, ".*does not exist.*", s["e"].setExpression, 'parent["notANode"]["notAPlug"] = 2' )
+		self.assertRaisesRegex( RuntimeError, ".*does not exist.*", s["e"].setExpression, 'parent["notANode"]["notAPlug"] = 2' )
 
 	def testRemoveOneOutputOfTwo( self ) :
 
@@ -1133,10 +1121,13 @@ class ExpressionTest( GafferTest.TestCase ) :
 		s["n"]["user"].addChild( Gaffer.IntVectorDataPlug( defaultValue = IECore.IntVectorData( [ 0, 1 ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.FloatVectorDataPlug( defaultValue = IECore.FloatVectorData( [ 0, 1 ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.StringVectorDataPlug( defaultValue = IECore.StringVectorData( [ "a", "b" ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["n"]["user"].addChild( Gaffer.V2fVectorDataPlug( defaultValue = IECore.V2fVectorData( [ imath.V2f( 1 ) ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.V3fVectorDataPlug( defaultValue = IECore.V3fVectorData( [ imath.V3f( 1 ) ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.Color3fVectorDataPlug( defaultValue = IECore.Color3fVectorData( [ imath.Color3f( 1 ) ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.M44fVectorDataPlug( defaultValue = IECore.M44fVectorData( [ imath.M44f() ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["n"]["user"].addChild( Gaffer.M33fVectorDataPlug( defaultValue = IECore.M33fVectorData( [ imath.M33f() ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s["n"]["user"].addChild( Gaffer.V2iVectorDataPlug( defaultValue = IECore.V2iVectorData( [ imath.V2i() ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["n"]["user"].addChild( Gaffer.V3iVectorDataPlug( defaultValue = IECore.V3iVectorData( [ imath.V3i() ] ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 
 		s["e"] = Gaffer.Expression()
 
@@ -1209,7 +1200,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 
 		with Gaffer.UndoScope( s ) :
 
-			self.assertRaisesRegexp(
+			self.assertRaisesRegex(
 				Exception,
 				"SyntaxError",
 				s["e"].setExpression,
@@ -1233,7 +1224,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 		s["n"]["user"]["p"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
 
 		s["e"] = Gaffer.Expression()
-		self.assertRaisesRegexp(
+		self.assertRaisesRegex(
 			RuntimeError,
 			"Cannot both read from and write to plug \"n.user.p\"",
 			s["e"].setExpression,
@@ -1248,7 +1239,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 
 		s["e"] = Gaffer.Expression()
 		for language in ( "", "latin" ) :
-			self.assertRaisesRegexp( RuntimeError, "Failed to create engine", s["e"].setExpression, "parent.n.user.p = 10", language )
+			self.assertRaisesRegex( RuntimeError, "Failed to create engine", s["e"].setExpression, "parent.n.user.p = 10", language )
 
 	def testContextIsReadOnly( self ) :
 
@@ -1267,7 +1258,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 			( "context.setTime( 10 )", "AttributeError" ),
 		] :
 			s["e"].setExpression( mutationAttempt + """\nparent["n"]["user"]["p"] = 100""" )
-			self.assertRaisesRegexp( RuntimeError, expectedError, s["n"]["user"]["p"].getValue )
+			self.assertRaisesRegex( RuntimeError, expectedError, s["n"]["user"]["p"].getValue )
 
 	def testDeleteCompoundDataPlug( self ) :
 
@@ -1417,6 +1408,16 @@ class ExpressionTest( GafferTest.TestCase ) :
 			self.assertEqual( s["n"]["op1"].getValue(), 0 )
 			self.assertEqual( s["n"]["op2"].getValue(), 1 )
 
+	def testContextContainsNonString( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+		s["e"] = Gaffer.Expression()
+
+		with self.assertRaisesRegex( RuntimeError, "Context name must be a string" ) :
+			s["e"].setExpression( """parent["n"]["op1"] = 1 if 10 in context else 0""" )
+
 	def testDuplicateDeserialise( self ) :
 
 		s = Gaffer.ScriptNode()
@@ -1497,7 +1498,7 @@ class ExpressionTest( GafferTest.TestCase ) :
 		ssLines = ss.split( "\n" )
 		ssLinesEdited = []
 		for l in ssLines:
-			m = re.match( "^__children\[\"e\"\]\[\"__expression\"\].setValue\( '(.*)' \)$", l )
+			m = re.match( r"^__children\[\"e\"\]\[\"__expression\"\].setValue\( '(.*)' \)$", l )
 			if not m:
 				ssLinesEdited.append( l )
 			else:
@@ -1512,6 +1513,232 @@ class ExpressionTest( GafferTest.TestCase ) :
 			self.assertAlmostEqual( s["dest%i"%i]["p"].getValue().x, 0.1 + 0.3 * i + 10 * i, places = 5 )
 			self.assertAlmostEqual( s["dest%i"%i]["p"].getValue().y, 0.2 + 0.3 * i + 10 * i, places = 5 )
 			self.assertAlmostEqual( s["dest%i"%i]["p"].getValue().z, 0.3 + 0.3 * i + 10 * i, places = 5 )
+
+	def testNoneOutput( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["n"] = Gaffer.Node()
+		s["n"]["user"]["p"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( "parent['n']['user']['p'] = None" )
+		self.assertRaisesRegex(
+			Gaffer.ProcessException,
+			".*TypeError: Unsupported type for result \"None\" for expression output \"n.user.p\"",
+			s["n"]["user"]["p"].getValue
+		)
+
+		s["e"].setExpression( "import math; parent['n']['user']['p'] = math" )
+		self.assertRaisesRegex(
+			Gaffer.ProcessException,
+			".*TypeError: Unsupported type for result \"<module 'math' .* for expression output \"n.user.p\"",
+			s["n"]["user"]["p"].getValue
+		)
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration:performance" } )
+	def testParallelPerformance( self ):
+		s = Gaffer.ScriptNode()
+		s["n"] = Gaffer.Node()
+		s["n"]["user"]["p"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( inspect.cleandoc(
+			"""
+			q = 0
+			while q != 10000000:
+				q += 1
+			parent['n']['user']['p'] = 0
+			"""
+		) )
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.parallelGetValue( s["n"]["user"]["p"], 100 )
+
+	def testParallelGetValueComputesOnce( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = Gaffer.Node()
+		s["n"]["user"]["p"] = Gaffer.IntPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( inspect.cleandoc(
+			"""
+			import time
+			time.sleep( 0.1 )
+			parent["n"]["user"]["p"] = 0
+			"""
+		) )
+
+		with Gaffer.PerformanceMonitor() as pm :
+			GafferTest.parallelGetValue( s["n"]["user"]["p"], 10000 )
+
+		self.assertEqual( pm.plugStatistics( s["e"]["__execute"] ).computeCount, 1 )
+
+	def testRemoveDrivenSpreadsheetRow( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		# Expression drives column "b" from column "a"
+
+		s["spreadsheet"] = Gaffer.Spreadsheet()
+		s["spreadsheet"]["rows"].addColumn( Gaffer.FloatPlug( "a", defaultValue = 1 ) )
+		s["spreadsheet"]["rows"].addColumn( Gaffer.FloatPlug( "b" ) )
+		row = s["spreadsheet"]["rows"].addRow()
+
+		s["expression"] = Gaffer.Expression()
+		s["expression"].setExpression(
+			inspect.cleandoc(
+				"""
+				import imath
+				a = parent["spreadsheet"]["rows"]["row1"]["cells"]["a"]["value"]
+				parent["spreadsheet"]["rows"]["row1"]["cells"]["b"]["value"] = a * 2
+				"""
+			)
+		)
+
+		self.assertEqual( row["cells"]["b"]["value"].getValue(), 2 )
+
+		# Remove row that is connected to expression. The expression
+		# should be updated to show that the plugs have been disconnected.
+
+		s["spreadsheet"]["rows"].removeRow( row )
+
+		self.assertIsNone( row["cells"]["b"]["value"].getInput() )
+		self.assertEqual( row["cells"]["a"]["value"].outputs(), () )
+
+		self.assertEqual(
+			s["expression"].getExpression()[0],
+			inspect.cleandoc(
+				"""
+				import imath
+				a = 1.0
+				__disconnected = a * 2
+				"""
+			)
+		)
+
+	def testReferenceOutputs( self ) :
+
+		# Load a reference that uses an internal expression to set the value
+		# of some external plugs.
+
+		script = Gaffer.ScriptNode()
+
+		script["reference"] = Gaffer.Reference()
+		script["reference"].load( pathlib.Path( __file__ ).parent / "references" / "multipleOutputExpression.grf" )
+
+		# Check all is well.
+
+		self.checkReferenceOutputs( script )
+
+		# Save script, and check all is well _in another process_. This exposes
+		# a bug where PythonExpressionEngine's parsing was sensitive to the
+		# iteration order of Python sets, which is non-deterministic since
+		# Python 3 (see `PYTHONHASHSEED`).
+
+		script["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
+		script.save()
+
+		env = os.environ.copy()
+		env["GAFFERTEST_SCRIPT_FILENAME"] = script["fileName"].getValue()
+		try :
+			subprocess.check_output(
+				[ str( Gaffer.executablePath() ), "test", "GafferTest.ExpressionTest.checkReferenceOutputs" ],
+				env = env, stderr = subprocess.STDOUT
+			)
+		except subprocess.CalledProcessError as e :
+			self.fail( e.output )
+
+	def checkReferenceOutputs( self, script = None ) :
+
+		if script is None :
+			script = Gaffer.ScriptNode()
+			script["fileName"].setValue( os.environ["GAFFERTEST_SCRIPT_FILENAME"] )
+			script.load()
+
+		self.assertEqual( script["reference"]["StringPlug"].getValue(), "abcd" )
+		self.assertEqual( script["reference"]["BoolPlug"].getValue(), True )
+		self.assertEqual( script["reference"]["IntPlug"].getValue(), 99 )
+		self.assertEqual( script["reference"]["FloatPlug"].getValue(), 2.5 )
+
+	def testPathForStringPlug( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["node"] = GafferTest.StringInOutNode()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( 'import pathlib; parent["node"]["in"] = pathlib.Path.cwd()' )
+
+		self.assertEqual( script["node"]["in"].getValue(), pathlib.Path.cwd().as_posix() )
+
+	def testCreateExpressionWithLegacyPlugName( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["random"] = Gaffer.Random()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression(
+			'parent["random"]["contextEntry"] = "x"'
+		)
+
+		self.assertEqual( script["random"]["seedVariable"].getValue(), "x" )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration:hashAliasing" } )
+	def testHashAliasing( self ) :
+
+		#   p1
+		#   |
+		#   e1
+		#   |
+		#   p2
+		#   |
+		#   e2
+		#   |
+		#   p3
+		#   |
+		#   e3 (aliases the hash from e1)
+		#   |
+		#   p4
+
+		script = Gaffer.ScriptNode()
+
+		script["n"] = Gaffer.Node()
+		script["n"]["user"]["p1"] = Gaffer.StringPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["n"]["user"]["p2"] = Gaffer.StringPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["n"]["user"]["p3"] = Gaffer.StringPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["n"]["user"]["p4"] = Gaffer.StringPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		script["e1"] = Gaffer.Expression()
+		script["e1"].setExpression( """import time; time.sleep( 0.01 ); parent["n"]["user"]["p2"] = parent["n"]["user"]["p1"]""" )
+
+		script["e2"] = Gaffer.Expression()
+		script["e2"].setExpression( """import time; time.sleep( 0.01 ); parent["n"]["user"]["p3"] = parent["n"]["user"]["p2"] and ''""" )
+
+		script["e3"] = Gaffer.Expression()
+		script["e3"].setExpression( """import time; time.sleep( 0.01 ); parent["n"]["user"]["p4"] = parent["n"]["user"]["p3"]""" )
+
+		# Because the input StringPlugs hash by value (see de8ab79d6f958cef3b80954798f8083a346945a7),
+		# and the expression is stored in an internalised form that omits the names of the source
+		# and destination plugs, the hashes for `e3` and `e1`` are identical, even though one depends
+		# on the other.
+		self.assertEqual( script["e1"]["__execute"].hash(), script["e3"]["__execute"].hash() )
+		# But the hash for `e2` is different, because it has different expression source code
+		# (even though it will generate the same value).
+		self.assertNotEqual( script["e2"]["__execute"].hash(), script["e1"]["__execute"].hash() )
+
+		# Get the value for `p4`, which will actually compute and cache `p2` first due to the hash
+		# computation done before the compute. So we never actually do a compute on `p4`, as the value
+		# for that comes from the cache.
+		script["n"]["user"]["p4"].getValue()
+		# Simulate a cache eviction, so we have the hash cached, but not the value.
+		Gaffer.ValuePlug.clearCache()
+
+		# Now, getting the value of `p4` will trigger an immediate compute for `e3`, which will
+		# recurse to an upstream compute for `e1`, which has the same hash. If we don't have a
+		# mechanism for handling it, this will deadlock.
+		script["n"]["user"]["p4"].getValue()
 
 if __name__ == "__main__":
 	unittest.main()

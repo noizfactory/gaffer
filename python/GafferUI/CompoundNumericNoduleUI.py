@@ -41,7 +41,7 @@ import GafferUI
 
 def __applyChildVisibility( plug, visible ) :
 
-	with Gaffer.UndoContext( plug.ancestor( Gaffer.ScriptNode ) ) :
+	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
 		if visible :
 			Gaffer.Metadata.registerValue( plug, "compoundNumericNodule:childrenVisible", True )
 		else :
@@ -84,4 +84,4 @@ def __plugContextMenuSignal( graphEditor, plug, menuDefinition ) :
 			}
 		)
 
-GafferUI.GraphEditor.plugContextMenuSignal().connect( __plugContextMenuSignal, scoped = False )
+GafferUI.GraphEditor.plugContextMenuSignal().connect( __plugContextMenuSignal )

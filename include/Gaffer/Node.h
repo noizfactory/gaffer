@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_NODE_H
-#define GAFFER_NODE_H
+#pragma once
 
 #include "Gaffer/FilteredChildIterator.h"
 #include "Gaffer/FilteredRecursiveChildIterator.h"
@@ -47,6 +46,16 @@ namespace Gaffer
 
 IE_CORE_FORWARDDECLARE( Plug )
 IE_CORE_FORWARDDECLARE( ScriptNode )
+
+#define GAFFER_NODE_DECLARE_TYPE( TYPE, TYPEID, BASETYPE ) \
+	IE_CORE_DECLARERUNTIMETYPEDEXTENSION( TYPE, TYPEID, BASETYPE ) \
+	using Iterator = Gaffer::FilteredChildIterator<Gaffer::TypePredicate<TYPE>>; \
+	using RecursiveIterator = Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<TYPE>, Gaffer::TypePredicate<Gaffer::Node>>; \
+	using Range = Gaffer::FilteredChildRange<Gaffer::TypePredicate<TYPE>>; \
+	using RecursiveRange = Gaffer::FilteredRecursiveChildRange<Gaffer::TypePredicate<TYPE>, Gaffer::TypePredicate<Gaffer::Node>>;
+
+#define GAFFER_NODE_DEFINE_TYPE( TYPE ) \
+	IE_CORE_DEFINERUNTIMETYPED( TYPE )
 
 /// The primary class from which node graphs are constructed. Nodes may
 /// have any number of child plugs which provide values and/or define connections
@@ -59,13 +68,13 @@ class GAFFER_API Node : public GraphComponent
 
 	public :
 
-		Node( const std::string &name=defaultName<Node>() );
+		explicit Node( const std::string &name=defaultName<Node>() );
 		~Node() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Node, NodeTypeId, GraphComponent );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Node, NodeTypeId, GraphComponent );
 
-		typedef boost::signal<void (Plug *)> UnaryPlugSignal;
-		typedef boost::signal<void (Plug *, Plug *)> BinaryPlugSignal;
+		using UnaryPlugSignal = Signals::Signal<void (Plug *), Signals::CatchingCombiner<void>>;
+		using BinaryPlugSignal = Signals::Signal<void (Plug *, Plug *), Signals::CatchingCombiner<void>>;
 
 		/// @name Plug signals
 		/// These signals are emitted on events relating to child Plugs
@@ -106,8 +115,6 @@ class GAFFER_API Node : public GraphComponent
 		/// onto an input plug of a plain Node (and potentially onwards if that plug
 		/// has its own output connections).
 		UnaryPlugSignal &plugDirtiedSignal();
-		/// Emitted when the flags are changed for a plug of this node.
-		UnaryPlugSignal &plugFlagsChangedSignal();
 		//@}
 
 		/// It's common for users to want to create their own plugs on
@@ -135,7 +142,10 @@ class GAFFER_API Node : public GraphComponent
 		/// specifies the original source of the error, since it may be being
 		/// propagated downstream from an original upstream error. The error
 		/// argument is a description of the problem.
-		typedef boost::signal<void ( const Plug *plug, const Plug *source, const std::string &error )> ErrorSignal;
+		using ErrorSignal = Signals::Signal<
+			void ( const Plug *plug, const Plug *source, const std::string &error ),
+			Signals::CatchingCombiner<void>
+		>;
 		/// Signal emitted when an error occurs while processing this node.
 		/// This is intended to allow UI elements to display errors that occur
 		/// during processing triggered by other parts of the UI.
@@ -149,6 +159,10 @@ class GAFFER_API Node : public GraphComponent
 		///
 		/// \threading Since node graph processing may occur on any thread, it is
 		/// important to note that this signal may also be emitted on any thread.
+		/// \todo Signals are not intended to be threadsafe, and we shouldn't be
+		/// emitting them concurrently - see comments in SlotBase. Perhaps we
+		/// should use `ParallelAlgo::callOnUIThread()` to schedule later emission
+		/// on the UI thread?
 		ErrorSignal &errorSignal();
 		const ErrorSignal &errorSignal() const;
 
@@ -180,7 +194,6 @@ class GAFFER_API Node : public GraphComponent
 
 		UnaryPlugSignal m_plugSetSignal;
 		UnaryPlugSignal m_plugInputChangedSignal;
-		UnaryPlugSignal m_plugFlagsChangedSignal;
 		UnaryPlugSignal m_plugDirtiedSignal;
 		ErrorSignal m_errorSignal;
 
@@ -188,9 +201,4 @@ class GAFFER_API Node : public GraphComponent
 
 IE_CORE_DECLAREPTR( Node )
 
-typedef FilteredChildIterator<TypePredicate<Node> > NodeIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<Node> > RecursiveNodeIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_NODE_H

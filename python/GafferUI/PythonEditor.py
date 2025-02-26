@@ -36,8 +36,11 @@
 ##########################################################################
 
 import ast
+import contextlib
+import functools
 import sys
 import traceback
+import weakref
 import imath
 
 import IECore
@@ -50,8 +53,6 @@ from Qt import QtCore
 
 ## \todo Custom right click menu with script load, save, execute file, undo, redo etc.
 ## \todo Standard way for users to customise all menus
-## \todo Tab completion and popup help. rlcompleter module should be useful for tab completion. Completer( dict ) constructs a completer
-# that works in a specific namespace.
 class PythonEditor( GafferUI.Editor ) :
 
 	def __init__( self, scriptNode, **kw ) :
@@ -62,21 +63,28 @@ class PythonEditor( GafferUI.Editor ) :
 
 		self.__outputWidget = GafferUI.MultiLineTextWidget(
 			editable = False,
-			wrapMode = GafferUI.MultiLineTextWidget.WrapMode.None,
+			wrapMode = GafferUI.MultiLineTextWidget.WrapMode.None_,
 			role = GafferUI.MultiLineTextWidget.Role.Code,
 		)
-		self.__inputWidget = GafferUI.MultiLineTextWidget(
-			wrapMode = GafferUI.MultiLineTextWidget.WrapMode.None,
-			role = GafferUI.MultiLineTextWidget.Role.Code,
+		self.__outputWidget._qtWidget().setObjectName( "gafferPythonEditorOutputWidget" )
+		self.__outputWidget.contextMenuSignal().connect(
+			Gaffer.WeakMethod( self.__contextMenu )
 		)
 
-		self.__outputWidget._qtWidget().setProperty( "gafferTextRole", "output" )
-		self.__inputWidget._qtWidget().setProperty( "gafferTextRole", "input" )
+		self.__inputWidget = GafferUI.CodeWidget( lineNumbersVisible = True )
+
 		self.__splittable.append( self.__outputWidget )
 		self.__splittable.append( self.__inputWidget )
 
-		self.__inputWidget.activatedSignal().connect( Gaffer.WeakMethod( self.__activated ), scoped = False )
-		self.__inputWidget.dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ), scoped = False )
+		self.__inputWidget.activatedSignal().connect( Gaffer.WeakMethod( self.__activated ) )
+		self.__inputWidget.dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ) )
+		self.__inputWidget.contextMenuSignal().connect(
+			Gaffer.WeakMethod( self.__contextMenu )
+		)
+		GafferUI.WidgetAlgo.joinEdges(
+			[ self.__outputWidget, self.__inputWidget ],
+			orientation = GafferUI.ListContainer.Orientation.Vertical
+		)
 
 		self.__executionDict = {
 			"imath" : imath,
@@ -85,6 +93,9 @@ class PythonEditor( GafferUI.Editor ) :
 			"GafferUI" : GafferUI,
 			"root" : scriptNode,
 		}
+		self.__inputWidget.setCompleter( GafferUI.CodeWidget.PythonCompleter( self.__executionDict ) )
+		self.__inputWidget.setHighlighter( GafferUI.CodeWidget.PythonHighlighter() )
+		self.__inputWidget.setCommentPrefix( "#" )
 
 	def inputWidget( self ) :
 
@@ -108,7 +119,7 @@ class PythonEditor( GafferUI.Editor ) :
 		# and display the result or must exec() only.
 		try :
 			parsed = ast.parse( toExecute )
-		except SyntaxError, e :
+		except SyntaxError as e :
 			self.__outputWidget.appendHTML( self.__syntaxErrorToHTML( e ) )
 			return
 
@@ -116,10 +127,10 @@ class PythonEditor( GafferUI.Editor ) :
 
 		self.__outputWidget.appendHTML( self.__codeToHTML( toExecute ) )
 
-		with Gaffer.OutputRedirection( stdOut = Gaffer.WeakMethod( self.__redirectOutput ), stdErr = Gaffer.WeakMethod( self.__redirectOutput ) ) :
+		with self.__outputRedirection() :
 			with _MessageHandler( self.__outputWidget ) :
 				with Gaffer.UndoScope( self.scriptNode() ) :
-					with self.getContext() :
+					with self.context() :
 						try :
 							if len( parsed.body ) == 1 and isinstance( parsed.body[0], ast.Expr ) :
 								result = eval( toExecute, self.__executionDict, self.__executionDict )
@@ -129,8 +140,13 @@ class PythonEditor( GafferUI.Editor ) :
 								exec( toExecute, self.__executionDict, self.__executionDict )
 							if not haveSelection :
 								self.__inputWidget.setText( "" )
-						except Exception, e :
+						except Exception as e :
 							self.__outputWidget.appendHTML( self.__exceptionToHTML() )
+
+	## The Python dictionary that provides the globals and locals for `execute()`.
+	def namespace( self ) :
+
+		return self.__executionDict
 
 	def __repr__( self ) :
 
@@ -143,7 +159,7 @@ class PythonEditor( GafferUI.Editor ) :
 
 	def __dropText( self, widget, dragData ) :
 
-		if isinstance( dragData, IECore.StringVectorData ) :
+		if IECore.DataTraits.isSequenceDataType( dragData ) :
 			return repr( list( dragData ) )
 		elif isinstance( dragData, Gaffer.GraphComponent ) :
 			if self.scriptNode().isAncestorOf( dragData ) :
@@ -186,13 +202,104 @@ class PythonEditor( GafferUI.Editor ) :
 
 		return result
 
-	def __redirectOutput( self, output ) :
+	# Context manager used to redirect `sys.stdout` and `sys.stderr` into our
+	# output widget during execution. This is a little bit of a faff for several
+	# reasons :
+	#
+	# 1. `__outputWidget.appendText()` automatically appends the text on a new
+	#    line.
+	# 2. A simple call to `print( 1, 2 )` makes four separate calls to
+	#    `stdout.write()`, with values of "1" "2", " " and "\n".
+	# 3. We don't want to simply buffer up all the writes and print them after
+	#    execution. Instead we want to update the UI for each new `print()` so
+	#    that users can get feedback on the progress of their script.
+	#
+	# So we maintain a buffer that we flush to `appendText()` every time we
+	# encounter a newline.
+	@contextlib.contextmanager
+	def __outputRedirection( self ) :
 
-		if output != "\n" :
-			self.__outputWidget.appendText( output )
-			# update the gui so messages are output as they occur, rather than all getting queued
-			# up till the end.
-			QtWidgets.QApplication.instance().processEvents( QtCore.QEventLoop.ExcludeUserInputEvents )
+		buffer = ""
+		def __redirect( output ) :
+
+			nonlocal buffer
+			buffer += output
+			if buffer.endswith( "\n" ) :
+				self.__outputWidget.appendText( buffer[:-1] )
+				buffer = ""
+				# Update the GUI so messages are output as they occur, rather
+				# than all getting queued up till the end.
+				QtWidgets.QApplication.instance().processEvents( QtCore.QEventLoop.ExcludeUserInputEvents )
+
+		with Gaffer.OutputRedirection( stdOut = __redirect, stdErr = __redirect ) :
+			yield
+
+		if buffer :
+			self.__outputWidget.appendText( buffer )
+
+	def __contextMenu( self, widget ) :
+
+		definition = IECore.MenuDefinition()
+
+		if widget is self.inputWidget() :
+
+			definition.append(
+				"/Execute Selection" if widget.selectedText() else "/Execute",
+				{
+					"command" : self.execute,
+					"shortCut" : "Enter",
+				}
+			)
+
+			definition.append( "/ExecuteDivider", { "divider" : True } )
+
+		definition.append(
+			"/Copy",
+			{
+				"command" : functools.partial(
+					self.scriptNode().ancestor( Gaffer.ApplicationRoot ).setClipboardContents,
+					IECore.StringData( widget.selectedText() )
+				),
+				"active" : bool( widget.selectedText() )
+			}
+		)
+
+		if widget is self.inputWidget() :
+			definition.append(
+				"/Paste",
+				{
+					"command" : functools.partial(
+						widget.insertText,
+						self.scriptNode().ancestor( Gaffer.ApplicationRoot ).getClipboardContents().value,
+					),
+					"active" : isinstance( self.scriptNode().ancestor( Gaffer.ApplicationRoot ).getClipboardContents(), IECore.StringData )
+				}
+			)
+
+		definition.append( "/CopyPasteDivider", { "divider" : True } )
+
+		definition.append(
+			"/Select All",
+			{
+				"command" : widget._qtWidget().selectAll,
+				"active" :  bool( widget.getText() )
+			}
+		)
+
+		definition.append( "/SelectDivider", { "divider" : True } )
+
+		definition.append(
+			"/Clear",
+			{
+				"command" : functools.partial( widget.setText, "" ),
+				"active" : bool( widget.getText() )
+			}
+		)
+
+		self.__popupMenu = GafferUI.Menu( definition )
+		self.__popupMenu.popup( parent = self )
+
+		return True
 
 GafferUI.Editor.registerType( "PythonEditor", PythonEditor )
 
@@ -202,9 +309,13 @@ class _MessageHandler( IECore.MessageHandler ) :
 
 		IECore.MessageHandler.__init__( self )
 
-		self.__textWidget = textWidget
+		self.__textWidget = weakref.ref( textWidget )
 
 	def handle( self, level, context, message ) :
+
+		widget = self.__textWidget()
+		if widget is None :
+			return
 
 		html = formatted = "<h1 class='%s'>%s : %s </h1><pre class='message'>%s</pre><br>" % (
 			IECore.Msg.levelAsString( level ),
@@ -212,7 +323,7 @@ class _MessageHandler( IECore.MessageHandler ) :
 			context,
 			message
 		)
-		self.__textWidget.appendHTML( html )
+		widget.appendHTML( html )
 		# update the gui so messages are output as they occur, rather than all getting queued
 		# up till the end.
 		QtWidgets.QApplication.instance().processEvents( QtCore.QEventLoop.ExcludeUserInputEvents )

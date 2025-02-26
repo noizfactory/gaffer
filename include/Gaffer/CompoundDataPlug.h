@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_COMPOUNDDATAPLUG_H
-#define GAFFER_COMPOUNDDATAPLUG_H
+#pragma once
 
 #include "Gaffer/TypedPlug.h"
 #include "Gaffer/NameValuePlug.h"
@@ -57,7 +56,7 @@ class GAFFER_API CompoundDataPlug : public Gaffer::ValuePlug
 
 	public :
 
-		CompoundDataPlug(
+		explicit CompoundDataPlug(
 			const std::string &name = defaultName<CompoundDataPlug>(),
 			Direction direction=In,
 			unsigned flags = Default
@@ -90,14 +89,4 @@ class GAFFER_API CompoundDataPlug : public Gaffer::ValuePlug
 
 IE_CORE_DECLAREPTR( CompoundDataPlug );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, CompoundDataPlug> > CompoundDataPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, CompoundDataPlug> > InputCompoundDataPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, CompoundDataPlug> > OutputCompoundDataPlugIterator;
-
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, CompoundDataPlug>, PlugPredicate<> > RecursiveCompoundDataPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, CompoundDataPlug>, PlugPredicate<> > RecursiveInputCompoundDataPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, CompoundDataPlug>, PlugPredicate<> > RecursiveOutputCompoundDataPlugIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_COMPOUNDDATAPLUG_H

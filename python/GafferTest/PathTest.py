@@ -36,6 +36,7 @@
 ##########################################################################
 
 import unittest
+import threading
 
 import IECore
 
@@ -87,7 +88,7 @@ class PathTest( GafferTest.TestCase ) :
 			changedPaths.append( str( path ) )
 
 		p = Gaffer.Path( "/" )
-		c = p.pathChangedSignal().connect( f )
+		p.pathChangedSignal().connect( f )
 
 		p.append( "hello" )
 		p.append( "goodbye" )
@@ -105,25 +106,25 @@ class PathTest( GafferTest.TestCase ) :
 		def f( path ) :
 			changedPaths.append( str( path ) )
 
-		c = p.pathChangedSignal().connect( f )
+		p.pathChangedSignal().connect( f )
 		self.assertEqual( len( changedPaths ), 0 )
 
 		filter = Gaffer.FileNamePathFilter( [ "*.gfr" ] )
 
 		p.setFilter( filter )
-		self.failUnless( p.getFilter().isSame( filter ) )
+		self.assertTrue( p.getFilter().isSame( filter ) )
 		self.assertEqual( len( changedPaths ), 1 )
 
 		p.setFilter( filter )
-		self.failUnless( p.getFilter().isSame( filter ) )
+		self.assertTrue( p.getFilter().isSame( filter ) )
 		self.assertEqual( len( changedPaths ), 1 )
 
 		p.setFilter( None )
-		self.failUnless( p.getFilter() is None )
+		self.assertIsNone( p.getFilter() )
 		self.assertEqual( len( changedPaths ), 2 )
 
 		p.setFilter( filter )
-		self.failUnless( p.getFilter().isSame( filter ) )
+		self.assertTrue( p.getFilter().isSame( filter ) )
 		self.assertEqual( len( changedPaths ), 3 )
 
 		filter.setEnabled( False )
@@ -135,11 +136,11 @@ class PathTest( GafferTest.TestCase ) :
 	def testConstructWithFilter( self ) :
 
 		p = Gaffer.Path( "/test/path" )
-		self.failUnless( p.getFilter() is None )
+		self.assertIsNone( p.getFilter() )
 
 		f = Gaffer.FileNamePathFilter( [ "*.exr" ] )
 		p = Gaffer.Path( "/test/path", filter = f )
-		self.failUnless( p.getFilter().isSame( f ) )
+		self.assertTrue( p.getFilter().isSame( f ) )
 
 	def testInfo( self ) :
 
@@ -160,9 +161,9 @@ class PathTest( GafferTest.TestCase ) :
 
 		p = self.TestPath( "/test/path" )
 
-		self.failUnless( p.setFromString( "/test" ) is p )
-		self.failUnless( p.append( "a" ) is p )
-		self.failUnless( p.truncateUntilValid() is p )
+		self.assertTrue( p.setFromString( "/test" ) is p )
+		self.assertTrue( p.append( "a" ) is p )
+		self.assertTrue( p.truncateUntilValid() is p )
 
 	def testEmptyPath( self ) :
 
@@ -209,27 +210,27 @@ class PathTest( GafferTest.TestCase ) :
 
 		f1 = Gaffer.FileNamePathFilter( [ "*.gfr" ] )
 		f2 = Gaffer.FileNamePathFilter( [ "*.grf" ] )
-		self.assertEqual( f1.changedSignal().num_slots(), 0 )
-		self.assertEqual( f2.changedSignal().num_slots(), 0 )
+		self.assertEqual( f1.changedSignal().numSlots(), 0 )
+		self.assertEqual( f2.changedSignal().numSlots(), 0 )
 
 		# The Path shouldn't connect to the filter changed signal
 		# until it really needs to - when something is connected
 		# to the path's own changed signal.
 		p.setFilter( f1 )
-		self.assertEqual( f1.changedSignal().num_slots(), 0 )
-		self.assertEqual( f2.changedSignal().num_slots(), 0 )
+		self.assertEqual( f1.changedSignal().numSlots(), 0 )
+		self.assertEqual( f2.changedSignal().numSlots(), 0 )
 
 		cs = GafferTest.CapturingSlot( p.pathChangedSignal() )
-		self.assertEqual( f1.changedSignal().num_slots(), 1 )
-		self.assertEqual( f2.changedSignal().num_slots(), 0 )
+		self.assertEqual( f1.changedSignal().numSlots(), 1 )
+		self.assertEqual( f2.changedSignal().numSlots(), 0 )
 		self.assertEqual( len( cs ), 0 )
 
 		f1.setEnabled( False )
 		self.assertEqual( len( cs ), 1 )
 
 		p.setFilter( f2 )
-		self.assertEqual( f1.changedSignal().num_slots(), 0 )
-		self.assertEqual( f2.changedSignal().num_slots(), 1 )
+		self.assertEqual( f1.changedSignal().numSlots(), 0 )
+		self.assertEqual( f2.changedSignal().numSlots(), 1 )
 		self.assertEqual( len( cs ), 2 )
 
 		f1.setEnabled( True )
@@ -279,7 +280,7 @@ class PathTest( GafferTest.TestCase ) :
 				Gaffer.Path.__init__( self, path, root, filter )
 
 		p = PathWithoutCopy( "/a" )
-		self.assertRaisesRegexp( Exception, ".*Path.copy\(\) not implemented.*", p.parent )
+		self.assertRaisesRegex( Exception, r".*Path.copy\(\) not implemented.*", p.parent )
 
 	def testProperties( self ) :
 
@@ -321,6 +322,113 @@ class PathTest( GafferTest.TestCase ) :
 		p.pathChangedSignal()
 		self.assertTrue( p.pathChangedSignalCreatedCalled )
 		self.assertTrue( p._havePathChangedSignal() )
+
+	class CancellingPath( Gaffer.Path ) :
+
+		def __init__( self, path=None, root="/", filter=None ) :
+
+			Gaffer.Path.__init__( self, path, root, filter )
+
+		def isValid( self, canceller = None ) :
+
+			self.__waitForCancellation( canceller )
+
+		def isLeaf( self, canceller = None ) :
+
+			self.__waitForCancellation( canceller )
+
+		def copy( self ) :
+
+			return CancellingPath( self[:], self.root(), self.getFilter() )
+
+		def propertyNames( self, canceller = None ) :
+
+			self.__waitForCancellation( canceller )
+
+		def property( self, name, canceller = None ) :
+
+			self.__waitForCancellation( canceller )
+
+		def _children( self, canceller ) :
+
+			self.__waitForCancellation( canceller )
+
+		def __waitForCancellation( self, canceller ) :
+
+			while True :
+				IECore.Canceller.check( canceller )
+
+	def testCancellation( self ) :
+
+		canceller = IECore.Canceller()
+		canceller.cancel()
+
+		path = self.CancellingPath( "/" )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.isValid( canceller )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.isLeaf( canceller )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.propertyNames( canceller )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.property( "test", canceller )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			# This is the only one of the assertions that really
+			# tests the Python bindings for Path, because it's
+			# the only one where C++ calls into Python. Above
+			# we're just calling the Python methods directly.
+			path.children( canceller )
+
+	def testBackgroundTaskCancellation( self ) :
+
+		class CancellingSubjectPath( self.CancellingPath ) :
+
+			def __init__( self, subject, path = None, root = "/", filter = None ) :
+
+				PathTest.CancellingPath.__init__( self, path, root, filter )
+
+				self.__subject = subject
+
+			def copy( self ) :
+
+				return CancellingSubjectPath( self.__subject, self[:], self.root(), self.getFilter() )
+
+			def cancellationSubject( self ) :
+
+				# A real path would use `__subject` in the overrides for
+				# `children()` etc. But we're just doing the minimum necessary
+				# for testing the cancellation mechanism.
+				return self.__subject
+
+		script = Gaffer.ScriptNode()
+		script["node"] = GafferTest.AddNode()
+		path = CancellingSubjectPath( script["node"]["sum"], "/" )
+
+		startedCondition = threading.Condition()
+
+		def f() :
+
+			with startedCondition :
+				startedCondition.notify()
+
+			while True :
+				path.children( Gaffer.Context.current().canceller() )
+
+		with startedCondition :
+			backgroundTask = Gaffer.ParallelAlgo.callOnBackgroundThread(
+				path.cancellationSubject(), f
+			)
+			# Wait for `f()` to start executing, because if we cancel before
+			# that, the BackgroundTask may not call `f()` at all.
+			startedCondition.wait()
+
+		script["node"]["op1"].setValue( 10 )
+		self.assertEqual( backgroundTask.status(), backgroundTask.Status.Cancelled )
 
 if __name__ == "__main__":
 	unittest.main()

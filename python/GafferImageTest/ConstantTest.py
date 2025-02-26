@@ -161,9 +161,12 @@ class ConstantTest( GafferImageTest.ImageTestCase ) :
 			c.affects( c["format"]["displayWindow"]["min"]["x"] ),
 			[ c["out"]["format"], c["out"]["dataWindow"] ],
 		)
+
+		# For the sake of simplicity when dealing with falling back to a default format from the context,
+		# we make all child plugs of the format affect everything that depends at all on the format
 		self.assertEqual(
 			c.affects( c["format"]["pixelAspect"] ),
-			[ c["out"]["format"] ],
+			[ c["out"]["format"], c["out"]["dataWindow"] ],
 		)
 
 	def testLayer( self ) :
@@ -204,6 +207,34 @@ class ConstantTest( GafferImageTest.ImageTestCase ) :
 		c["layer"].setValue( "diffuse" )
 
 		self.assertTrue( c["out"]["channelNames"] in set( [ x[0] for x in cs ] ) )
+
+	def testAssertImagesEqual( self ) :
+
+		a = GafferImage.Constant()
+		a["color"].setValue( imath.Color4f( 0.5 ) )
+
+		b = GafferImage.Constant()
+		b["color"].setValue( imath.Color4f( 0.5 ) )
+
+		self.assertImagesEqual( a["out"], b["out"] )
+
+		a["color"].setValue( imath.Color4f( 0.75 ) )
+
+		with self.assertRaisesRegex( AssertionError, "0.25 not less than or equal to 0.0 : Channel R" ) :
+			self.assertImagesEqual( a["out"], b["out"] )
+
+		self.assertImagesEqual( a["out"], b["out"], maxDifference = 0.25 )
+
+		self.assertImagesEqual( a["out"], b["out"], maxDifference = ( -0.25, 0.0 ) )
+		with self.assertRaisesRegex( AssertionError, "-0.25 not greater than or equal to 0.0 : Channel R" ) :
+			self.assertImagesEqual( a["out"], b["out"], maxDifference = ( 0.0, 0.25 ) )
+
+		b["color"].setValue( imath.Color4f( 1.0 ) )
+
+		self.assertImagesEqual( a["out"], b["out"], maxDifference = ( 0.0, 0.25 ) )
+		with self.assertRaisesRegex( AssertionError, "0.25 not less than or equal to 0.0 : Channel R" ) :
+			self.assertImagesEqual( a["out"], b["out"], maxDifference = ( -0.25, 0.0 ) )
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_OPTIONS_H
-#define GAFFERSCENE_OPTIONS_H
+#pragma once
 
 #include "GafferScene/GlobalsProcessor.h"
 
@@ -50,13 +49,16 @@ class GAFFERSCENE_API Options : public GlobalsProcessor
 
 	public :
 
-		Options( const std::string &name=defaultName<Options>() );
+		explicit Options( const std::string &name=defaultName<Options>() );
 		~Options() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Options, OptionsTypeId, GlobalsProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Options, OptionsTypeId, GlobalsProcessor );
 
 		Gaffer::CompoundDataPlug *optionsPlug();
 		const Gaffer::CompoundDataPlug *optionsPlug() const;
+
+		Gaffer::CompoundObjectPlug *extraOptionsPlug();
+		const Gaffer::CompoundObjectPlug *extraOptionsPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -77,5 +79,3 @@ class GAFFERSCENE_API Options : public GlobalsProcessor
 IE_CORE_DECLAREPTR( Options );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_OPTIONS_H

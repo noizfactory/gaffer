@@ -35,29 +35,25 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEELEMENTPROCESSOR_H
-#define GAFFERSCENE_SCENEELEMENTPROCESSOR_H
+#pragma once
 
 #include "GafferScene/FilteredSceneProcessor.h"
 
 namespace GafferScene
 {
 
-/// The SceneElementProcessor class provides a base class for modifying elements of an input
-/// scene while leaving the scene hierarchy unchanged.
-/// \todo This "all in one" base class for modifying bounds/transforms/attributes/objects
-/// is feeling a bit unwieldy, and it seems that typical derived classes only ever modify
-/// one thing anyway. Perhaps we'd be better off with individual TransformProcessor,
-/// AttributeProcessor, ObjectProcessor and Deformer base classes.
+/// \todo Replace with a range of more specific base classes, deprecate and remove.
+/// We already have AttributeProcessor, ObjectProcessor and Deformer, and it looks
+/// like a TransformProcessor would get us most of the rest of the way.
 class GAFFERSCENE_API SceneElementProcessor : public FilteredSceneProcessor
 {
 
 	public :
 
-		SceneElementProcessor( const std::string &name=defaultName<SceneElementProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
+		explicit SceneElementProcessor( const std::string &name=defaultName<SceneElementProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
 		~SceneElementProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SceneElementProcessor, SceneElementProcessorTypeId, FilteredSceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SceneElementProcessor, SceneElementProcessorTypeId, FilteredSceneProcessor );
 
 		/// Implemented so that each child of inPlug() affects the corresponding child of outPlug()
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
@@ -130,5 +126,3 @@ class GAFFERSCENE_API SceneElementProcessor : public FilteredSceneProcessor
 IE_CORE_DECLAREPTR( SceneElementProcessor )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEELEMENTPROCESSOR_H

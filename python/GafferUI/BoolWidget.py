@@ -34,9 +34,7 @@
 #
 ##########################################################################
 
-import types
-
-import IECore
+import enum
 
 import Gaffer
 import GafferUI
@@ -47,11 +45,16 @@ from Qt import QtWidgets
 
 class BoolWidget( GafferUI.Widget ) :
 
-	DisplayMode = IECore.Enum.create( "CheckBox", "Switch", "Tool" )
+	DisplayMode = enum.Enum( "DisplayMode", [ "CheckBox", "Switch", "Tool" ] )
+	# True/False states are deliberately omitted from this enum;
+	# For backwards compatibility we use `bool` values instead.
+	State = enum.Enum( "State", [ "Indeterminate" ] )
 
 	def __init__( self, text="", checked=False, displayMode=DisplayMode.CheckBox, image = None, **kw ) :
 
 		GafferUI.Widget.__init__( self, _CheckBox( text ), **kw )
+
+		self.__defaultFocusPolicy = self._qtWidget().focusPolicy()
 
 		self.setState( checked )
 		self.setDisplayMode( displayMode )
@@ -71,10 +74,14 @@ class BoolWidget( GafferUI.Widget ) :
 
 	def setImage( self, image ) :
 
-		if isinstance( image, basestring ) :
+		if isinstance( image, str ) :
+			# Avoid our image getting parented to the wrong thing
+			# if our caller is in a `with container` block.
+			GafferUI.Widget._pushParent( None )
 			self.__image = GafferUI.Image( image )
+			GafferUI.Widget._popParent()
 		else :
-			assert( isinstance( image, ( GafferUI.Image, types.NoneType ) ) )
+			assert( isinstance( image, ( GafferUI.Image, type( None ) ) ) )
 			self.__image = image
 
 		if self.__image is None :
@@ -87,20 +94,37 @@ class BoolWidget( GafferUI.Widget ) :
 
 		return self.__image
 
-	def setState( self, checked ) :
+	## State may be passed as either a `bool` or `State.Indeterminate`.
+	def setState( self, state ) :
 
-		self._qtWidget().setCheckState( QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked )
+		if state == self.State.Indeterminate :
+			self._qtWidget().setTristate( True )
+			self._qtWidget().setCheckState( QtCore.Qt.PartiallyChecked )
+		else :
+			self._qtWidget().setTristate( False )
+			self._qtWidget().setCheckState( QtCore.Qt.Checked if state else QtCore.Qt.Unchecked )
 
 	def getState( self ) :
 
-		return self._qtWidget().checkState() == QtCore.Qt.Checked
+		s = self._qtWidget().checkState()
+		if s == QtCore.Qt.Checked :
+			return True
+		elif s == QtCore.Qt.Unchecked :
+			return False
+		else :
+			return self.State.Indeterminate
 
 	def setDisplayMode( self, displayMode ) :
 
-		self._qtWidget().setProperty( "gafferDisplayMode", str( displayMode ) )
+		self._qtWidget().setProperty( "gafferDisplayMode", displayMode.name )
 		self._qtWidget().setHitMode(
 			_CheckBox.HitMode.Button if displayMode == self.DisplayMode.Tool else _CheckBox.HitMode.CheckBox
 		)
+
+		if displayMode == self.DisplayMode.Tool :
+			self._qtWidget().setFocusPolicy( QtCore.Qt.NoFocus )
+		else :
+			self._qtWidget().setFocusPolicy( self.__defaultFocusPolicy )
 
 	def getDisplayMode( self ) :
 
@@ -133,13 +157,17 @@ class BoolWidget( GafferUI.Widget ) :
 
 class _CheckBox( QtWidgets.QCheckBox ) :
 
-	HitMode = IECore.Enum.create( "Button", "CheckBox" )
+	HitMode = enum.Enum( "HitMode", [ "Button", "CheckBox" ] )
 
 	def __init__( self, text, parent = None ) :
 
 		QtWidgets.QCheckBox.__init__( self, text, parent )
 
 		self.__hitMode = self.HitMode.CheckBox
+
+		self.setSizePolicy( QtWidgets.QSizePolicy(
+			QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
+		) )
 
 	def setHitMode( self, hitMode ) :
 

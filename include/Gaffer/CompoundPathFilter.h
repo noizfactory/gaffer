@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_COMPOUNDPATHFILTER_H
-#define GAFFER_COMPOUNDPATHFILTER_H
+#pragma once
 
 #include "Gaffer/PathFilter.h"
+
+#include <list>
 
 namespace Gaffer
 {
@@ -49,9 +50,9 @@ class GAFFER_API CompoundPathFilter : public Gaffer::PathFilter
 
 	public :
 
-		typedef std::vector<PathFilterPtr> Filters;
+		using Filters = std::vector<PathFilterPtr>;
 
-		CompoundPathFilter( IECore::CompoundDataPtr userData = nullptr );
+		explicit CompoundPathFilter( IECore::CompoundDataPtr userData = nullptr );
 		~CompoundPathFilter() override;
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::CompoundPathFilter, CompoundPathFilterTypeId, PathFilter );
@@ -64,7 +65,7 @@ class GAFFER_API CompoundPathFilter : public Gaffer::PathFilter
 
 	protected :
 
-		void doFilter( std::vector<PathPtr> &paths ) const override;
+		void doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const override;
 
 	private :
 
@@ -75,7 +76,7 @@ class GAFFER_API CompoundPathFilter : public Gaffer::PathFilter
 		struct Filter
 		{
 			PathFilterPtr filter;
-			boost::signals::scoped_connection filterChangedConnection;
+			Signals::ScopedConnection filterChangedConnection;
 		};
 
 		// Using a list rather than a vector, because
@@ -87,5 +88,3 @@ class GAFFER_API CompoundPathFilter : public Gaffer::PathFilter
 IE_CORE_DECLAREPTR( CompoundPathFilter )
 
 } // namespace Gaffer
-
-#endif // GAFFER_COMPOUNDPATHFILTER_H

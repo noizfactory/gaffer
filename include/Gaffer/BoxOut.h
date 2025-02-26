@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_BOXOUT_H
-#define GAFFER_BOXOUT_H
+#pragma once
 
 #include "Gaffer/BoxIO.h"
 
@@ -49,10 +48,10 @@ class GAFFER_API BoxOut : public BoxIO
 
 	public :
 
-		BoxOut( const std::string &name=defaultName<BoxOut>() );
+		explicit BoxOut( const std::string &name=defaultName<BoxOut>() );
 		~BoxOut() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::BoxOut, BoxOutTypeId, BoxIO );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::BoxOut, BoxOutTypeId, BoxIO );
 
 		template<typename T=Plug>
 		T *passThroughPlug();
@@ -71,11 +70,6 @@ class GAFFER_API BoxOut : public BoxIO
 
 IE_CORE_DECLAREPTR( BoxOut )
 
-typedef FilteredChildIterator<TypePredicate<BoxOut> > BoxOutIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<BoxOut> > RecursiveBoxOutIterator;
-
 } // namespace Gaffer
 
 #include "Gaffer/BoxOut.inl"
-
-#endif // GAFFER_BOXOUT_H

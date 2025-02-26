@@ -61,6 +61,33 @@ Gaffer.Metadata.registerNode(
 			remain the same as the input.
 			""",
 
+			"plugValueWidget:type", "GafferImageUI.ChannelPlugValueWidget",
+
+		],
+
+		"ignoreMissingAlpha" : [
+
+			"description",
+			"""
+			If set, this node will do nothing if the specified `alphaChannel`
+			is not found, instead of throwing an error.
+			""",
+
+		],
+
+		"useDeepVisibility" : [
+
+			"description",
+			"""
+			When processing a deep image, you may use this to multiply by
+			the visibility of the current sample, taking into account the
+			alpha of all previous samples. This is a pretty special case,
+			it's mostly useful for converting deep images to incandescence,
+			by multiplying RGB by visibility, and then wiping out the 'A'
+			channel.
+			""",
+			"layout:section", "Advanced",
+
 		],
 
 	}

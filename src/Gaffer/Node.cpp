@@ -45,7 +45,7 @@ using namespace Gaffer;
 
 size_t Node::g_firstPlugIndex;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Node );
+GAFFER_NODE_DEFINE_TYPE( Node );
 
 Node::Node( const std::string &name )
 	:	GraphComponent( name )
@@ -56,7 +56,7 @@ Node::Node( const std::string &name )
 
 Node::~Node()
 {
-	Metadata::clearInstanceMetadata( this );
+	Metadata::instanceDestroyed( this );
 }
 
 Node::UnaryPlugSignal &Node::plugSetSignal()
@@ -67,11 +67,6 @@ Node::UnaryPlugSignal &Node::plugSetSignal()
 Node::UnaryPlugSignal &Node::plugInputChangedSignal()
 {
 	return m_plugInputChangedSignal;
-}
-
-Node::UnaryPlugSignal &Node::plugFlagsChangedSignal()
-{
-	return m_plugFlagsChangedSignal;
 }
 
 Node::UnaryPlugSignal &Node::plugDirtiedSignal()
@@ -148,7 +143,7 @@ void Node::parentChanging( Gaffer::GraphComponent *newParent )
 		// process to avoid such changes invalidating our
 		// iterators.
 		vector<PlugPtr> toDisconnect;
-		for( RecursivePlugIterator it( this ); !it.done(); ++it )
+		for( Plug::RecursiveIterator it( this ); !it.done(); ++it )
 		{
 			if( Plug *input = (*it)->getInput() )
 			{

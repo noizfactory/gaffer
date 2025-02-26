@@ -60,7 +60,7 @@ class ImageTimeWarpTest( GafferImageTest.ImageTestCase ) :
 		timeWarp = Gaffer.TimeWarp()
 		timeWarp.setup( GafferImage.ImagePlug() )
 
-		for n in [ "format", "dataWindow", "metadata", "channelNames", "channelData" ] :
+		for n in [ "format", "dataWindow", "metadata", "deep", "sampleOffsets", "channelNames", "channelData" ] :
 			a = timeWarp.affects( timeWarp["in"][n] )
 			self.assertEqual( len( a ), 1 )
 			self.assertTrue( a[0].isSame( timeWarp["out"][n] ) )
@@ -70,7 +70,7 @@ class ImageTimeWarpTest( GafferImageTest.ImageTestCase ) :
 			self.assertEqual(
 				a,
 				set( [
-					"out.format", "out.dataWindow", "out.metadata", "out.channelNames", "out.channelData",
+					"out.viewNames", "out.format", "out.dataWindow", "out.metadata", "out.deep", "out.sampleOffsets", "out.channelNames", "out.channelData",
 				] ),
 			)
 
@@ -92,14 +92,14 @@ class ImageTimeWarpTest( GafferImageTest.ImageTestCase ) :
 			with script.context() :
 
 				script.context().setFrame( f )
-				c0 = script["constant"]["out"].image()
-				c0Hash = script["constant"]["out"].imageHash()
-				t = script["timeWarp"]["out"].image()
-				tHash = script["timeWarp"]["out"].imageHash()
+				c0 = GafferImage.ImageAlgo.image( script["constant"]["out"], viewName = "default" )
+				c0Hash = GafferImage.ImageAlgo.imageHash( script["constant"]["out"], viewName = "default" )
+				t = GafferImage.ImageAlgo.image( script["timeWarp"]["out"], viewName = "default" )
+				tHash = GafferImage.ImageAlgo.imageHash( script["timeWarp"]["out"], viewName = "default" )
 
 				script.context().setFrame( f + 1 )
-				c1 = script["constant"]["out"].image()
-				c1Hash = script["constant"]["out"].imageHash()
+				c1 = GafferImage.ImageAlgo.image( script["constant"]["out"], viewName = "default" )
+				c1Hash = GafferImage.ImageAlgo.imageHash( script["constant"]["out"], viewName = "default" )
 
 			self.assertEqual( c1, t )
 			self.assertEqual( c1Hash, tHash )
@@ -155,10 +155,10 @@ class ImageTimeWarpTest( GafferImageTest.ImageTestCase ) :
 
 		with script.context() :
 
-			c = script["constant"]["out"].image()
-			cHash = script["constant"]["out"].imageHash()
-			t = script["timeWarp"]["out"].image()
-			tHash = script["timeWarp"]["out"].imageHash()
+			c = GafferImage.ImageAlgo.image( script["constant"]["out"], viewName = "default" )
+			cHash = GafferImage.ImageAlgo.imageHash( script["constant"]["out"], viewName = "default" )
+			t = GafferImage.ImageAlgo.image( script["timeWarp"]["out"], viewName = "default" )
+			tHash = GafferImage.ImageAlgo.imageHash( script["timeWarp"]["out"], viewName = "default" )
 
 		self.assertNotEqual( c, t )
 		self.assertNotEqual( cHash, tHash )
@@ -167,10 +167,10 @@ class ImageTimeWarpTest( GafferImageTest.ImageTestCase ) :
 
 		with script.context() :
 
-			c = script["constant"]["out"].image()
-			cHash = script["constant"]["out"].imageHash()
-			t = script["timeWarp"]["out"].image()
-			tHash = script["timeWarp"]["out"].imageHash()
+			c = GafferImage.ImageAlgo.image( script["constant"]["out"], viewName = "default" )
+			cHash = GafferImage.ImageAlgo.imageHash( script["constant"]["out"], viewName = "default" )
+			t = GafferImage.ImageAlgo.image( script["timeWarp"]["out"], viewName = "default" )
+			tHash = GafferImage.ImageAlgo.imageHash( script["timeWarp"]["out"], viewName = "default" )
 
 		self.assertEqual( c, t )
 		self.assertEqual( cHash, tHash )

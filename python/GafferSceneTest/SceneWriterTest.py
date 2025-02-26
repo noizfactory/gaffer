@@ -34,20 +34,24 @@
 #
 ##########################################################################
 
-import os
 import unittest
-import threading
+import inspect
 import imath
 
 import IECore
 import IECoreScene
 
 import Gaffer
-import GafferTest
+import GafferDispatch
 import GafferScene
 import GafferSceneTest
 
 class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
+
+	__extensions = [
+		f".{x}" for x in IECoreScene.SceneInterface.supportedExtensions( IECore.IndexedIO.Write )
+		if x not in [ "usdz" ] ## \todo Fix registration in IECoreUSD - `.usdz` isn't supported for writing
+	]
 
 	def testWrite( self ) :
 
@@ -64,15 +68,16 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		writer = GafferScene.SceneWriter()
 		script["writer"] = writer
 		writer["in"].setInput( g["out"] )
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test.scc" )
 
-		writer.execute()
+		for extension in self.__extensions :
+			with self.subTest( extension = extension ) :
 
-		sc = IECoreScene.SceneCache( self.temporaryDirectory() + "/test.scc", IECore.IndexedIO.OpenMode.Read )
+				writer["fileName"].setValue( self.temporaryDirectory() / ("test" + extension) )
+				writer.execute()
 
-		t = sc.child( "group" )
-
-		self.assertEqual( t.readTransformAsMatrix( 0 ), imath.M44d().translate( imath.V3d( 5, 0, 2 ) ) )
+				sc = IECoreScene.SceneInterface.create( str( writer["fileName"].getValue() ), IECore.IndexedIO.OpenMode.Read )
+				t = sc.child( "group" )
+				self.assertEqual( t.readTransformAsMatrix( 0 ), imath.M44d().translate( imath.V3d( 5, 0, 2 ) ) )
 
 	def testWriteAnimation( self ) :
 
@@ -86,65 +91,71 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		script["zExpression"].setExpression( 'parent["group"]["transform"]["translate"]["z"] = context.getFrame() * 2' )
 		script["writer"] = GafferScene.SceneWriter()
 		script["writer"]["in"].setInput( script["group"]["out"] )
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/test.scc" )
 
-		with Gaffer.Context() :
-			script["writer"].executeSequence( [ 1, 1.5, 2 ] )
+		for extension in self.__extensions :
+			with self.subTest( extension = extension ) :
 
-		sc = IECoreScene.SceneCache( self.temporaryDirectory() + "/test.scc", IECore.IndexedIO.OpenMode.Read )
-		t = sc.child( "group" )
+				script["writer"]["fileName"].setValue( self.temporaryDirectory() / ("test" + extension) )
+				script["writer"].executeSequence( [ 1, 1.5, 2 ] )
 
-		self.assertEqual( t.readTransformAsMatrix( 0 ), imath.M44d().translate( imath.V3d( 1, 0, 2 ) ) )
-		self.assertEqual( t.readTransformAsMatrix( 1 / 24.0 ), imath.M44d().translate( imath.V3d( 1, 0, 2 ) ) )
-		self.assertEqual( t.readTransformAsMatrix( 1.5 / 24.0 ), imath.M44d().translate( imath.V3d( 1.5, 0, 3 ) ) )
-		self.assertEqual( t.readTransformAsMatrix( 2 / 24.0 ), imath.M44d().translate( imath.V3d( 2, 0, 4 ) ) )
 
-	def testSceneCacheRoundtrip( self ) :
+				sc = IECoreScene.SceneInterface.create( script["writer"]["fileName"].getValue(), IECore.IndexedIO.OpenMode.Read )
+				t = sc.child( "group" )
 
-		scene = IECoreScene.SceneCache( self.temporaryDirectory() + "/fromPython.scc", IECore.IndexedIO.OpenMode.Write )
-		sc = scene.createChild( "a" )
-		sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
-		matrix = imath.M44d().translate( imath.V3d( 1, 0, 0 ) ).rotate( imath.V3d( 0, 0, IECore.degreesToRadians( -30 ) ) )
-		sc.writeTransform( IECore.M44dData( matrix ), 0 )
-		sc = sc.createChild( "b" )
-		sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
-		sc.writeTransform( IECore.M44dData( matrix ), 0 )
-		sc = sc.createChild( "c" )
-		sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
-		sc.writeTransform( IECore.M44dData( matrix ), 0 )
+				self.assertTrue( t.readTransformAsMatrix( 0 ).equalWithAbsError( imath.M44d().translate( imath.V3d( 1, 0, 2 ) ), 1e-6 ) )
+				self.assertTrue( t.readTransformAsMatrix( 1 / 24.0 ).equalWithAbsError( imath.M44d().translate( imath.V3d( 1, 0, 2 ) ), 1e-6 ) )
+				self.assertTrue( t.readTransformAsMatrix( 1.5 / 24.0 ).equalWithAbsError( imath.M44d().translate( imath.V3d( 1.5, 0, 3 ) ), 1e-6 ) )
+				self.assertTrue( t.readTransformAsMatrix( 2 / 24.0 ).equalWithAbsError( imath.M44d().translate( imath.V3d( 2, 0, 4 ) ), 1e-6 ) )
 
-		del scene, sc
+	def testSceneReaderRoundtrip( self ) :
 
-		def testCacheFile( f ) :
-			sc = IECoreScene.SceneCache( f, IECore.IndexedIO.OpenMode.Read )
-			a = sc.child( "a" )
-			self.failUnless( a.hasObject() )
-			self.failUnless( isinstance( a.readObject( 0 ), IECoreScene.MeshPrimitive ) )
-			self.failUnless( a.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
-			b = a.child( "b" )
-			self.failUnless( b.hasObject() )
-			self.failUnless( isinstance( b.readObject( 0 ), IECoreScene.MeshPrimitive ) )
-			self.failUnless( b.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
-			c = b.child( "c" )
-			self.failUnless( c.hasObject() )
-			self.failUnless( isinstance( c.readObject( 0 ), IECoreScene.MeshPrimitive ) )
-			self.failUnless( c.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
+		for extension in self.__extensions :
+			with self.subTest( extension = extension ) :
 
-		testCacheFile( self.temporaryDirectory() + "/fromPython.scc" )
+				filePath = self.temporaryDirectory() / ("fromPython" + extension)
 
-		reader = GafferScene.SceneReader()
-		reader["fileName"].setValue( self.temporaryDirectory() + "/fromPython.scc" )
+				scene = IECoreScene.SceneInterface.create( str( filePath ), IECore.IndexedIO.OpenMode.Write )
+				sc = scene.createChild( "a" )
+				sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
+				matrix = imath.M44d().translate( imath.V3d( 1, 0, 0 ) ).rotate( imath.V3d( 0, 0, IECore.degreesToRadians( -30 ) ) )
+				sc.writeTransform( IECore.M44dData( matrix ), 0 )
+				sc = sc.createChild( "b" )
+				sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
+				sc.writeTransform( IECore.M44dData( matrix ), 0 )
+				sc = sc.createChild( "c" )
+				sc.writeObject( IECoreScene.MeshPrimitive.createBox(imath.Box3f(imath.V3f(0),imath.V3f(1))), 0 )
+				sc.writeTransform( IECore.M44dData( matrix ), 0 )
 
-		script = Gaffer.ScriptNode()
-		writer = GafferScene.SceneWriter()
-		script["writer"] = writer
-		writer["in"].setInput( reader["out"] )
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test.scc" )
-		writer.execute()
-		os.remove( self.temporaryDirectory() + "/fromPython.scc" )
+				del scene, sc
 
-		testCacheFile( self.temporaryDirectory() + "/test.scc" )
+				def testCacheFile( f ) :
+					sc = IECoreScene.SceneInterface.create( str( filePath ), IECore.IndexedIO.OpenMode.Read )
+					a = sc.child( "a" )
+					self.assertTrue( a.hasObject() )
+					self.assertIsInstance( a.readObject( 0 ), IECoreScene.MeshPrimitive )
+					self.assertTrue( a.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
+					b = a.child( "b" )
+					self.assertTrue( b.hasObject() )
+					self.assertIsInstance( b.readObject( 0 ), IECoreScene.MeshPrimitive )
+					self.assertTrue( b.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
+					c = b.child( "c" )
+					self.assertTrue( c.hasObject() )
+					self.assertIsInstance( c.readObject( 0 ), IECoreScene.MeshPrimitive )
+					self.assertTrue( c.readTransformAsMatrix( 0 ).equalWithAbsError( matrix, 1e-6 ) )
 
+				testCacheFile( filePath )
+
+				reader = GafferScene.SceneReader()
+				reader["fileName"].setValue( filePath )
+
+				script = Gaffer.ScriptNode()
+				writer = GafferScene.SceneWriter()
+				script["writer"] = writer
+				writer["in"].setInput( reader["out"] )
+				writer["fileName"].setValue( self.temporaryDirectory() / "written.scc" )
+				writer.execute()
+
+				testCacheFile( writer["fileName"].getValue() )
 
 	def testCanWriteSets( self ):
 
@@ -161,13 +172,11 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		sphereGroup["in"][0].setInput( s["out"] )
 		sphereGroup["name"].setValue( 'sphereGroup' )
 
-
 		sn = GafferScene.Set( "Set" )
 		script.addChild( sn )
 		sn["paths"].setValue( IECore.StringVectorData( [ '/sphereGroup' ] ) )
 		sn["name"].setValue( 'foo' )
 		sn["in"].setInput( sphereGroup["out"] )
-
 
 		sn2 = GafferScene.Set( "Set" )
 		script.addChild( sn2 )
@@ -183,30 +192,28 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		g["in"][0].setInput( sn2["out"] )
 		g["in"][1].setInput( c["out"] )
 
-		writer = GafferScene.SceneWriter()
-		script.addChild( writer )
+		script["writer"] = GafferScene.SceneWriter()
+		script["writer"]["in"].setInput( g["out"] )
 
-		script["writer"] = writer
-		writer["in"].setInput( g["out"] )
-		writer["fileName"].setValue( self.temporaryDirectory() + "/setTest.scc" )
+		for extension in set( self.__extensions ) - { ".abc" } : # Sets not implemented for Alembic
+			with self.subTest( extension = extension ) :
 
-		writer.execute()
+				script["writer"]["fileName"].setValue( self.temporaryDirectory() / ("setTest" + extension) )
+				script["writer"].execute()
 
-		sc = IECoreScene.SceneCache( self.temporaryDirectory() + "/setTest.scc", IECore.IndexedIO.OpenMode.Read )
+				sc = IECoreScene.SceneInterface.create( str( script["writer"]["fileName"].getValue() ), IECore.IndexedIO.OpenMode.Read )
+				scGroup = sc.child( "group" )
+				scSphereGroup = scGroup.child( "sphereGroup" )
+				scSphere = scSphereGroup.child( "sphere" )
 
-		scGroup = sc.child("group")
-		scSphereGroup = scGroup.child("sphereGroup")
-		scSphere = scSphereGroup.child("sphere")
+				extraSets = [ IECore.InternedString( "ObjectType:MeshPrimitive" ) ] if extension in ( ".scc", ".lscc" ) else []
 
-		self.assertEqual(  scGroup.readTags(), [] )
+				self.assertEqual( scGroup.readTags(), [] )
+				self.assertEqual( scSphereGroup.readTags(), [ IECore.InternedString( "foo" ) ] )
+				self.assertEqual( set( scSphere.readTags() ), set( [ IECore.InternedString( "foo" ) ] + extraSets ) )
 
-		self.assertEqual( scSphereGroup.readTags(), [ IECore.InternedString("foo") ] )
-
-		self.assertEqual( set (scSphere.readTags() ), set([IECore.InternedString("foo"), IECore.InternedString("ObjectType:MeshPrimitive")]))
-
-		scCube = scGroup.child("cube")
-		self.assertEqual( scCube.readTags() , [ IECore.InternedString("ObjectType:MeshPrimitive") ] )
-
+				scCube = scGroup.child( "cube" )
+				self.assertEqual( scCube.readTags(), extraSets )
 
 	def testHash( self ) :
 
@@ -222,7 +229,7 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		self.assertEqual( writer.hash( c ), IECore.MurmurHash() )
 
 		# no input scene produces no effect
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test.scc" )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.scc" )
 		self.assertEqual( writer.hash( c ), IECore.MurmurHash() )
 
 		# now theres a file and a scene, we get some output
@@ -235,17 +242,17 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 
 		# output varies by file name
 		current = writer.hash( c )
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test2.scc" )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test2.scc" )
 		self.assertNotEqual( writer.hash( c ), current )
 
 		# output varies by new Context entries
 		current = writer.hash( c )
-		c["renderDirectory"] = self.temporaryDirectory() + "/sceneWriterTest"
+		c["renderDirectory"] = ( self.temporaryDirectory() / "sceneWriterTest" ).as_posix()
 		self.assertNotEqual( writer.hash( c ), current )
 
 		# output varies by changed Context entries
 		current = writer.hash( c )
-		c["renderDirectory"] = self.temporaryDirectory() + "/sceneWriterTest2"
+		c["renderDirectory"] = ( self.temporaryDirectory() / "sceneWriterTest2" ).as_posix()
 		self.assertNotEqual( writer.hash( c ), current )
 
 		# output doesn't vary by ui Context entries
@@ -277,19 +284,237 @@ class SceneWriterTest( GafferSceneTest.SceneTestCase ) :
 		ss = s.serialise()
 		self.assertFalse( "out" in ss )
 
-	def testAlembic( self ) :
+	def testFileNameWithArtificalFrameDependency( self ) :
 
-		p = GafferScene.Plane()
+		script = Gaffer.ScriptNode()
+		script["plane"] = GafferScene.Plane()
 
-		w = GafferScene.SceneWriter()
-		w["in"].setInput( p["out"] )
-		w["fileName"].setValue( self.temporaryDirectory() + "/test.abc" )
-		w["task"].execute()
+		script["writer"] = GafferScene.SceneWriter()
+		script["writer"]["in"].setInput( script["plane"]["out"] )
 
-		r = GafferScene.SceneReader()
-		r["fileName"].setInput( w["fileName"] )
+		filePath = self.temporaryDirectory() / "test.scc"
 
-		self.assertScenesEqual( p["out"], r["out"] )
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			# Add artificial dependency on frame
+			context.getFrame()
+			parent["writer"]["fileName"] = "{}"
+			""".format( filePath.as_posix() )
+		) )
+
+		script["dispatcher"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		script["dispatcher"]["tasks"][0].setInput( script["writer"]["task"] )
+		script["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		script["dispatcher"]["framesMode"].setValue( script["dispatcher"].FramesMode.CustomRange )
+		script["dispatcher"]["frameRange"].setValue( "1-10" )
+		script["dispatcher"]["task"].execute()
+
+		scene = IECoreScene.SceneInterface.create( str( filePath ), IECore.IndexedIO.OpenMode.Read )
+		self.assertEqual( scene.child( "plane" ).numObjectSamples(), 10 )
+
+	def testFileNameWithFrameDependency( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["plane"] = GafferScene.Plane()
+
+		script["writer"] = GafferScene.SceneWriter()
+		script["writer"]["in"].setInput( script["plane"]["out"] )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "test.####.scc" )
+
+		script["dispatcher"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		script["dispatcher"]["tasks"][0].setInput( script["writer"]["task"] )
+		script["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		script["dispatcher"]["framesMode"].setValue( script["dispatcher"].FramesMode.CustomRange )
+		script["dispatcher"]["frameRange"].setValue( "1-10" )
+		script["dispatcher"]["task"].execute()
+
+		with Gaffer.Context( script.context() ) as context :
+			for frame in range( 1, 10 ) :
+				context.setFrame( frame )
+				scene = IECoreScene.SceneInterface.create(
+					context.substitute( script["writer"]["fileName"].getValue() ),
+					IECore.IndexedIO.OpenMode.Read
+				)
+				plane = scene.child( "plane" )
+				self.assertEqual( plane.numObjectSamples(), 1 )
+				self.assertEqual( plane.objectSampleTime( 0 ), context.getTime() )
+
+	def testUSDConstantPrimitiveVariables( self ) :
+
+		plane = GafferScene.Plane()
+
+		planeFilter = GafferScene.PathFilter()
+		planeFilter["paths"].setValue( IECore.StringVectorData( [ "/plane" ] ) )
+
+		primitiveVariables = GafferScene.PrimitiveVariables()
+		primitiveVariables["in"].setInput( plane["out"] )
+		primitiveVariables["filter"].setInput( planeFilter["out"] )
+		primitiveVariables["primitiveVariables"].addChild( Gaffer.NameValuePlug( "test", 10 ) )
+
+		self.assertEqual( primitiveVariables["out"].object( "/plane" )["test"].data.value, 10 )
+		self.assertEqual( primitiveVariables["out"].attributes( "/plane" ), IECore.CompoundObject() )
+
+		sceneWriter = GafferScene.SceneWriter()
+		sceneWriter["in"].setInput( primitiveVariables["out"] )
+		sceneWriter["fileName"].setValue( self.temporaryDirectory() / "test.usda" )
+		sceneWriter["task"].execute()
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setInput( sceneWriter["fileName"] )
+
+		self.assertEqual( sceneReader["out"].object( "/plane" )["test"].data.value, 10 )
+		self.assertEqual( sceneReader["out"].attributes( "/plane" ), IECore.CompoundObject() )
+
+	def testUSDDoubleSidedAttribute( self ) :
+
+		sphere = GafferScene.Sphere()
+
+		attributes = GafferScene.StandardAttributes()
+		attributes["in"].setInput( sphere["out"] )
+		attributes["attributes"]["doubleSided"]["enabled"].setValue( True )
+		attributes["attributes"]["doubleSided"]["value"].setValue( True )
+
+		sceneWriter = GafferScene.SceneWriter()
+		sceneWriter["in"].setInput( attributes["out"] )
+		sceneWriter["fileName"].setValue( self.temporaryDirectory() / "test.usda" )
+		sceneWriter["task"].execute()
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setInput( sceneWriter["fileName"] )
+
+		self.assertEqual( sceneReader["out"].attributes( "/sphere" ), sceneWriter["in"].attributes( "/sphere" ) )
+
+	def testChildNamesOrder( self ) :
+
+		sphere = GafferScene.Sphere()
+
+		sphereFilter = GafferScene.PathFilter()
+		sphereFilter["paths"].setValue( IECore.StringVectorData( [ "/sphere" ] ) )
+
+		duplicate = GafferScene.Duplicate()
+		duplicate["in"].setInput( sphere["out"] )
+		duplicate["filter"].setInput( sphereFilter["out"] )
+		duplicate["copies"].setValue( 100 )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( duplicate["out"] )
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setInput( writer["fileName"] )
+
+		for extension in set( self.__extensions ) - { ".scc", ".lscc" } : # SceneCache doesn't preserve order
+			with self.subTest( extension = extension ) :
+
+				writer["fileName"].setValue( self.temporaryDirectory() / ( "test" + extension ) )
+				writer["task"].execute()
+
+				self.assertScenesEqual( reader["out"], writer["in"], checks = { "childNames" } )
+
+	def testAnimatedSets( self ) :
+
+		# `IECoreScene::SceneInterface` doesn't support animated sets, so we
+		# only write sets on the first frame for each file we open.
+
+		script = Gaffer.ScriptNode()
+		script["sphere"] = GafferScene.Sphere()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			parent["sphere"]["sets"] = "A" if context.getFrame() % 2 else "B"
+			"""
+		) )
+
+		script["fileWriter"] = GafferScene.SceneWriter()
+		script["fileWriter"]["in"].setInput( script["sphere"]["out"] )
+
+		script["sequenceWriter"] = GafferScene.SceneWriter()
+		script["sequenceWriter"]["in"].setInput( script["sphere"]["out"] )
+
+		fileReader = GafferScene.SceneReader()
+		fileReader["fileName"].setInput( script["fileWriter"]["fileName"] )
+
+		sequenceReader = GafferScene.SceneReader()
+		sequenceReader["fileName"].setInput( script["sequenceWriter"]["fileName"] )
+
+		for extension in set( self.__extensions ) - { ".abc" } : # Sets not supported for Alembix
+			with self.subTest( extension = extension ) :
+
+				script["fileWriter"]["fileName"].setValue( self.temporaryDirectory() / ( "testSingle" + extension ) )
+				script["fileWriter"]["task"].executeSequence( range( 1, 10 ) )
+
+				script["sequenceWriter"]["fileName"].setValue( self.temporaryDirectory() / ( "sequence.#" + extension ) )
+				script["sequenceWriter"]["task"].executeSequence( range( 1, 10 ) )
+
+				with Gaffer.Context() as c :
+					for f in range( 1, 10 ) :
+						c.setFrame( f )
+						# Sets were only written once for the single file, so we
+						# expect them to be taken from frame 1.
+						self.assertIn( "A", fileReader["out"].setNames() )
+						self.assertNotIn( "B", fileReader["out"].setNames() )
+						# For the file-per-frame sequence, we expect exactly the
+						# right sets.
+						if f % 2 :
+							self.assertIn( "A", sequenceReader["out"].setNames() )
+							self.assertNotIn( "B", sequenceReader["out"].setNames() )
+						else :
+							self.assertNotIn( "A", sequenceReader["out"].setNames() )
+							self.assertIn( "B", sequenceReader["out"].setNames() )
+
+	def testWriteInvalidUSDChildName( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["name"].setValue( "1" )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( sphere["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.usda" )
+		writer["task"].execute()
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setInput( writer["fileName"] )
+		self.assertPathsEqual( reader["out"], "/_1", sphere["out"], "/1" )
+
+	def testWriteAnimationWithInvalidUSDChildName( self ) :
+
+		contextQuery = Gaffer.ContextQuery()
+		contextQuery.addQuery( Gaffer.FloatPlug(), "frame" )
+
+		sphere = GafferScene.Sphere()
+		sphere["name"].setValue( "1" )
+		sphere["transform"]["translate"]["x"].setInput( contextQuery["out"][0]["value"] )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( sphere["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.usda" )
+		writer["task"].executeSequence( [ 1, 2, 3 ] )
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setInput( writer["fileName"] )
+
+		with Gaffer.Context() as context :
+			for frame in [ 1, 2, 3 ] :
+				context.setFrame( frame )
+				self.assertPathsEqual( reader["out"], "/_1", sphere["out"], "/1" )
+
+	def testWriteGlobals( self ) :
+
+		# Tests a feature that only works with `.scc`, isn't used by SceneReader,
+		# and has no documented purpose. Perhaps used at Image Engine?
+
+		options = GafferScene.StandardOptions()
+		options["options"]["renderCamera"]["enabled"].setValue( True )
+		options["options"]["renderCamera"]["value"].setValue( "/camera" )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( options["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.scc" )
+		writer["task"].execute()
+
+		scene = IECoreScene.SceneCache( writer["fileName"].getValue(), IECore.IndexedIO.Read )
+		self.assertEqual( scene.readAttribute( "gaffer:globals", 1 ), writer["in"].globals() )
 
 if __name__ == "__main__":
 	unittest.main()

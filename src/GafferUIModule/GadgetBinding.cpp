@@ -56,12 +56,18 @@ using namespace GafferUI;
 namespace
 {
 
-struct RenderRequestSlotCaller
+struct VisibilityChangedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, GadgetPtr g )
+	void operator()( boost::python::object slot, GadgetPtr g )
 	{
-		slot( g );
-		return boost::signals::detail::unusable();
+		try
+		{
+			slot( g );
+		}
+		catch( const boost::python::error_already_set & )
+		{
+			IECorePython::ExceptionAlgo::translatePythonException();
+		}
 	}
 };
 
@@ -73,27 +79,24 @@ struct ButtonSlotCaller
 		{
 			return boost::python::extract<bool>( slot( g, event ) )();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // also clears the python error status
-			return false;
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
 	}
 };
 
 struct EnterLeaveSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, GadgetPtr g, const ButtonEvent &event )
+	void operator()( boost::python::object slot, GadgetPtr g, const ButtonEvent &event )
 	{
 		try
 		{
 			slot( g, event );
-			return boost::signals::detail::unusable();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // also clears the python error status
-			return boost::signals::detail::unusable();
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
 	}
 };
@@ -106,10 +109,9 @@ struct DragBeginSlotCaller
 		{
 			return boost::python::extract<IECore::RunTimeTypedPtr>( slot( g, event ) )();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // also clears the python error status
-			return nullptr;
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
 	}
 };
@@ -122,10 +124,9 @@ struct DragDropSlotCaller
 		{
 			return boost::python::extract<bool>( slot( g, event ) )();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // also clears the python error status
-			return false;
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
 	}
 };
@@ -138,10 +139,9 @@ struct KeySlotCaller
 		{
 			return boost::python::extract<bool>( slot( g, event ) )();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // also clears the python error status
-			return false;
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
 	}
 };
@@ -168,19 +168,13 @@ void setEnabled( Gadget &g, bool enabled )
 	g.setEnabled( enabled );
 }
 
-void render( const Gadget &g )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	g.render();
-}
-
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS( fullTransformOverloads, fullTransform, 0, 1 );
 
 } // namespace
 
 void GafferUIModule::bindGadget()
 {
-	typedef GadgetWrapper<Gadget> Wrapper;
+	using Wrapper = GadgetWrapper<Gadget>;
 
 	scope s = GadgetClass<Gadget, Wrapper>()
 		.def( init<>() )
@@ -201,8 +195,6 @@ void GafferUIModule::bindGadget()
 		.def( "fullTransform", &Gadget::fullTransform, fullTransformOverloads() )
 		.def( "transformedBound", (Imath::Box3f (Gadget::*)() const)&Gadget::transformedBound )
 		.def( "transformedBound", (Imath::Box3f (Gadget::*)( const Gadget * ) const)&Gadget::transformedBound )
-		.def( "render", &render )
-		.def( "renderRequestSignal", &Gadget::renderRequestSignal, return_internal_reference<1>() )
 		.def( "setToolTip", &Gadget::setToolTip )
 		.def( "buttonPressSignal", &Gadget::buttonPressSignal, return_internal_reference<1>() )
 		.def( "buttonReleaseSignal", &Gadget::buttonReleaseSignal, return_internal_reference<1>() )
@@ -223,19 +215,31 @@ void GafferUIModule::bindGadget()
 		.staticmethod( "idleSignal" )
 		.def( "_idleSignalAccessedSignal", &Gadget::idleSignalAccessedSignal, return_value_policy<reference_existing_object>() )
 		.staticmethod( "_idleSignalAccessedSignal" )
-		.def( "_requestRender", &Gadget::requestRender )
-		.def( "select", &Gadget::select ).staticmethod( "select" )
+		.def( "_dirty", &Gadget::dirty )
 	;
 
 	enum_<Gadget::Layer>( "Layer" )
 		.value( "Back", Gadget::Layer::Back )
+		.value( "BackMidBack", Gadget::Layer::BackMidBack )
 		.value( "MidBack", Gadget::Layer::MidBack )
 		.value( "Main", Gadget::Layer::Main )
 		.value( "MidFront", Gadget::Layer::MidFront )
 		.value( "Front", Gadget::Layer::Front )
 	;
 
-	SignalClass<Gadget::RenderRequestSignal, DefaultSignalCaller<Gadget::RenderRequestSignal>, RenderRequestSlotCaller>( "RenderRequestSignal" );
+	enum_<Gadget::DirtyType>( "DirtyType" )
+		.value( "Render", Gadget::DirtyType::Render )
+		.value( "Bound", Gadget::DirtyType::Bound )
+		.value( "Layout", Gadget::DirtyType::Layout )
+	;
+
+	enum_<Gadget::RenderReason>( "RenderReason" )
+		.value( "Draw", Gadget::RenderReason::Draw )
+		.value( "Select", Gadget::RenderReason::Select )
+		.value( "DragSelect", Gadget::RenderReason::DragSelect )
+	;
+
+	SignalClass<Gadget::VisibilityChangedSignal, DefaultSignalCaller<Gadget::VisibilityChangedSignal>, VisibilityChangedSlotCaller>( "VisibilityChangedSignal" );
 	SignalClass<Gadget::ButtonSignal, DefaultSignalCaller<Gadget::ButtonSignal>, ButtonSlotCaller>( "ButtonSignal" );
 	SignalClass<Gadget::KeySignal, DefaultSignalCaller<Gadget::KeySignal>, KeySlotCaller>( "KeySignal" );
 	SignalClass<Gadget::DragBeginSignal, DefaultSignalCaller<Gadget::DragBeginSignal>, DragBeginSlotCaller>( "DragBeginSignal" );

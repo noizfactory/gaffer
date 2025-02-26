@@ -1,7 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2011-2012, John Haddon. All rights reserved.
-//  Copyright (c) 2011-2015, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2023, Cinesite VFX Ltd. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -35,83 +34,24 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-/// This file contains the implementation of TypedObjectPlug. Rather than include it
-/// in a public header it is #included in TypedObjectPlug.cpp, and the relevant template
-/// classes are explicitly instantiated there. This prevents a host of problems to do with
-/// the definition of the same symbols in multiple object files. Additional TypedObjectPlug
-/// instantations may be created in similar .cpp files in other libraries.
+#pragma once
 
 namespace Gaffer
 {
 
 template<class T>
-const IECore::RunTimeTyped::TypeDescription<TypedObjectPlug<T> > TypedObjectPlug<T>::g_typeDescription;
-
-template<class T>
-TypedObjectPlug<T>::TypedObjectPlug(
-	const std::string &name,
-	Direction direction,
-	ConstValuePtr defaultValue,
-	unsigned flags
-)
-	:	ValuePlug( name, direction, defaultValue->copy(), flags )
+inline typename TypedObjectPlug<T>::ConstValuePtr TypedObjectPlug<T>::getValue( const IECore::MurmurHash *precomputedHash ) const
 {
-}
-
-template<class T>
-TypedObjectPlug<T>::~TypedObjectPlug()
-{
-}
-
-template<class T>
-bool TypedObjectPlug<T>::acceptsInput( const Plug *input ) const
-{
-	if( !ValuePlug::acceptsInput( input ) )
+	IECore::ConstObjectPtr owner;
+	const ValueType *value = getObjectValue<ValueType>( owner, precomputedHash );
+	if( owner )
 	{
-		return false;
-	}
-	if( input )
-	{
-		return input->isInstanceOf( staticTypeId() );
-	}
-	return true;
-}
-
-template<class T>
-PlugPtr TypedObjectPlug<T>::createCounterpart( const std::string &name, Direction direction ) const
-{
-	return new TypedObjectPlug<T>( name, direction, defaultValue(), getFlags() );
-}
-
-template<class T>
-const typename TypedObjectPlug<T>::ValueType *TypedObjectPlug<T>::defaultValue() const
-{
-	return static_cast<const ValueType *>( defaultObjectValue() );
-}
-
-template<class T>
-void TypedObjectPlug<T>::setValue( ConstValuePtr value )
-{
-	setObjectValue( value );
-}
-
-template<class T>
-typename TypedObjectPlug<T>::ConstValuePtr TypedObjectPlug<T>::getValue( const IECore::MurmurHash *precomputedHash ) const
-{
-	return boost::static_pointer_cast<const ValueType>( getObjectValue( precomputedHash ) );
-}
-
-template<class T>
-void TypedObjectPlug<T>::setFrom( const ValuePlug *other )
-{
-	const TypedObjectPlug<T> *tOther = IECore::runTimeCast<const TypedObjectPlug>( other );
-	if( tOther )
-	{
-		setValue( tOther->getValue() );
+		// Avoid unnecessary reference count manipulations.
+		return boost::static_pointer_cast<const ValueType>( std::move( owner ) );
 	}
 	else
 	{
-		throw IECore::Exception( "Unsupported plug type" );
+		return ConstValuePtr( value );
 	}
 }
 

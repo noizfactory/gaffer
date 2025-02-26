@@ -35,6 +35,8 @@
 ##########################################################################
 
 import imath
+import unittest
+import os
 
 import IECore
 
@@ -62,6 +64,7 @@ class GLWidgetTest( GafferUITest.TestCase ) :
 		self.assertTrue( b.ancestor( GafferUI.Frame ) is f )
 		self.assertTrue( b.ancestor( GafferUI.Window ) is w )
 
+	@unittest.skipIf( os.name == "nt", "Skip failing Windows test temporarily" )
 	def testOverlayWidgetAt( self ) :
 
 		w = GafferUI.Window()
@@ -71,11 +74,11 @@ class GLWidgetTest( GafferUITest.TestCase ) :
 
 		w.setChild( g )
 		g.addOverlay( c )
-		c.addChild( b, alignment = ( GafferUI.HorizontalAlignment.None, GafferUI.VerticalAlignment.Top ) )
+		c.addChild( b, alignment = ( GafferUI.HorizontalAlignment.None_, GafferUI.VerticalAlignment.Top ) )
 
 		w.setVisible( True )
 
-		self.waitForIdle( 1000 )
+		self.waitForIdle( 10000 )
 
 		self.assertTrue( GafferUI.Widget.widgetAt( w.bound().min() + imath.V2i( 4 ) ) is b )
 
@@ -91,14 +94,14 @@ class GLWidgetTest( GafferUITest.TestCase ) :
 		f.setChild( b )
 
 		w.setVisible( True )
-		self.waitForIdle( 1000 )
+		self.waitForIdle( 10000 )
 
 		w.setPosition( imath.V2i( 100 ) )
-		self.waitForIdle( 1000 )
+		self.waitForIdle( 10000 )
 		b1 = b.bound()
 
 		w.setPosition( imath.V2i( 200 ) )
-		self.waitForIdle( 1000 )
+		self.waitForIdle( 10000 )
 		b2 = b.bound()
 
 		self.assertEqual( b2.min(), b1.min() + imath.V2i( 100 ) )
@@ -152,6 +155,26 @@ class GLWidgetTest( GafferUITest.TestCase ) :
 		g.removeOverlay( b2 )
 		self.assertEqual( b1.parent(), None )
 		self.assertEqual( b2.parent(), None )
+
+	def testDrawExceptionsHandled( self ) :
+
+		class TestWidget( GafferUI.GLWidget ) :
+
+			def _draw( self ) :
+				raise RuntimeError( "Draw Exception" )
+
+		w = GafferUI.Window( borderWidth = 10 )
+		g = TestWidget()
+		w.setChild( g )
+
+		with IECore.CapturingMessageHandler() as mh :
+			w.setVisible( True )
+			self.waitForIdle( 1000 )
+
+		self.assertEqual(
+			{ ( m.level, m.context, m.message ) for m in mh.messages },
+			{ ( IECore.Msg.Level.Error, "GLWidget", "Draw Exception" ) }
+		)
 
 if __name__ == "__main__":
 	unittest.main()

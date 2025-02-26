@@ -39,11 +39,13 @@
 #include "MetadataAlgoBinding.h"
 
 #include "Gaffer/GraphComponent.h"
+#include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/Node.h"
 #include "Gaffer/Plug.h"
 #include "Gaffer/ScriptNode.h"
 
+#include "IECorePython/ScopedGILLock.h"
 #include "IECorePython/ScopedGILRelease.h"
 
 using namespace boost::python;
@@ -52,6 +54,9 @@ using namespace Gaffer::MetadataAlgo;
 
 namespace
 {
+
+// Read only
+// =========
 
 void setReadOnlyWrapper( GraphComponent &graphComponent, bool readOnly, bool persistent )
 {
@@ -64,6 +69,19 @@ void setChildNodesAreReadOnlyWrapper( Node &node, bool readOnly, bool persistent
 	IECorePython::ScopedGILRelease gilRelease;
 	setChildNodesAreReadOnly( &node, readOnly, persistent );
 }
+
+bool readOnlyWrapper( GraphComponent &g )
+{
+	return readOnly( &g );
+}
+
+GraphComponentPtr readOnlyReasonWrapper( GraphComponent &g )
+{
+	return const_cast<GraphComponent *>( readOnlyReason( &g ) );
+}
+
+// Bookmarks
+// =========
 
 void setBookmarkedWrapper( Node &node, bool bookmarked, bool persistent )
 {
@@ -96,16 +114,110 @@ NodePtr getNumericBookmarkWrapper( ScriptNode &scriptNode, int bookmark )
 	return getNumericBookmark( &scriptNode, bookmark );
 }
 
-void copyWrapper( const GraphComponent &from, GraphComponent &to, const IECore::StringAlgo::MatchPattern &exclude, bool persistentOnly, bool persistent )
+// Annotations
+// ===========
+
+void addAnnotationWrapper( Node &node, const std::string &name, const Annotation &annotation, bool persistent )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	addAnnotation( &node, name, annotation, persistent );
+}
+
+object getAnnotationWrapper( const Node &node, const std::string &name, bool inheritTemplate )
+{
+	Annotation a = getAnnotation( &node, name, inheritTemplate );
+	return a ? object( a ) : object();
+}
+
+void removeAnnotationWrapper( Node &node, const std::string &name )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	removeAnnotation( &node, name );
+}
+
+list annotationsWrapper( const Node &node, Metadata::RegistrationTypes types )
+{
+	std::vector<std::string> names = annotations( &node, types );
+	list result;
+	for( const auto &n : names )
+	{
+		result.append( n );
+	}
+	return result;
+}
+
+object getAnnotationTemplateWrapper( const std::string &name )
+{
+	Annotation a = getAnnotationTemplate( name );
+	return a ? object( a ) : object();
+}
+
+list annotationTemplatesWrapper( bool userOnly )
+{
+	std::vector<std::string> names;
+	annotationTemplates( names, userOnly );
+	list result;
+	for( const auto &n : names )
+	{
+		result.append( n );
+	}
+	return result;
+}
+
+// Copying
+// =======
+
+void deprecatedCopyWrapper( const GraphComponent &from, GraphComponent &to, const IECore::StringAlgo::MatchPattern &exclude, bool persistentOnly, bool persistent )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	copy( &from, &to, exclude, persistentOnly, persistent );
+}
+
+void copyWrapper( const GraphComponent &from, GraphComponent &to, bool persistent )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	copy( &from, &to, persistent );
+}
+
+void copyIfWrapper( const GraphComponent &from, GraphComponent &to, object predicate, bool persistent )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	copyIf(
+		&from, &to,
+		[&predicate] ( const GraphComponent *from, const GraphComponent *to, IECore::InternedString name ) {
+			IECorePython::ScopedGILLock gilLock;
+			return (bool)predicate(
+				GraphComponentPtr( const_cast<GraphComponent *>( from ) ),
+				GraphComponentPtr( const_cast<GraphComponent *>( to ) ),
+				name.string()
+			);
+		},
+		persistent
+	);
 }
 
 void copyColorsWrapper( const Gaffer::Plug &srcPlug, Gaffer::Plug &dstPlug, bool overwrite )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	copyColors( &srcPlug, &dstPlug, overwrite );
+}
+
+// Promotability
+// =============
+
+bool isPromotableWrapper( const GraphComponent &from, const GraphComponent &to, const IECore::InternedString &name )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return isPromotable( &from, &to, name );
+}
+
+// Cleanup
+// =======
+
+void deregisterRedundantValuesWrapper( GraphComponent &g )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return deregisterRedundantValues( &g );
 }
 
 } // namespace
@@ -116,11 +228,15 @@ void GafferModule::bindMetadataAlgo()
 	scope().attr( "MetadataAlgo" ) = module;
 	scope moduleScope( module );
 
+	// Read only
+	// =========
+
 	def( "setReadOnly", &setReadOnlyWrapper, ( arg( "graphComponent" ), arg( "readOnly"), arg( "persistent" ) = true ) );
 	def( "getReadOnly", &getReadOnly );
 	def( "setChildNodesAreReadOnly", &setChildNodesAreReadOnlyWrapper, ( arg( "node" ), arg( "readOnly"), arg( "persistent" ) = true ) );
 	def( "getChildNodesAreReadOnly", &getChildNodesAreReadOnly );
-	def( "readOnly", &readOnly );
+	def( "readOnly", &readOnlyWrapper );
+	def( "readOnlyReason", &readOnlyReasonWrapper );
 	def(
 		"readOnlyAffectedByChange",
 		(bool (*)( const GraphComponent *, IECore::TypeId, const IECore::StringAlgo::MatchPattern &, const IECore::InternedString &, const Gaffer::Plug * ))&readOnlyAffectedByChange,
@@ -133,9 +249,17 @@ void GafferModule::bindMetadataAlgo()
 	);
 	def(
 		"readOnlyAffectedByChange",
+		(bool (*)( const GraphComponent *, const GraphComponent *, const IECore::InternedString & ))&readOnlyAffectedByChange,
+		( arg( "graphComponent" ), arg( "changedGraphComponent"), arg( "changedKey" ) )
+	);
+	def(
+		"readOnlyAffectedByChange",
 		(bool (*)( const IECore::InternedString & ))&readOnlyAffectedByChange,
 		( arg( "changedKey" ) )
 	);
+
+	// Bookmarks
+	// =========
 
 	def( "setBookmarked", &setBookmarkedWrapper, ( arg( "graphComponent" ), arg( "bookmarked"), arg( "persistent" ) = true ) );
 	def( "getBookmarked", &getBookmarked );
@@ -146,6 +270,34 @@ void GafferModule::bindMetadataAlgo()
 	def( "getNumericBookmark", &getNumericBookmarkWrapper, ( arg( "scriptNode" ), arg( "bookmark" ) ) );
 	def( "numericBookmark", &numericBookmark, ( arg( "node" ) ) );
 	def( "numericBookmarkAffectedByChange", &numericBookmarkAffectedByChange, ( arg( "changedKey" ) ) );
+
+	// Annotations
+	// ===========
+
+	class_<Annotation>( "Annotation" )
+		.def( init<const std::string &>( arg( "text" ) ) )
+		.def( init<const std::string &, const Imath::Color3f &>( ( arg( "text" ), arg( "color" ) ) ) )
+		.def( "text", &Annotation::text, return_value_policy<copy_const_reference>() )
+		.def( "color", &Annotation::color, return_value_policy<copy_const_reference>() )
+		.def( self == self )
+		.def( self != self )
+		.def( !self )
+	;
+
+	def( "addAnnotation", &addAnnotationWrapper, ( arg( "node" ), arg( "name" ), arg( "annotation" ), arg( "persistent" ) = true ) );
+	def( "getAnnotation", &getAnnotationWrapper, ( arg( "node" ), arg( "name" ), arg( "inheritTemplate" ) = false ) );
+	def( "removeAnnotation", &removeAnnotationWrapper, ( arg( "node" ), arg( "name" ) ) );
+	def( "annotations", &annotationsWrapper, ( arg( "node" ), arg( "types" ) = Metadata::RegistrationTypes::All ) );
+
+	def( "addAnnotationTemplate", &addAnnotationTemplate, ( arg( "name" ), arg( "annotation" ), arg( "user" ) = true ) );
+	def( "getAnnotationTemplate", &getAnnotationTemplateWrapper, ( arg( "name" ) ) );
+	def( "removeAnnotationTemplate", &removeAnnotationTemplate, arg( "name" ) );
+	def( "annotationTemplates", &annotationTemplatesWrapper, arg( "userOnly" ) = false );
+
+	def( "annotationsAffectedByChange", &annotationsAffectedByChange, ( arg( "changedKey" ) ) );
+
+	// Change queries
+	// ==============
 
 	def(
 		"affectedByChange",
@@ -181,8 +333,23 @@ void GafferModule::bindMetadataAlgo()
 		( arg( "graphComponent" ), arg( "changedNodeTypeId"), arg( "changedNode" ) )
 	);
 
-	def( "copy", &copyWrapper, ( arg( "from" ), arg( "to" ), arg( "exclude" ) = "", arg( "persistentOnly" ) = true, arg( "persistent" ) = true ) );
+	// Copying
+	// =======
+
+	def( "copy", &deprecatedCopyWrapper, ( arg( "from" ), arg( "to" ), arg( "exclude" ) = "", arg( "persistentOnly" ) = true, arg( "persistent" ) = true ) );
+	def( "copy", &copyWrapper, ( arg( "from" ), arg( "to" ), arg( "persistent" ) ) );
+	def( "copyIf", &copyIfWrapper, ( arg( "from" ), arg( "to" ), arg( "predicate" ), arg( "persistent" ) = true ) );
 
 	def( "copyColors", &copyColorsWrapper,  (arg( "srcPlug" ), arg( "dstPlug" ), arg( "overwrite") ));
+
+	// Promotability
+	// =============
+
+	def( "isPromotable", &isPromotableWrapper, ( arg( "from" ), arg( "to" ), arg( "name" ) ) );
+
+	// Cleanup
+	// =======
+
+	def( "deregisterRedundantValues", &deregisterRedundantValuesWrapper );
 
 }

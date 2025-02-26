@@ -34,6 +34,14 @@
 #
 ##########################################################################
 
-from TractorDispatcher import TractorDispatcher
+from .TractorDispatcher import TractorDispatcher
+
+## Returns the `tractor.api.author` module, and must be the _only_
+# method used to access that module in GafferTractor. This allows us
+# to insert a mock API for testing in GafferTractorTest.
+def tractorAPI() :
+
+	import tractor.api.author as author
+	return author
 
 __import__( "IECore" ).loadConfig( "GAFFER_STARTUP_PATHS", subdirectory = "GafferTractor" )

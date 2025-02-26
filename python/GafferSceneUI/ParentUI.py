@@ -49,7 +49,7 @@ Gaffer.Metadata.registerNode(
 
 	"description",
 	"""
-	Parents one scene hierarchy into another.
+	Parents additional child hierarchies into the main scene hierarchy.
 	""",
 
 	plugs = {
@@ -58,30 +58,58 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The location which the child is parented under. This is
-			ignored when a filter is connected, in which case the child
-			is parented under all the locations matched by the filter.
+			The location which the children are parented under. This is
+			ignored when a filter is connected, in which case the children
+			are parented under all the locations matched by the filter.
 			""",
 
 			"userDefault", "/",
 			# Base class hides this if its not in use, but it's still
 			# pretty useful for the Parent node, so we make it visible
 			# unconditionally again.
-			## \todo There is an argument that this usage could be
-			#  made redundant by a MergeHierarchy node of some sort.
-			#  See how that pans out.
 			"layout:visibilityActivator", "",
 
 		],
 
-		"child" : [
+		"children" : [
 
 			"description",
 			"""
-			The child hierarchy to be parented.
+			The child hierarchies to be parented.
 			""",
 
-			"plugValueWidget:type", ""
+			"plugValueWidget:type", "",
+			"nodule:type", "GafferUI::CompoundNodule",
+			"noduleLayout:spacing", 0.5,
+
+		],
+
+		"parentVariable" : [
+
+			"description",
+			"""
+			A context variable used to pass the location of the parent to the
+			upstream nodes connected into the `children` plug. This can be used
+			to procedurally vary the children at each different parent location.
+			""",
+
+		],
+
+		"destination" : [
+
+			"description",
+			"""
+			The location where the children will be placed in the output scene.
+			The default is to place the children under the parent, but they may
+			be relocated anywhere while still inheriting the parent's transform.
+			This is particularly useful when parenting lights to geometry but
+			wanting to group them and control their visibility separately.
+
+			When the destination is evaluated, the `${scene:path}` variable holds
+			the source location matched by the filter. This allows the children
+			to be placed relative to the "parent". For example, `${scene:path}/..`
+			will place the children alongside the "parent" rather than under it.
+			""",
 
 		],
 

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_PRIMITIVEVARIABLEEXISTS_H
-#define GAFFERSCENE_PRIMITIVEVARIABLEEXISTS_H
+#pragma once
 
 #include "Gaffer/StringPlug.h"
 
@@ -52,10 +51,10 @@ class GAFFERSCENE_API PrimitiveVariableExists : public Gaffer::ComputeNode
 
 	public :
 
-		PrimitiveVariableExists( const std::string &name=defaultName<PrimitiveVariableExists>() );
+		explicit PrimitiveVariableExists( const std::string &name=defaultName<PrimitiveVariableExists>() );
 		~PrimitiveVariableExists() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::PrimitiveVariableExists, PrimitiveVariableExistsTypeId, Gaffer::ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::PrimitiveVariableExists, PrimitiveVariableExistsTypeId, Gaffer::ComputeNode );
 
 		ScenePlug *inPlug();
 		const ScenePlug *inPlug() const;
@@ -82,5 +81,3 @@ class GAFFERSCENE_API PrimitiveVariableExists : public Gaffer::ComputeNode
 IE_CORE_DECLAREPTR( PrimitiveVariableExists )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_PRIMITIVEVARIABLEEXISTS_H

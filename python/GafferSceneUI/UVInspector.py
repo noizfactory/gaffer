@@ -36,63 +36,49 @@
 
 import imath
 
-import IECore
-
 import Gaffer
 import GafferImage
-import GafferScene
 import GafferUI
-import GafferImageUI
 import GafferSceneUI
 
-class UVInspector( GafferUI.NodeSetEditor ) :
+class UVInspector( GafferSceneUI.SceneEditor ) :
 
 	def __init__( self, scriptNode, **kw ) :
 
 		column = GafferUI.ListContainer()
 
-		GafferUI.NodeSetEditor.__init__( self, column, scriptNode, **kw )
+		GafferSceneUI.SceneEditor.__init__( self, column, scriptNode, **kw )
 
-		self.__uvView = GafferSceneUI.UVView()
+		self.__uvView = GafferSceneUI.UVView( scriptNode )
+		self.__uvView["in"].setInput( self.settings()["in"] )
+		Gaffer.NodeAlgo.applyUserDefaults( self.__uvView )
 
 		with column :
 
-			with GafferUI.Frame( borderWidth = 4, borderStyle = GafferUI.Frame.BorderStyle.None ) :
-				toolbar = GafferUI.NodeToolbar.create( self.__uvView )
+			with GafferUI.Frame( borderWidth = 4, borderStyle = GafferUI.Frame.BorderStyle.None_ ) :
+				GafferUI.NodeToolbar.create( self.__uvView )
 
-			self.__gadgetWidget = GafferUI.GadgetWidget(
-				bufferOptions = {
-					GafferUI.GLWidget.BufferOptions.Double,
-					GafferUI.GLWidget.BufferOptions.AntiAlias
-				},
-			)
-
-			Gaffer.NodeAlgo.applyUserDefaults( self.__uvView )
-			self.__uvView.setContext( self.getContext() )
+			self.__gadgetWidget = GafferUI.GadgetWidget()
 
 			self.__gadgetWidget.setViewportGadget( self.__uvView.viewportGadget() )
 			self.__gadgetWidget.getViewportGadget().frame( imath.Box3f( imath.V3f( 0, 0, 0 ), imath.V3f( 1, 1, 0 ) ) )
 
-		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
+		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
+		self.__gadgetWidget.getViewportGadget().buttonPressSignal().connect(
+			Gaffer.WeakMethod( self.__buttonPress )
+		)
+		self.__gadgetWidget.getViewportGadget().dragBeginSignal().connect(
+			Gaffer.WeakMethod( self.__dragBegin )
+		)
+		self.__gadgetWidget.getViewportGadget().dragEndSignal().connect(
+			Gaffer.WeakMethod( self.__dragEnd )
+		)
 
 		self._updateFromSet()
 
 	def __repr__( self ) :
 
 		return "GafferSceneUI.UVInspector( scriptNode )"
-
-	def _updateFromSet( self ) :
-
-		GafferUI.NodeSetEditor._updateFromSet( self )
-
-		scene = None
-		if len( self.getNodeSet() ) :
-			for p in self.getNodeSet()[-1].children( GafferScene.ScenePlug ) :
-				if p.direction() == Gaffer.Plug.Direction.Out :
-					scene = p
-					break
-
-		self.__uvView["in"].setInput( scene )
 
 	def __keyPress( self, widget, event ) :
 
@@ -105,6 +91,23 @@ class UVInspector( GafferUI.NodeSetEditor ) :
 
 		return False
 
+	def __buttonPress( self, viewportGadget, event ) :
+
+		return event.buttons == event.Buttons.Left
+
+	def __dragBegin( self, viewportGadget, event ) :
+
+		uv = viewportGadget.rasterToGadgetSpace(
+			imath.V2f( event.line.p0.x, event.line.p0.y ),
+			viewportGadget.getPrimaryChild() # The gadget displaying the UVs
+		)
+		GafferUI.Pointer.setCurrent( "values" )
+		return imath.V2f( uv.p0.x, uv.p0.y )
+
+	def __dragEnd( self, viewportGadget, event ) :
+
+		GafferUI.Pointer.setCurrent( "" )
+
 GafferUI.Editor.registerType( "UVInspector", UVInspector )
 
 Gaffer.Metadata.registerNode(
@@ -113,7 +116,7 @@ Gaffer.Metadata.registerNode(
 
 	"toolbarLayout:customWidget:StateWidget:widgetType", "GafferSceneUI.UVInspector._StateWidget",
 	"toolbarLayout:customWidget:StateWidget:section", "Top",
-	"toolbarLayout:customWidget:StateWidget:index", -1,
+	"toolbarLayout:customWidget:StateWidget:index", 0,
 
 	plugs = {
 
@@ -126,23 +129,6 @@ Gaffer.Metadata.registerNode(
 			"fileSystemPath:extensionsLabel", "Show only image files",
 
 		],
-
-		"displayTransform" : [
-
-			"description",
-			"""
-			Applies colour space transformations for viewing the textures correctly.
-			""",
-
-			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
-			"label", "",
-			"toolbarLayout:width", 100,
-
-			"presetNames", lambda plug : IECore.StringVectorData( GafferImageUI.ImageView.registeredDisplayTransforms() ),
-			"presetValues", lambda plug : IECore.StringVectorData( GafferImageUI.ImageView.registeredDisplayTransforms() ),
-
-		]
-
 
 	}
 
@@ -160,16 +146,16 @@ class _StateWidget( GafferUI.Widget ) :
 
 		with row :
 
-			self.__busyWidget = GafferUI.BusyWidget( size = 20 )
 			self.__button = GafferUI.Button( hasFrame = False )
+			self.__busyWidget = GafferUI.BusyWidget( size = 20 )
 
 		self.__uvView = uvView
 
-		self.__buttonClickedConnection = self.__button.clickedSignal().connect(
+		self.__button.clickedSignal().connect(
 			Gaffer.WeakMethod( self.__buttonClick )
 		)
 
-		self.__stateChangedConnection = self.__uvView.stateChangedSignal().connect(
+		self.__uvView.stateChangedSignal().connect(
 			Gaffer.WeakMethod( self.__stateChanged )
 		)
 
@@ -187,7 +173,8 @@ class _StateWidget( GafferUI.Widget ) :
 	def __update( self ) :
 
 		paused = self.__uvView.getPaused()
-		self.__button.setImage( "timelinePause.png" if not paused else "timelinePlay.png" )
+		self.__button.setImage( "viewPause.png" if not paused else "viewPaused.png" )
 		self.__busyWidget.setBusy( self.__uvView.state() == self.__uvView.State.Running )
+		self.__button.setToolTip( "Viewer updates suspended, click to resume" if paused else "Click to suspend viewer updates [esc]" )
 
 UVInspector._StateWidget = _StateWidget

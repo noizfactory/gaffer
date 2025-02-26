@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 ##########################################################################
 #
 #  Copyright (c) 2013, Image Engine Design Inc. All rights reserved.
@@ -36,12 +34,17 @@
 #
 ##########################################################################
 
+import functools
+
 import IECore
 import IECoreScene
 
 import Gaffer
 import GafferUI
 import GafferScene
+import GafferSceneUI
+
+from GafferUI.PlugValueWidget import sole
 
 ##########################################################################
 # Metadata
@@ -75,11 +78,31 @@ def __cameraSummary( plug ) :
 
 	return ", ".join( info )
 
+def __rendererSummary( plug ) :
+
+	if plug["defaultRenderer"]["enabled"].getValue() :
+		return plug["defaultRenderer"]["value"].getValue()
+
+	return ""
+
+def __renderSetSummary( plug ) :
+
+	info = []
+	if plug["includedPurposes"]["enabled"].getValue() :
+		purposes = plug["includedPurposes"]["value"].getValue()
+		info.append( "Purposes {}".format( " / ".join( [ p.capitalize() for p in purposes ] ) if purposes else "None" ) )
+	if plug["inclusions"]["enabled"].getValue() :
+		info.append( "Inclusions {}".format( plug["inclusions"]["value"].getValue() ) )
+	if plug["exclusions"]["enabled"].getValue() :
+		info.append( "Exclusions {}".format( plug["exclusions"]["value"].getValue() ) )
+	if plug["additionalLights"]["enabled"].getValue() :
+		info.append( "Lights {}".format( plug["additionalLights"]["value"].getValue() ) )
+
+	return ", ".join( info )
+
 def __motionBlurSummary( plug ) :
 
 	info = []
-	if plug["cameraBlur"]["enabled"].getValue() :
-		info.append( "Camera " + ( "On" if plug["cameraBlur"]["value"].getValue() else "Off" ) )
 	if plug["transformBlur"]["enabled"].getValue() :
 		info.append( "Transform " + ( "On" if plug["transformBlur"]["value"].getValue() else "Off" ) )
 	if plug["deformationBlur"]["enabled"].getValue() :
@@ -108,6 +131,8 @@ plugsMetadata = {
 	"options" : [
 
 		"layout:section:Camera:summary", __cameraSummary,
+		"layout:section:Renderer:summary", __rendererSummary,
+		"layout:section:Render Set:summary", __renderSetSummary,
 		"layout:section:Motion Blur:summary", __motionBlurSummary,
 		"layout:section:Statistics:summary", __statisticsSummary,
 
@@ -153,7 +178,7 @@ plugsMetadata = {
 		its aspect ratio. If the aperture's aspect ratio is larger than
 		the resolution's, the top/bottom edges of the aperture will be
 		cropped. If it's smaller, then the top/bottom edges will
-		capture extra vertical scene content. 
+		capture extra vertical scene content.
 		- _Vertical:_ The aperture gate will fit vertically between the
 		top/bottom edges of the resolution gate, while preserving its
 		aspect ratio. If the aperture's aspect ratio is larger than the
@@ -171,7 +196,7 @@ plugsMetadata = {
 		preserving its aspect ratio. In other words, it will make the
 		opposite choice of the _Fit_ mode. If the two gates' aspect
 		ratios differ, the aperture will be horizontally or vertically
-		cropped. 
+		cropped.
 		- _Distort:_ The aperture gate will match the size of the
 		resolution gate. If their aspect ratios differ, the resulting
 		image will appear vertically or horizontally stretched or
@@ -324,22 +349,116 @@ plugsMetadata = {
 		"layout:section", "Camera",
 	],
 
-	# Motion blur plugs
+	# Renderer
 
-	"options.cameraBlur" : [
+	"options.defaultRenderer" : [
 
 		"description",
 		"""
-		Whether or not camera motion is taken into
-		account in the renderered image. To specify the
-		number of segments to use for camera motion, use
-		a StandardAttributes node filtered for the camera.
+		Specifies the default renderer to be used by the Render and
+		InteractiveRender nodes.
 		""",
 
-		"layout:section", "Motion Blur",
-		"label", "Camera",
+		"label", "Default Renderer",
+		"layout:section", "Renderer",
 
 	],
+
+	"options.defaultRenderer.value" : [
+
+		"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+		"preset:None", "",
+		"presetNames", GafferSceneUI.RenderUI.rendererPresetNames,
+		"presetValues", GafferSceneUI.RenderUI.rendererPresetNames,
+
+	],
+
+	# Render Set
+
+	"options.includedPurposes" : [
+
+		"description",
+		"""
+		Limits the objects included in the render according to the values of their `usd:purpose`
+		attribute. The "Default" purpose includes all objects which have no `usd:purpose` attribute;
+		other than for debugging, there is probably no good reason to omit it.
+
+		> Tip : Use the USDAttributes node to assign the `usd:purpose` attribute.
+		""",
+
+		"layout:section", "Render Set",
+
+	],
+
+	"options.includedPurposes.value" : [
+
+		"plugValueWidget:type", "GafferSceneUI.StandardOptionsUI._IncludedPurposesPlugValueWidget",
+
+	],
+
+	"options.inclusions" : [
+
+		"description",
+		"""
+		A set expression that limits the objects included in the render to only those matched
+		and their descendants. Objects not matched by the set expression will be pruned from
+		the scene.
+
+		> Tip : Cameras are included by default and do not need to be specified here.
+		""",
+
+		"layout:section", "Render Set",
+
+	],
+
+	"options.inclusions.value" : [
+
+		"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
+		"ui:scene:acceptsSetExpression", True,
+
+	],
+
+	"options.exclusions" : [
+
+		"description",
+		"""
+		A set expression that excludes the matched objects from the render. Exclusions
+		affect both `inclusions` and `additionalLights` and cause the matching objects and
+		their descendants to be pruned from the scene.
+		""",
+
+		"layout:section", "Render Set",
+
+	],
+
+	"options.exclusions.value" : [
+
+		"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
+		"ui:scene:acceptsSetExpression", True,
+
+	],
+
+	"options.additionalLights" : [
+
+		"description",
+		"""
+		A set expression that specifies additional lights to be included in the render.
+		This differs from `inclusions` in that only lights and light filters will be
+		matched by this set expression.
+		""",
+
+		"layout:section", "Render Set",
+
+	],
+
+	"options.additionalLights.value" : [
+
+		"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
+		"ui:scene:acceptsSetExpression", True,
+
+	],
+
+	# Motion blur plugs
 
 	"options.transformBlur" : [
 
@@ -428,3 +547,64 @@ Gaffer.Metadata.registerNode(
 	plugs = plugsMetadata
 
 )
+
+class _IncludedPurposesPlugValueWidget( GafferUI.PlugValueWidget ) :
+
+	__allPurposes = [ "default", "render", "proxy", "guide" ]
+
+	def __init__( self, plugs, **kw ) :
+
+		self.__menuButton = GafferUI.MenuButton( "", menu = GafferUI.Menu( Gaffer.WeakMethod( self.__menuDefinition ) ) )
+		GafferUI.PlugValueWidget.__init__( self, self.__menuButton, plugs, **kw )
+
+		self._addPopupMenu( self.__menuButton )
+
+		self.__currentValue = None
+
+	def _updateFromValues( self, values, exception ) :
+
+		self.__currentValue = sole( values )
+		if self.__currentValue :
+			self.__menuButton.setText( ", ".join( [ p.capitalize() for p in self.__currentValue ] ) )
+		else :
+			# A value of `None` means we have multiple different values (from different plugs),
+			# and a value of `[]` means the user has disabled all purposes.
+			self.__menuButton.setText( "---" if self.__currentValue is None else "None" )
+		self.__menuButton.setErrored( exception is not None )
+
+	def _updateFromEditable( self ) :
+
+		self.__menuButton.setEnabled( self._editable() )
+
+	def __menuDefinition( self ) :
+
+		result = IECore.MenuDefinition()
+
+		currentValue = self.__currentValue or []
+		for purpose in self.__allPurposes :
+
+			result.append(
+				"/{}".format( purpose.capitalize() ),
+				{
+					"checkBox" : purpose in currentValue,
+					"command" : functools.partial( Gaffer.WeakMethod( self.__togglePurpose ), purpose = purpose )
+				}
+			)
+
+
+		return result
+
+	def __togglePurpose( self, checked, purpose ) :
+
+		with self.context() :
+			with Gaffer.UndoScope( self.scriptNode() ) :
+				for plug in self.getPlugs() :
+					value = plug.getValue()
+					# Conform value so that only valid purposes are present, and they are
+					# always presented in the same order.
+					value = [
+						p for p in self.__allPurposes
+						if
+						( p != purpose and p in value ) or ( p == purpose and checked )
+					]
+					plug.setValue( IECore.StringVectorData( value ) )

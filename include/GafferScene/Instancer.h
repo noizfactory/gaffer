@@ -35,10 +35,19 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_INSTANCER_H
-#define GAFFERSCENE_INSTANCER_H
+#pragma once
 
+#include "GafferScene/Export.h"
 #include "GafferScene/BranchCreator.h"
+#include "GafferScene/Capsule.h"
+
+namespace GafferSceneModule
+{
+
+// Forward declaration to enable friend declaration.
+void bindHierarchy();
+
+} // namespace GafferSceneModule
 
 namespace GafferScene
 {
@@ -48,22 +57,77 @@ class GAFFERSCENE_API Instancer : public BranchCreator
 
 	public :
 
+
+		/// Compound plug for representing context variables to be created
+		/// by the Instancer. These should be parented to `contextVariablesPlug()`.
+		class GAFFERSCENE_API ContextVariablePlug : public Gaffer::ValuePlug
+		{
+
+			public :
+
+				GAFFER_PLUG_DECLARE_TYPE( ContextVariablePlug, InstancerContextVariablePlugTypeId, Gaffer::ValuePlug );
+
+				explicit ContextVariablePlug(
+					const std::string &name = defaultName<ContextVariablePlug>(),
+					Direction direction=In,
+					bool defaultEnable = true,
+					unsigned flags = Default
+				);
+
+				~ContextVariablePlug() override;
+
+				/// Accepts no children following construction.
+				bool acceptsChild( const GraphComponent *potentialChild ) const override;
+				Gaffer::PlugPtr createCounterpart( const std::string &name, Direction direction ) const override;
+
+				Gaffer::BoolPlug *enabledPlug();
+				const Gaffer::BoolPlug *enabledPlug() const;
+
+				Gaffer::StringPlug *namePlug();
+				const Gaffer::StringPlug *namePlug() const;
+
+				Gaffer::FloatPlug *quantizePlug();
+				const Gaffer::FloatPlug *quantizePlug() const;
+
+		};
+
+		IE_CORE_DECLAREPTR( ContextVariablePlug );
+
 		Instancer( const std::string &name=defaultName<Instancer>() );
 		~Instancer() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Instancer, InstancerTypeId, BranchCreator );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Instancer, InstancerTypeId, BranchCreator );
+
+		enum class PrototypeMode
+		{
+			IndexedRootsList = 0,
+			IndexedRootsVariable,
+			RootPerVertex,
+		};
 
 		Gaffer::StringPlug *namePlug();
 		const Gaffer::StringPlug *namePlug() const;
 
-		ScenePlug *instancesPlug();
-		const ScenePlug *instancesPlug() const;
+		ScenePlug *prototypesPlug();
+		const ScenePlug *prototypesPlug() const;
 
-		Gaffer::StringPlug *indexPlug();
-		const Gaffer::StringPlug *indexPlug() const;
+		Gaffer::IntPlug *prototypeModePlug();
+		const Gaffer::IntPlug *prototypeModePlug() const;
+
+		Gaffer::StringPlug *prototypeIndexPlug();
+		const Gaffer::StringPlug *prototypeIndexPlug() const;
+
+		Gaffer::StringPlug *prototypeRootsPlug();
+		const Gaffer::StringPlug *prototypeRootsPlug() const;
+
+		Gaffer::StringVectorDataPlug *prototypeRootsListPlug();
+		const Gaffer::StringVectorDataPlug *prototypeRootsListPlug() const;
 
 		Gaffer::StringPlug *idPlug();
 		const Gaffer::StringPlug *idPlug() const;
+
+		Gaffer::BoolPlug *omitDuplicateIdsPlug();
+		const Gaffer::BoolPlug *omitDuplicateIdsPlug() const;
 
 		Gaffer::StringPlug *positionPlug();
 		const Gaffer::StringPlug *positionPlug() const;
@@ -74,8 +138,41 @@ class GAFFERSCENE_API Instancer : public BranchCreator
 		Gaffer::StringPlug *scalePlug();
 		const Gaffer::StringPlug *scalePlug() const;
 
+		Gaffer::StringPlug *inactiveIdsPlug();
+		const Gaffer::StringPlug *inactiveIdsPlug() const;
+
 		Gaffer::StringPlug *attributesPlug();
 		const Gaffer::StringPlug *attributesPlug() const;
+
+		Gaffer::StringPlug *attributePrefixPlug();
+		const Gaffer::StringPlug *attributePrefixPlug() const;
+
+		Gaffer::BoolPlug *encapsulatePlug();
+		const Gaffer::BoolPlug *encapsulatePlug() const;
+
+		Gaffer::BoolPlug *seedEnabledPlug();
+		const Gaffer::BoolPlug *seedEnabledPlug() const;
+
+		Gaffer::StringPlug *seedVariablePlug();
+		const Gaffer::StringPlug *seedVariablePlug() const;
+
+		Gaffer::IntPlug *seedsPlug();
+		const Gaffer::IntPlug *seedsPlug() const;
+
+		Gaffer::IntPlug *seedPermutationPlug();
+		const Gaffer::IntPlug *seedPermutationPlug() const;
+
+		Gaffer::BoolPlug *rawSeedPlug();
+		const Gaffer::BoolPlug *rawSeedPlug() const;
+
+		Gaffer::ValuePlug *contextVariablesPlug();
+		const Gaffer::ValuePlug *contextVariablesPlug() const;
+
+		ContextVariablePlug *timeOffsetPlug();
+		const ContextVariablePlug *timeOffsetPlug() const;
+
+		Gaffer::AtomicCompoundDataPlug *variationsPlug();
+		const Gaffer::AtomicCompoundDataPlug *variationsPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -84,61 +181,96 @@ class GAFFERSCENE_API Instancer : public BranchCreator
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
+		Gaffer::ValuePlug::CachePolicy hashCachePolicy( const Gaffer::ValuePlug *output ) const override;
+
 		bool affectsBranchBound( const Gaffer::Plug *input ) const override;
-		void hashBranchBound( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::Box3f computeBranchBound( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+		void hashBranchBound( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		Imath::Box3f computeBranchBound( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
 
 		bool affectsBranchTransform( const Gaffer::Plug *input ) const override;
-		void hashBranchTransform( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::M44f computeBranchTransform( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+		void hashBranchTransform( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		Imath::M44f computeBranchTransform( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
 
 		bool affectsBranchAttributes( const Gaffer::Plug *input ) const override;
-		void hashBranchAttributes( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstCompoundObjectPtr computeBranchAttributes( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+		void hashBranchAttributes( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstCompoundObjectPtr computeBranchAttributes( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
 
 		bool affectsBranchObject( const Gaffer::Plug *input ) const override;
-		void hashBranchObject( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeBranchObject( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+		// Implemented to remove the parent object, because we "convert" the points into a hierarchy
+		bool processesRootObject() const override;
+		void hashBranchObject( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstObjectPtr computeBranchObject( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+
+		void hashObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const override;
+		IECore::ConstObjectPtr computeObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const override;
 
 		bool affectsBranchChildNames( const Gaffer::Plug *input ) const override;
-		void hashBranchChildNames( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstInternedStringVectorDataPtr computeBranchChildNames( const ScenePath &parentPath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+		void hashBranchChildNames( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstInternedStringVectorDataPtr computeBranchChildNames( const ScenePath &sourcePath, const ScenePath &branchPath, const Gaffer::Context *context ) const override;
+
+		void hashChildNames( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const override;
+		IECore::ConstInternedStringVectorDataPtr computeChildNames( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const override;
 
 		bool affectsBranchSetNames( const Gaffer::Plug *input ) const override;
-		void hashBranchSetNames( const ScenePath &parentPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstInternedStringVectorDataPtr computeBranchSetNames( const ScenePath &parentPath, const Gaffer::Context *context ) const override;
+		void hashBranchSetNames( const ScenePath &sourcePath, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstInternedStringVectorDataPtr computeBranchSetNames( const ScenePath &sourcePath, const Gaffer::Context *context ) const override;
 
 		bool affectsBranchSet( const Gaffer::Plug *input ) const override;
-		void hashBranchSet( const ScenePath &parentPath, const IECore::InternedString &setName, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstPathMatcherDataPtr computeBranchSet( const ScenePath &parentPath, const IECore::InternedString &setName, const Gaffer::Context *context ) const override;
+		void hashBranchSet( const ScenePath &sourcePath, const IECore::InternedString &setName, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstPathMatcherDataPtr computeBranchSet( const ScenePath &sourcePath, const IECore::InternedString &setName, const Gaffer::Context *context ) const override;
+
+		void hashSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const override;
+		IECore::ConstPathMatcherDataPtr computeSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent ) const override;
 
 	private :
 
 		IE_CORE_FORWARDDECLARE( EngineData );
+		IE_CORE_FORWARDDECLARE( EngineSplitPrototypesData );
+		IE_CORE_FORWARDDECLARE( InstancerCapsule );
 
 		Gaffer::ObjectPlug *enginePlug();
 		const Gaffer::ObjectPlug *enginePlug() const;
 
-		Gaffer::AtomicCompoundDataPlug *instanceChildNamesPlug();
-		const Gaffer::AtomicCompoundDataPlug *instanceChildNamesPlug() const;
+		Gaffer::ObjectPlug *engineSplitPrototypesPlug();
+		const Gaffer::ObjectPlug *engineSplitPrototypesPlug() const;
 
-		ConstEngineDataPtr engine( const ScenePath &parentPath, const Gaffer::Context *context ) const;
-		void engineHash( const ScenePath &parentPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const;
 
-		IECore::ConstCompoundDataPtr instanceChildNames( const ScenePath &parentPath, const Gaffer::Context *context ) const;
-		void instanceChildNamesHash( const ScenePath &parentPath, const Gaffer::Context *context, IECore::MurmurHash &h ) const;
+		GafferScene::ScenePlug *capsuleScenePlug();
+		const GafferScene::ScenePlug *capsuleScenePlug() const;
 
-		struct InstanceScope : public Gaffer::Context::EditableScope
+		// This plug does heavy lifting when necessary to do an expensive set plug computation
+		// It uses a TaskCollaborate policy to allow threads to cooperate, and is evaluated with
+		// a scenePath in the context to return a PathMatcher for the set contents for one branch
+		Gaffer::PathMatcherDataPlug *setCollaboratePlug();
+		const Gaffer::PathMatcherDataPlug *setCollaboratePlug() const;
+
+		ConstEngineDataPtr engine( const ScenePath &sourcePath, const Gaffer::Context *context ) const;
+		void engineHash( const ScenePath &sourcePath, const Gaffer::Context *context, IECore::MurmurHash &h ) const;
+
+		ConstEngineSplitPrototypesDataPtr engineSplitPrototypes( const ScenePath &sourcePath, const Gaffer::Context *context ) const;
+		void engineSplitPrototypesHash( const ScenePath &sourcePath, const Gaffer::Context *context, IECore::MurmurHash &h ) const;
+
+		struct PrototypeScope : public Gaffer::Context::EditableScope
 		{
-			InstanceScope( const Gaffer::Context *context, const ScenePath &branchPath );
+			PrototypeScope( const Gaffer::ObjectPlug *enginePlug, const Gaffer::Context *context, const ScenePath *parentPath, const ScenePath *branchPath );
+			PrototypeScope( const EngineData *engine, const Gaffer::Context *context, const ScenePath *parentPath, const ScenePath *branchPath );
+			private :
+				ScenePlug::ScenePath m_prototypePath;
+				void setPrototype( const EngineData *engine, const ScenePath *branchPath );
+
+				// Used when PrototypeScope retrieves the EngineData itself, and needs to keep it alive
+				ConstEngineDataPtr m_engine;
 		};
 
 		static size_t g_firstPlugIndex;
+
+		// For bindings
+		friend void GafferSceneModule::bindHierarchy();
+		static const std::type_info &instancerCapsuleTypeInfo();
 
 };
 
 IE_CORE_DECLAREPTR( Instancer )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_INSTANCER_H

@@ -35,7 +35,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import unittest
 
 import imath
@@ -52,7 +52,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testPassThrough( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/groupedPlane.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "groupedPlane.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -68,7 +68,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testSubTree( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/groupedPlane.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "groupedPlane.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -95,7 +95,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testRootHashesEqual( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/animatedCube.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "animatedCube.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -214,7 +214,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 
 		s = GafferScene.SubTree()
 
-		for n in s["in"].keys() :
+		for n in [ "bound", "transform", "attributes", "object", "childNames", "set" ] :
 			a = s.affects( s["in"][n] )
 			self.assertEqual( len( a ), 1 )
 			self.assertTrue( a[0].isSame( s["out"][n] ) )
@@ -222,7 +222,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testIncludeRoot( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/groupedPlane.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "groupedPlane.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -231,7 +231,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 
 		self.assertSceneValid( s["out"] )
 
-		self.assertScenesEqual( s["out"], a["out"], pathsToIgnore = [ "/", ] )
+		self.assertScenesEqual( s["out"], a["out"] )
 		self.assertEqual( s["out"].childNames( "/" ), IECore.InternedStringVectorData( [ "group" ] ) )
 		self.assertEqual( s["out"].bound( "/" ), a["out"].bound( "/group" ) )
 
@@ -240,7 +240,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testRootBoundWithTransformedChild( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/animatedCube.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "animatedCube.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -259,7 +259,7 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 	def testIncludeRootPassesThroughWhenNoRootSpecified( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/animatedCube.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "animatedCube.abc" )
 
 		s = GafferScene.SubTree()
 		s["in"].setInput( a["out"] )
@@ -350,6 +350,204 @@ class SubTreeTest( GafferSceneTest.SceneTestCase ) :
 				self.assertEqual( s["out"].bound( "/" ), imath.Box3f() )
 				self.assertEqual( s["out"].attributes( "/" ), IECore.CompoundObject() )
 				self.assertEqual( s["out"].transform( "/" ), imath.M44f() )
+
+	def testRootPathNeverInSet( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["sets"].setValue( "setA" )
+
+		subTree = GafferScene.SubTree()
+		subTree["in"].setInput( sphere["out"] )
+		subTree["root"].setValue( "/sphere" )
+		subTree["includeRoot"].setValue( True )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		subTree["includeRoot"].setValue( False )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher() )
+
+	def testTranformInheritance( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["transform"]["translate"]["y"].setValue( 2 )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sphere["out"] )
+		group["transform"]["translate"]["x"].setValue( 10 )
+		group["transform"]["scale"]["y"].setValue( 10 )
+
+		subTree = GafferScene.SubTree()
+		subTree["in"].setInput( group["out"] )
+		subTree["root"].setValue( "/group" )
+
+		self.assertEqual(
+			subTree["out"].transform( "/sphere" ),
+			subTree["in"].transform( "/group/sphere" )
+		)
+
+		subTree["inheritTransform"].setValue( True )
+		self.assertEqual(
+			subTree["out"].transform( "/sphere" ),
+			subTree["in"].fullTransform( "/group/sphere" )
+		)
+
+		subTree["includeRoot"].setValue( True )
+		subTree["root"].setValue( "/group/sphere" )
+		self.assertEqual(
+			subTree["out"].transform( "/sphere" ),
+			subTree["in"].fullTransform( "/group/sphere" )
+		)
+
+		subTree["inheritTransform"].setValue( False )
+		self.assertEqual(
+			subTree["out"].transform( "/sphere" ),
+			subTree["in"].transform( "/group/sphere" )
+		)
+
+		subTree["inheritTransform"].setValue( True )
+		subTree["root"].setValue( "/" )
+		self.assertScenesEqual( subTree["out"], subTree["in"] )
+
+	def testAttributeInheritance( self ) :
+
+		# /group            (groupAttr : b, bothAttr : group)
+		#    /sphere        (sphereAttr : a, bothAttr : sphere)
+
+		sphere = GafferScene.Sphere()
+
+		sphereFilter = GafferScene.PathFilter()
+		sphereFilter["paths"].setValue( IECore.StringVectorData( [ "/sphere" ] ) )
+
+		sphereAttributes = GafferScene.CustomAttributes()
+		sphereAttributes["in"].setInput( sphere["out"] )
+		sphereAttributes["filter"].setInput( sphereFilter["out"] )
+		sphereAttributes["attributes"].addChild( Gaffer.NameValuePlug( "sphereAttr", "a" ) )
+		sphereAttributes["attributes"].addChild( Gaffer.NameValuePlug( "bothAttr", "sphere" ) )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sphereAttributes["out"] )
+
+		groupFilter = GafferScene.PathFilter()
+		groupFilter["paths"].setValue( IECore.StringVectorData( [ "/group" ] ) )
+
+		groupAttributes = GafferScene.CustomAttributes()
+		groupAttributes["in"].setInput( group["out"] )
+		groupAttributes["filter"].setInput( groupFilter["out"] )
+		groupAttributes["attributes"].addChild( Gaffer.NameValuePlug( "groupAttr", "b" ) )
+		groupAttributes["attributes"].addChild( Gaffer.NameValuePlug( "bothAttr", "group" ) )
+
+		self.assertEqual(
+			groupAttributes["out"].attributes( "/group" ),
+			IECore.CompoundObject( {
+				"groupAttr" : IECore.StringData( "b" ),
+				"bothAttr" : IECore.StringData( "group" ),
+			} )
+		)
+
+		self.assertEqual(
+			groupAttributes["out"].attributes( "/group/sphere" ),
+			IECore.CompoundObject( {
+				"sphereAttr" : IECore.StringData( "a" ),
+				"bothAttr" : IECore.StringData( "sphere" ),
+			} )
+		)
+
+		# Test SubTree attribute inheritance
+
+		subTree = GafferScene.SubTree()
+		subTree["in"].setInput( groupAttributes["out"] )
+		self.assertScenesEqual( subTree["out"], subTree["in"] )
+
+		subTree["inheritAttributes"].setValue( True )
+		self.assertScenesEqual( subTree["out"], subTree["in"] )
+
+		subTree["root"].setValue( "/group" )
+		self.assertEqual(
+			subTree["out"].attributes( "/sphere" ),
+			IECore.CompoundObject( {
+				"sphereAttr" : IECore.StringData( "a" ),
+				"bothAttr" : IECore.StringData( "sphere" ),
+				"groupAttr" : IECore.StringData( "b" ),
+			} )
+		)
+
+		subTree["includeRoot"].setValue( True )
+		self.assertScenesEqual( subTree["out"], subTree["in"] )
+
+	def testSetInheritance( self ) :
+
+		# /groupA            (setA)
+		#  /groupB           (setB)
+		#    /sphere         (setB)
+
+		sphere = GafferScene.Sphere()
+
+		groupB = GafferScene.Group()
+		groupB["name"].setValue( "groupB" )
+		groupB["in"][0].setInput( sphere["out"] )
+
+		groupA = GafferScene.Group()
+		groupA["name"].setValue( "groupA" )
+		groupA["in"][0].setInput( groupB["out"] )
+
+		pathFilterA = GafferScene.PathFilter()
+		pathFilterA["paths"].setValue( IECore.StringVectorData( [ "/groupA" ] ) )
+
+		pathFilterB = GafferScene.PathFilter()
+		pathFilterB["paths"].setValue( IECore.StringVectorData( [ "/groupA/groupB", "/groupA/groupB/sphere" ] ) )
+
+		setA = GafferScene.Set()
+		setA["in"].setInput( groupA["out"] )
+		setA["filter"].setInput( pathFilterA["out"] )
+		setA["name"].setValue( "setA" )
+
+		setB = GafferScene.Set()
+		setB["in"].setInput( setA["out"] )
+		setB["filter"].setInput( pathFilterB["out"] )
+		setB["name"].setValue( "setB" )
+
+		# Test with `inheritSetMembership` off.
+
+		subTree = GafferScene.SubTree()
+		subTree["in"].setInput( setB["out"] )
+		subTree["root"].setValue( "/groupA" )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher() )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/groupB", "/groupB/sphere" ] ) )
+
+		subTree["includeRoot"].setValue( True )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/groupA" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/groupA/groupB", "/groupA/groupB/sphere" ] ) )
+
+		# Test with `inheritSetMembership` on.
+
+		subTree["includeRoot"].setValue( False )
+		subTree["inheritSetMembership"].setValue( True )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/groupB" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/groupB", "/groupB/sphere" ] ) )
+
+		subTree["root"].setValue( "/groupA/groupB" )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/sphere" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		# Test with `includeRoot` on as well.
+
+		subTree["includeRoot"].setValue( True )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/groupB" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/groupB", "/groupB/sphere" ] ) )
+
+		subTree["root"].setValue( "/groupA/groupB/sphere" )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/sphere" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		subTree["root"].setValue( "/groupA" )
+		self.assertSceneValid( subTree["out"] )
+		self.assertEqual( subTree["out"].set( "setA" ).value, IECore.PathMatcher( [ "/groupA" ] ) )
+		self.assertEqual( subTree["out"].set( "setB" ).value, IECore.PathMatcher( [ "/groupA/groupB", "/groupA/groupB/sphere" ] ) )
 
 if __name__ == "__main__":
 	unittest.main()

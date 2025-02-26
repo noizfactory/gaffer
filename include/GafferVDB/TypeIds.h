@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERVDB_TYPEIDS_H
-#define GAFFERVDB_TYPEIDS_H
+#pragma once
 
 namespace GafferVDB
 {
@@ -48,10 +47,11 @@ enum TypeId
 	MeshToLevelSetTypeId = 110953,
 	LevelSetToMeshTypeId = 110954,
 	LevelSetOffsetTypeId = 110955,
-	PointsGridToPointsId = 110956,
+	PointsGridToPointsTypeId = 110956,
+	SphereLevelSetTypeId = 110957,
+	PointsToLevelSetTypeId = 110958,
+	VolumeScatterTypeId = 110959,
 	LastTypeId = 110974
 };
 
 } // namespace GafferVDB
-
-#endif // GAFFERVDB_TYPEIDS_H

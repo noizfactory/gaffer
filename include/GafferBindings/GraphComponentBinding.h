@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_GRAPHCOMPONENTBINDING_H
-#define GAFFERBINDINGS_GRAPHCOMPONENTBINDING_H
+#pragma once
 
 #include "Gaffer/GraphComponent.h"
 
@@ -82,7 +81,7 @@ class GraphComponentWrapper : public IECorePython::RunTimeTypedWrapper<WrappedTy
 						return f( Gaffer::GraphComponentPtr( const_cast<Gaffer::GraphComponent *>( potentialChild ) ) );
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -103,12 +102,34 @@ class GraphComponentWrapper : public IECorePython::RunTimeTypedWrapper<WrappedTy
 						return f( Gaffer::GraphComponentPtr( const_cast<Gaffer::GraphComponent *>( potentialParent ) ) );
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
 			}
 			return WrappedType::acceptsParent( potentialParent );
+		}
+
+		void nameChanged( IECore::InternedString oldName ) override
+		{
+			if( this->isSubclassed() )
+			{
+				IECorePython::ScopedGILLock gilLock;
+				try
+				{
+					boost::python::object f = this->methodOverride( "_nameChanged" );
+					if( f )
+					{
+						f( oldName.string() );
+						return;
+					}
+				}
+				catch( const boost::python::error_already_set & )
+				{
+					IECorePython::ExceptionAlgo::translatePythonException();
+				}
+			}
+			WrappedType::nameChanged( oldName );
 		}
 
 		void parentChanging( Gaffer::GraphComponent *newParent ) override
@@ -125,7 +146,7 @@ class GraphComponentWrapper : public IECorePython::RunTimeTypedWrapper<WrappedTy
 						return;
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -147,7 +168,7 @@ class GraphComponentWrapper : public IECorePython::RunTimeTypedWrapper<WrappedTy
 						return;
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -160,5 +181,3 @@ class GraphComponentWrapper : public IECorePython::RunTimeTypedWrapper<WrappedTy
 } // namespace GafferBindings
 
 #include "GafferBindings/GraphComponentBinding.inl"
-
-#endif // GAFFERBINDINGS_GRAPHCOMPONENTBINDING_H

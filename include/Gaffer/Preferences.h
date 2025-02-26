@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PREFERENCES_H
-#define GAFFER_PREFERENCES_H
+#pragma once
 
 #include "Gaffer/Node.h"
 
@@ -48,10 +47,10 @@ class GAFFER_API Preferences : public Node
 
 	public :
 
-		Preferences( const std::string &name=defaultName<Preferences>() );
+		explicit Preferences( const std::string &name=defaultName<Preferences>() );
 		~Preferences() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Preferences, PreferencesTypeId, Node );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Preferences, PreferencesTypeId, Node );
 
 		/// Accepts only Plugs.
 		bool acceptsChild( const GraphComponent *potentialChild ) const override;
@@ -63,5 +62,3 @@ class GAFFER_API Preferences : public Node
 IE_CORE_DECLAREPTR( Preferences );
 
 } // namespace Gaffer
-
-#endif // GAFFER_PREFERENCES_H

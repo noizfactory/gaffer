@@ -34,16 +34,20 @@
 #
 ##########################################################################
 
+import re
+
 import IECore
 
 import Gaffer
 import GafferUI
+import GafferUI.SpreadsheetUI
+
+from GafferUI.PlugValueWidget import sole
 
 ## Supported plug metadata :
 #
 # - "nameValuePlugPlugValueWidget:ignoreNamePlug", set to True to ignore the name plug and instead show a
-#   label with the name of the NameValuePlug.  This is the same behaviour you get by default if the plug
-#   is not dynamic
+#   label with the name of the NameValuePlug.
 class NameValuePlugValueWidget( GafferUI.PlugValueWidget ) :
 
 	def __init__( self, childPlug ) :
@@ -52,86 +56,164 @@ class NameValuePlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		GafferUI.PlugValueWidget.__init__( self, self.__row, childPlug )
 
-		if not childPlug.getFlags( Gaffer.Plug.Flags.Dynamic ) or Gaffer.Metadata.value(
-				childPlug, "nameValuePlugPlugValueWidget:ignoreNamePlug" ):
+		## \todo We should support no plugs here. Move the UI configuration into setPlugs
+		assert( len( self.getPlugs() ) > 0 )
+
+		# We use a non-editable label if requested by "nameValuePlugPlugValueWidget:ignoreNamePlug" metadata.
+
+		if any( Gaffer.Metadata.value( p, "nameValuePlugPlugValueWidget:ignoreNamePlug" ) for p in self.getPlugs() ) :
 			nameWidget = GafferUI.LabelPlugValueWidget(
-				childPlug,
+				self.getPlugs(),
 				horizontalAlignment = GafferUI.Label.HorizontalAlignment.Right,
-				verticalAlignment = GafferUI.Label.VerticalAlignment.Center,
 			)
 			nameWidget.label()._qtWidget().setFixedWidth( GafferUI.PlugWidget.labelWidth() )
-			# cheat to get the height of the label to match the height of a line edit
-			# so the label and plug widgets align nicely. ideally we'd get the stylesheet
-			# sorted for the QLabel so that that happened naturally, but QLabel sizing appears
-			# somewhat unpredictable (and is sensitive to HTML in the text as well), making this
-			# a tricky task.
-			nameWidget.label()._qtWidget().setFixedHeight( 20 )
+			nameWidget.dropSignal().connectFront( Gaffer.WeakMethod( self.__drop ) )
 		else :
-			nameWidget = GafferUI.StringPlugValueWidget( childPlug["name"] )
+			nameWidget = GafferUI.StringPlugValueWidget( { plug["name"] for plug in self.getPlugs() } )
 			nameWidget.textWidget()._qtWidget().setFixedWidth( GafferUI.PlugWidget.labelWidth() )
 
 		self.__row.append( nameWidget,
 			verticalAlignment = GafferUI.Label.VerticalAlignment.Top
 		)
 
-		if "enabled" in childPlug :
+		if all( [ "enabled" in plug for plug in self.getPlugs() ] ) :
 			self.__row.append(
 				GafferUI.BoolPlugValueWidget(
-					childPlug["enabled"],
+					{ plug["enabled"] for plug in self.getPlugs() },
 					displayMode = GafferUI.BoolWidget.DisplayMode.Switch
 				),
 				verticalAlignment = GafferUI.Label.VerticalAlignment.Top,
 			)
 
-		self.__row.append( GafferUI.PlugValueWidget.create( childPlug["value"] ), expand = True )
+		self.__row.append( GafferUI.PlugValueWidget.create( { plug["value"] for plug in self.getPlugs() } ), expand = True )
 
-		self._updateFromPlug()
+	def setPlugs( self, plugs ) :
 
-	def setPlug( self, plug ) :
-
-		GafferUI.PlugValueWidget.setPlug( self, plug )
+		GafferUI.PlugValueWidget.setPlugs( self, plugs )
 
 		if isinstance( self.__row[0], GafferUI.LabelPlugValueWidget ) :
-			self.__row[0].setPlug( plug )
+			self.__row[0].setPlugs( plugs )
 		else :
-			self.__row[0].setPlug( plug["name"] )
+			self.__row[0].setPlugs({ plug["name"] for plug in plugs } )
 
-		if "enabled" in plug :
-			self.__row[1].setPlug( plug["enabled"] )
+		if all( [ "enabled" in plug for plug in plugs ] ) :
+			self.__row[1].setPlugs( { plug["enabled"] for plug in plugs } )
 
-		self.__row[-1].setPlug( plug["value"] )
+		self.__row[-1].setPlugs( { plug["value"] for plug in plugs } )
 
 	def hasLabel( self ) :
 
 		return True
 
-	def childPlugValueWidget( self, childPlug, lazy=True ) :
+	def childPlugValueWidget( self, childPlug ) :
 
 		for w in self.__row :
-			if w.getPlug().isSame( childPlug ) :
+			if childPlug in w.getPlugs() :
 				return w
 
 		return None
 
-	def setReadOnly( self, readOnly ) :
+	def setNameVisible( self, visible ) :
 
-		if readOnly == self.getReadOnly() :
-			return
+		self.__row[0].setVisible( visible )
 
-		GafferUI.PlugValueWidget.setReadOnly( self, readOnly )
+	def getNameVisible( self ) :
 
-		for w in self.__row :
-			w.setReadOnly( readOnly )
+		return self.__row[0].getVisible()
 
-	def _updateFromPlug( self ) :
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
 
-		if "enabled" in self.getPlug() :
-			with self.getContext() :
-				enabled = self.getPlug()["enabled"].getValue()
+		return [
+			p["enabled"].getValue() if "enabled" in p else True
+			for p in plugs
+		]
 
-			if isinstance( self.__row[0], GafferUI.StringPlugValueWidget ) :
-				self.__row[0].setEnabled( enabled )
+	def _updateFromValues( self, values, exception ) :
 
-			self.__row[-1].setEnabled( enabled )
+		enabled = all( values )
+		if isinstance( self.__row[0], GafferUI.StringPlugValueWidget ) :
+			self.__row[0].setEnabled( enabled )
+		self.__row[-1].setEnabled( enabled )
+
+	def __drop( self, widget, event ) :
+
+		if not isinstance( event.data, Gaffer.Plug ) :
+			return False
+
+		# The PlugValueWidget base class for the label has accepted a drag from
+		# a plug, and it is about to connect it to our plug in
+		# `PlugValueWidget.__drop()`. But we don't want our `name` plug to be
+		# connected, because it isn't user-facing and we need it to keep its
+		# original value. So we do our own drop handling to connect all the
+		# child plugs _except_ `name`.
+
+		widget.setHighlighted( False )
+		with Gaffer.UndoScope( self.scriptNode() ) :
+			for p in self.getPlugs() :
+				for c in p.children() :
+					if c.getName() != "name" :
+						c.setInput( event.data[c.getName()] )
+
+		return True
 
 GafferUI.PlugValueWidget.registerType( Gaffer.NameValuePlug, NameValuePlugValueWidget )
+
+# Spreadsheet integration
+# =======================
+
+Gaffer.Metadata.registerValue( Gaffer.NameValuePlug, "spreadsheet:plugMenu:includeAsAncestor", True )
+Gaffer.Metadata.registerValue( Gaffer.NameValuePlug, "spreadsheet:plugMenu:ancestorLabel", "Value and Switch" )
+
+def __spreadsheetColumnName( plug ) :
+
+	if isinstance( plug, Gaffer.NameValuePlug ) :
+		nameValuePlug = plug
+	else :
+		nameValuePlug = plug.parent()
+
+	# Use some heuristics to come up with a more helpful
+	# column name.
+
+	name = nameValuePlug.getName()
+	if name.startswith( "member" ) and nameValuePlug["name"].source().direction() != Gaffer.Plug.Direction.Out :
+		name = nameValuePlug["name"].getValue()
+		name = re.sub( "[^0-9a-zA-Z_]+", "_", name )
+
+	if not name :
+		return plug.getName()
+
+	if plug == nameValuePlug :
+		return name
+	else :
+		return name + plug.getName().title()
+
+Gaffer.Metadata.registerValue( Gaffer.NameValuePlug, "spreadsheet:columnName", __spreadsheetColumnName )
+Gaffer.Metadata.registerValue( Gaffer.NameValuePlug, "enabled", "spreadsheet:columnName", __spreadsheetColumnName )
+Gaffer.Metadata.registerValue( Gaffer.NameValuePlug, "value", "spreadsheet:columnName", __spreadsheetColumnName )
+
+def __spreadsheetFormatter( plug, forToolTip ) :
+
+	value = GafferUI.SpreadsheetUI.formatValue( plug["value"], forToolTip )
+	if "enabled" not in plug.parent() :
+		return value
+
+	enabled = "On" if plug["enabled"].getValue() else "Off"
+	separator = " : \n" if forToolTip and "\n" in value else " : "
+	return enabled + separator + value
+
+GafferUI.SpreadsheetUI.registerValueFormatter( Gaffer.NameValuePlug, __spreadsheetFormatter )
+
+def __spreadsheetDecorator( plug ) :
+
+	return GafferUI.SpreadsheetUI.decoration( plug["value"] )
+
+GafferUI.SpreadsheetUI.registerDecoration( Gaffer.NameValuePlug, __spreadsheetDecorator )
+
+def __spreadsheetValueWidget( plug ) :
+
+	w = GafferUI.NameValuePlugValueWidget( plug )
+	w.setNameVisible( False )
+	return w
+
+GafferUI.SpreadsheetUI.registerValueWidget( Gaffer.NameValuePlug, __spreadsheetValueWidget )

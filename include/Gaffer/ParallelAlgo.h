@@ -34,12 +34,10 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PARALLELALGO_H
-#define GAFFER_PARALLELALGO_H
+#pragma once
 
 #include "Gaffer/Export.h"
-
-#include "boost/signals.hpp"
+#include "Gaffer/Signals.h"
 
 #include <functional>
 #include <memory>
@@ -61,7 +59,7 @@ namespace ParallelAlgo
 /// > Caution : If calling a member function, you _must_ guarantee that
 /// > the class instance will still be alive when the member function is
 /// > called. Typically this means binding `this` via a smart pointer.
-typedef std::function<void ()> UIThreadFunction;
+using UIThreadFunction = std::function<void ()>;
 GAFFER_API void callOnUIThread( const UIThreadFunction &function );
 
 /// Push/pop a handler to service requests made to `callOnUIThread()`. We
@@ -70,9 +68,12 @@ GAFFER_API void callOnUIThread( const UIThreadFunction &function );
 /// > Note : This is an implementation detail. It is only exposed to allow
 /// > emulation of the UI in unit tests, and theoretically to allow an
 /// > alternative UI framework to be connected.
-typedef std::function<void ( const UIThreadFunction & )> UIThreadCallHandler;
+using UIThreadCallHandler = std::function<void ( const UIThreadFunction & )>;
 GAFFER_API void pushUIThreadCallHandler( const UIThreadCallHandler &handler );
 GAFFER_API void popUIThreadCallHandler();
+/// Returns `true` if a UIThreadCallHandler is currently registered, and `false`
+/// otherwise.
+GAFFER_API bool canCallOnUIThread();
 
 /// Runs the specified function asynchronously on a background thread,
 /// using a copy of the current Context from the calling thread. This
@@ -80,11 +81,9 @@ GAFFER_API void popUIThreadCallHandler();
 /// `BackgroundTask`, allowing the background work to be cancelled
 /// explicitly. Implicit cancellation is also performed using the `subject`
 /// argument : see the `BackgroundTask` documentation for details.
-typedef std::function<void ()> BackgroundFunction;
+using BackgroundFunction = std::function<void ()>;
 GAFFER_API std::unique_ptr<BackgroundTask> callOnBackgroundThread( const Plug *subject, BackgroundFunction function );
 
 } // namespace ParallelAlgo
 
 } // namespace Gaffer
-
-#endif // GAFFER_PARALLELALGO_H

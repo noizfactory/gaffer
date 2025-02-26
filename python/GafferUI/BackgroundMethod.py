@@ -72,7 +72,7 @@ import GafferUI
 #		pass
 #
 #	@updateInBackground.postCall
-#	def __updateInBackgroundPreCall( self, result )
+#	def __updateInBackgroundPostCall( self, result )
 #
 #		# Called on the UI thread with the result
 #		# of the background call (or any exception it
@@ -103,9 +103,21 @@ class BackgroundMethod( object ) :
 			if superceded.get() :
 				return
 
+			# It is possible that the widget was removed from the UI before
+			# `foregroundFunction` got called. But it will have been kept
+			# alive until now by this circular reference from `__CurrentCall` to the
+			# BackgroundTask, which in turn holds a reference to `widget`. This
+			# is crucial : without it, the widget can end up being destroyed
+			# on the _background_ thread, where it is illegal to destroy a QWidget.
+			# Here we break the cycle, allowing the `widget` to die on the UI thread
+			# after exit from function.
 			delattr( widget, method.__name__ + "__CurrentCall" )
 
-			if method.__postCall is not None :
+			# Because of the above, it is possible that the QWidget part of the
+			# `GafferUI.Widget has already been destroyed by Qt (due to the
+			# Widget's parent dying first). So we must use `_qtObjectIsValid()`
+			# to avoid invoking the `postCall` on an invalid widget.
+			if method.__postCall is not None and GafferUI._qtObjectIsValid( widget._qtWidget() ) :
 				method.__postCall( widget, result )
 
 		def backgroundFunction( widget, superceded, *args, **kw ) :
@@ -114,6 +126,9 @@ class BackgroundMethod( object ) :
 				result = method( widget, *args, **kw )
 			except :
 				result = sys.exc_info()[1]
+				# Avoid circular references that would prevent this
+				# stack frame (and therefore `widget`) from dying.
+				result.__traceback__ = None
 
 			if not superceded.get() :
 				Gaffer.ParallelAlgo.callOnUIThread( functools.partial( foregroundFunction, widget, result, superceded ) )
@@ -151,7 +166,8 @@ class BackgroundMethod( object ) :
 					widget,
 					method.__name__ + "__VisibilityChangedConnection",
 					widget.visibilityChangedSignal().connect(
-						functools.partial( self.__visibilityChanged, method = method, foregroundFunction = foregroundFunction )
+						functools.partial( self.__visibilityChanged, method = method, foregroundFunction = foregroundFunction ),
+						scoped = True
 					)
 				)
 

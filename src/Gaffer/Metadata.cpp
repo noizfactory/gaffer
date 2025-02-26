@@ -44,14 +44,16 @@
 #include "IECore/SimpleTypedData.h"
 #include "IECore/StringAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/multi_index/member.hpp"
 #include "boost/multi_index/ordered_index.hpp"
 #include "boost/multi_index/sequenced_index.hpp"
 #include "boost/multi_index_container.hpp"
-#include "boost/optional.hpp"
 
-#include "tbb/tbb.h"
+#include "tbb/concurrent_hash_map.h"
+#include "tbb/recursive_mutex.h"
+
+#include <unordered_map>
 
 using namespace std;
 using namespace boost;
@@ -59,12 +61,153 @@ using namespace tbb;
 using namespace IECore;
 using namespace Gaffer;
 
+//////////////////////////////////////////////////////////////////////////
+// Internal implementation details
+//////////////////////////////////////////////////////////////////////////
+
 namespace
 {
 
-typedef std::pair<InternedString, Metadata::ValueFunction> NamedValue;
+// Signals
+// =======
+//
+// We store all our signals in a map indexed by `Node *`. Although we do not
+// allow concurrent edits to a node graph, we do allow different node graphs to
+// be edited concurrently from different threads. This means that we require
+// thread-safety for the operations on the map, but _not_ for the signals
+// themselves. `tbb::concurrent_unordered_map` would be ideal for this if it
+// provided concurrent erasure, but it doesn't. And in practice we expect
+// very little contention anyway, so just use a simple `std::unordered_map`
+// protected by a mutex.
 
-typedef multi_index::multi_index_container<
+struct NodeSignals
+{
+	Metadata::NodeValueChangedSignal nodeSignal;
+	Metadata::PlugValueChangedSignal plugSignal;
+};
+
+using SignalsMap = std::unordered_map<Node *, unique_ptr<NodeSignals>>;
+using SignalsMapLock = tbb::recursive_mutex::scoped_lock;
+
+// Access to the signals requires the passing of a scoped_lock that
+// will be locked for you automatically, and must remain locked while
+// the result is used.
+SignalsMap &signalsMap( SignalsMapLock &lock )
+{
+	static SignalsMap *g_signalsMap = new SignalsMap;
+	static tbb::recursive_mutex g_signalsMapMutex;
+	lock.acquire( g_signalsMapMutex );
+	return *g_signalsMap;
+}
+
+NodeSignals *nodeSignals( Node *node, bool createIfMissing )
+{
+	SignalsMapLock lock;
+	auto &m = signalsMap( lock );
+
+	auto it = m.find( node );
+	if( it == m.end() )
+	{
+		if( !createIfMissing )
+		{
+			return nullptr;
+		}
+		it = m.emplace( node, std::make_unique<NodeSignals>() ).first;
+	}
+	return it->second.get();
+}
+
+void emitValueChangedSignals( IECore::TypeId typeId, IECore::InternedString key, Metadata::ValueChangedReason reason )
+{
+	if( typeId == Node::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Node::staticTypeId() ) )
+	{
+		Metadata::nodeValueChangedSignal()( typeId, key, nullptr );
+
+		SignalsMapLock lock;
+		for( const auto &s : signalsMap( lock ) )
+		{
+			if( s.first->isInstanceOf( typeId ) )
+			{
+				s.second->nodeSignal( s.first, key, reason );
+			}
+		}
+	}
+	else if( typeId == Plug::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Plug::staticTypeId() ) )
+	{
+		Metadata::plugValueChangedSignal()( typeId, "", key, nullptr );
+
+		SignalsMapLock lock;
+		for( const auto &s : signalsMap( lock ) )
+		{
+			for( auto &plug : Plug::RecursiveRange( *s.first ) )
+			{
+				if( plug->isInstanceOf( typeId ) )
+				{
+					s.second->plugSignal( plug.get(), key, reason );
+				}
+			}
+		}
+	}
+}
+
+void emitMatchingPlugValueChangedSignals( Metadata::PlugValueChangedSignal &signal, Plug *plug, const vector<InternedString> &path, const StringAlgo::MatchPatternPath &matchPath, IECore::InternedString key, Metadata::ValueChangedReason reason )
+{
+	/// \todo There is scope for pruning the recursion here early if we
+	/// reproduce the logic of StringAlgo::match ourselves. We don't
+	/// really expect this code path to be exercised while there are active
+	/// signals though, as type-based (rather than instance-based) registrations
+	/// are typically only made during startup.
+	if( StringAlgo::match( path, matchPath ) )
+	{
+		signal( plug, key, reason );
+	}
+
+	vector<InternedString> childPath = path;
+	childPath.push_back( InternedString() ); // Room for child name
+	for( const auto &child : Plug::Range( *plug ) )
+	{
+		childPath.back() = child->getName();
+		emitMatchingPlugValueChangedSignals( signal, child.get(), childPath, matchPath, key, reason );
+	}
+}
+
+// The `matchPatternPath` is passed redundantly rather than derived from `plugPath`
+// because in all cases we have already done the work of tokenizing it outside this function.
+void emitPlugValueChangedSignals( IECore::TypeId ancestorTypeId, const StringAlgo::MatchPattern &plugPath, const StringAlgo::MatchPatternPath &matchPatternPath, IECore::InternedString key, Metadata::ValueChangedReason reason )
+{
+	assert( reason == Metadata::ValueChangedReason::StaticRegistration || reason == Metadata::ValueChangedReason::StaticDeregistration );
+
+	Metadata::plugValueChangedSignal()( ancestorTypeId, plugPath, key, nullptr );
+
+	SignalsMapLock lock;
+	for( const auto &s : signalsMap( lock ) )
+	{
+		if( s.first->isInstanceOf( ancestorTypeId ) )
+		{
+			for( const auto &plug : Plug::Range( *s.first ) )
+			{
+				emitMatchingPlugValueChangedSignals( s.second->plugSignal, plug.get(), { plug->getName() }, matchPatternPath, key, reason );
+			}
+		}
+		else if( ancestorTypeId == Plug::staticTypeId() || RunTimeTyped::inheritsFrom( ancestorTypeId, Plug::staticTypeId() ) )
+		{
+			for( const auto &plug : Plug::RecursiveRange( *s.first ) )
+			{
+				if( plug->isInstanceOf( ancestorTypeId ) )
+				{
+					emitMatchingPlugValueChangedSignals( s.second->plugSignal, plug.get(), {}, matchPatternPath, key, reason );
+				}
+			}
+		}
+	}
+}
+
+// Value storage for string targets
+// ================================
+
+using NamedValue = std::pair<InternedString, Metadata::ValueFunction>;
+
+using Values = multi_index::multi_index_container<
 	NamedValue,
 	multi_index::indexed_by<
 		multi_index::ordered_unique<
@@ -72,23 +215,36 @@ typedef multi_index::multi_index_container<
 		>,
 		multi_index::sequenced<>
 	>
-> Values;
+>;
 
-typedef std::map<IECore::InternedString, Values> MetadataMap;
+using NamedValues = std::pair<InternedString, Values>;
+
+using MetadataMap = multi_index::multi_index_container<
+	NamedValues,
+	multi_index::indexed_by<
+		multi_index::ordered_unique<
+			multi_index::member<NamedValues, InternedString, &NamedValues::first>
+		>,
+		multi_index::sequenced<>
+	>
+>;
 
 MetadataMap &metadataMap()
 {
-	static MetadataMap m;
-	return m;
+	static auto g_m = new MetadataMap;
+	return *g_m;
 }
+
+// Value storage for type-based targets
+// ====================================
 
 struct GraphComponentMetadata
 {
 
-	typedef std::pair<InternedString, Metadata::GraphComponentValueFunction> NamedValue;
-	typedef std::pair<InternedString, Metadata::PlugValueFunction> NamedPlugValue;
+	using NamedValue = std::pair<InternedString, Metadata::GraphComponentValueFunction>;
+	using NamedPlugValue = std::pair<InternedString, Metadata::PlugValueFunction>;
 
-	typedef multi_index::multi_index_container<
+	using Values = multi_index::multi_index_container<
 		NamedValue,
 		multi_index::indexed_by<
 			multi_index::ordered_unique<
@@ -96,9 +252,9 @@ struct GraphComponentMetadata
 			>,
 			multi_index::sequenced<>
 		>
-	> Values;
+	>;
 
-	typedef multi_index::multi_index_container<
+	using PlugValues = multi_index::multi_index_container<
 		NamedPlugValue,
 		multi_index::indexed_by<
 			multi_index::ordered_unique<
@@ -106,22 +262,25 @@ struct GraphComponentMetadata
 			>,
 			multi_index::sequenced<>
 		>
-	> PlugValues;
+	>;
 
-	typedef map<StringAlgo::MatchPatternPath, PlugValues> PlugPathsToValues;
+	using PlugPathsToValues = map<StringAlgo::MatchPatternPath, PlugValues>;
 
 	Values values;
 	PlugPathsToValues plugPathsToValues;
 
 };
 
-typedef std::map<IECore::TypeId, GraphComponentMetadata> GraphComponentMetadataMap;
+using GraphComponentMetadataMap = std::map<IECore::TypeId, GraphComponentMetadata>;
 
 GraphComponentMetadataMap &graphComponentMetadataMap()
 {
-	static GraphComponentMetadataMap m;
-	return m;
+	static auto g_m = new GraphComponentMetadataMap;
+	return *g_m;
 }
+
+// Value storage for instance targets
+// ==================================
 
 struct NamedInstanceValue
 {
@@ -135,7 +294,7 @@ struct NamedInstanceValue
 	bool persistent;
 };
 
-typedef multi_index::multi_index_container<
+using InstanceValues = multi_index::multi_index_container<
 	NamedInstanceValue,
 	multi_index::indexed_by<
 		multi_index::ordered_unique<
@@ -143,9 +302,9 @@ typedef multi_index::multi_index_container<
 		>,
 		multi_index::sequenced<>
 	>
-> InstanceValues;
+>;
 
-typedef concurrent_hash_map<const GraphComponent *, InstanceValues *> InstanceMetadataMap;
+using InstanceMetadataMap = concurrent_hash_map<const GraphComponent *, std::unique_ptr<InstanceValues>>;
 
 InstanceMetadataMap &instanceMetadataMap()
 {
@@ -153,43 +312,22 @@ InstanceMetadataMap &instanceMetadataMap()
 	return m;
 }
 
-InstanceValues *instanceMetadata( const GraphComponent *instance, bool createIfMissing )
-{
-	InstanceMetadataMap &m = instanceMetadataMap();
-
-	InstanceMetadataMap::accessor accessor;
-	if( m.find( accessor, instance ) )
-	{
-		return accessor->second;
-	}
-	else
-	{
-		if( createIfMissing )
-		{
-			m.insert( accessor, instance );
-			accessor->second = new InstanceValues();
-			return accessor->second;
-		}
-	}
-
-	return nullptr;
-}
-
 // It's valid to register null as an instance value and expect it to override
 // any non-null registration. We use OptionalData as a way of distinguishing
 // between an explicit registration of null and no registration at all.
-typedef boost::optional<ConstDataPtr> OptionalData;
+using OptionalData = std::optional<ConstDataPtr>;
 
 OptionalData instanceValue( const GraphComponent *instance, InternedString key, bool *persistent = nullptr )
 {
-	const InstanceValues *m = instanceMetadata( instance, /* createIfMissing = */ false );
-	if( !m )
+	InstanceMetadataMap &m = instanceMetadataMap();
+	InstanceMetadataMap::const_accessor accessor;
+	if( !m.find( accessor, instance ) )
 	{
 		return OptionalData();
 	}
 
-	InstanceValues::const_iterator vIt = m->find( key );
-	if( vIt != m->end() )
+	InstanceValues::const_iterator vIt = accessor->second->find( key );
+	if( vIt != accessor->second->end() )
 	{
 		if( persistent )
 		{
@@ -203,42 +341,64 @@ OptionalData instanceValue( const GraphComponent *instance, InternedString key, 
 
 void registerInstanceValueAction( GraphComponent *instance, InternedString key, OptionalData value, bool persistent )
 {
-	InstanceValues *m = instanceMetadata( instance, /* createIfMissing = */ static_cast<bool>( value ) );
-	if( !m )
+	InstanceMetadataMap &m = instanceMetadataMap();
+	InstanceMetadataMap::accessor accessor;
+	if( !m.find( accessor, instance ) )
 	{
-		return;
+		if( !value )
+		{
+			return;
+		}
+		else if( m.insert( accessor, instance ) )
+		{
+			accessor->second = std::make_unique<InstanceValues>();
+		}
 	}
 
-	InstanceValues::const_iterator it = m->find( key );
+	InstanceValues::const_iterator it = accessor->second->find( key );
 	if( value )
 	{
 		NamedInstanceValue namedValue( key, *value, persistent );
-		if( it == m->end() )
+		if( it == accessor->second->end() )
 		{
-			m->insert( namedValue );
+			accessor->second->insert( namedValue );
 		}
 		else
 		{
-			m->replace( it, namedValue );
+			accessor->second->replace( it, namedValue );
 		}
 	}
 	else
 	{
-		if( it != m->end() )
+		if( it != accessor->second->end() )
 		{
-			m->erase( it );
+			accessor->second->erase( it );
 		}
 	}
+
+	// Release lock before emitting signals, in case a slot tries
+	// to re-enter the Metadata API.
+	accessor.release();
+
+	const Metadata::ValueChangedReason reason = value ? Metadata::ValueChangedReason::InstanceRegistration : Metadata::ValueChangedReason::InstanceDeregistration;
 
 	if( Node *node = runTimeCast<Node>( instance ) )
 	{
 		Metadata::nodeValueChangedSignal()( node->typeId(), key, node );
+		if( NodeSignals *s = nodeSignals( node, /* createIfMissing = */ false ) )
+		{
+			s->nodeSignal( node, key, reason );
+		}
 	}
 	else if( Plug *plug = runTimeCast<Plug>( instance ) )
 	{
-		if( const Node *node = plug->node() )
+		if( Node *node = plug->node() )
 		{
 			Metadata::plugValueChangedSignal()( node->typeId(), plug->relativeName( node ), key, plug );
+			if( NodeSignals *s = nodeSignals( node, /* createIfMissing = */ false ) )
+			{
+				s->plugSignal( plug, key, reason );
+			}
 		}
 	}
 }
@@ -278,22 +438,51 @@ void registerInstanceValue( GraphComponent *instance, IECore::InternedString key
 	);
 }
 
-void registeredInstanceValues( const GraphComponent *graphComponent, std::vector<IECore::InternedString> &keys, bool persistentOnly )
+void registeredInstanceValues( const GraphComponent *graphComponent, std::vector<IECore::InternedString> &keys, unsigned registrationTypes )
 {
-	if( const InstanceValues *im = instanceMetadata( graphComponent, /* createIfMissing = */ false ) )
+	InstanceMetadataMap &m = instanceMetadataMap();
+	InstanceMetadataMap::const_accessor accessor;
+	if( !m.find( accessor, graphComponent ) )
 	{
-		const InstanceValues::nth_index<1>::type &index = im->get<1>();
-		for( InstanceValues::nth_index<1>::type::const_iterator vIt = index.begin(), veIt = index.end(); vIt != veIt; ++vIt )
+		return;
+	}
+
+	const InstanceValues::nth_index<1>::type &index = accessor->second->get<1>();
+	for( InstanceValues::nth_index<1>::type::const_iterator vIt = index.begin(), veIt = index.end(); vIt != veIt; ++vIt )
+	{
+		if(
+			( vIt->persistent && ( registrationTypes & Metadata::RegistrationTypes::InstancePersistent ) ) ||
+			( !vIt->persistent && ( registrationTypes & Metadata::RegistrationTypes::InstanceNonPersistent ) )
+		)
 		{
-			if( !persistentOnly || vIt->persistent )
-			{
-				keys.push_back( vIt->name );
-			}
+			keys.push_back( vIt->name );
 		}
 	}
 }
 
+// Utilities
+// =========
+
+// Converts from deprecated arguments to new RegistrationTypes.
+unsigned registrationTypes( bool instanceOnly, bool persistentOnly = false )
+{
+	unsigned result = Metadata::RegistrationTypes::InstancePersistent;
+	if( !instanceOnly )
+	{
+		result |= Metadata::RegistrationTypes::TypeId | Metadata::RegistrationTypes::TypeIdDescendant;
+	}
+	if( !persistentOnly )
+	{
+		result |= Metadata::RegistrationTypes::InstanceNonPersistent;
+	}
+	return result;
+}
+
 } // namespace
+
+//////////////////////////////////////////////////////////////////////////
+// Public implementation
+//////////////////////////////////////////////////////////////////////////
 
 void Metadata::registerValue( IECore::InternedString target, IECore::InternedString key, IECore::ConstDataPtr value )
 {
@@ -302,12 +491,23 @@ void Metadata::registerValue( IECore::InternedString target, IECore::InternedStr
 
 void Metadata::registerValue( IECore::InternedString target, IECore::InternedString key, ValueFunction value )
 {
-	NamedValue namedValue( key, value );
-	auto &m = metadataMap()[target];
-	auto i = m.insert( namedValue );
-	if( !i.second )
+	auto &targetMap = metadataMap();
+
+	auto targetIt = targetMap.find( target );
+	if( targetIt == targetMap.end() )
 	{
-		m.replace( i.first, namedValue );
+		targetIt = targetMap.insert( NamedValues( target, Values() ) ).first;
+	}
+
+	// Cast is safe because we don't use `second` as a key in the `multi_index_container`,
+	// so we can modify it without affecting indexing.
+	Values &values = const_cast<Values &>( targetIt->second );
+
+	const NamedValue namedValue( key, value );
+	auto keyIt = values.insert( namedValue );
+	if( !keyIt.second )
+	{
+		values.replace( keyIt.first, namedValue );
 	}
 
 	valueChangedSignal()( target, key );
@@ -322,13 +522,17 @@ void Metadata::deregisterValue( IECore::InternedString target, IECore::InternedS
 		return;
 	}
 
-	auto vIt = mIt->second.find( key );
-	if( vIt == mIt->second.end() )
+	// Cast is safe because we don't use `second` as a key in the `multi_index_container`,
+	// so we can modify it without affecting indexing.
+	Values &values = const_cast<Values &>( mIt->second );
+
+	auto vIt = values.find( key );
+	if( vIt == values.end() )
 	{
 		return;
 	}
 
-	mIt->second.erase( vIt );
+	values.erase( vIt );
 	valueChangedSignal()( target, key );
 }
 
@@ -365,6 +569,25 @@ IECore::ConstDataPtr Metadata::valueInternal( IECore::InternedString target, IEC
 	return nullptr;
 }
 
+std::vector<IECore::InternedString> Metadata::targetsWithMetadata( const IECore::StringAlgo::MatchPattern &targetPattern, IECore::InternedString key )
+{
+	vector<InternedString> result;
+	const auto &orderedIndex = metadataMap().get<1>();
+	for( const auto &[target, values] : orderedIndex )
+	{
+		if( !StringAlgo::match( target.c_str(), targetPattern ) )
+		{
+			continue;
+		}
+		if( values.find( key ) != values.end() )
+		{
+			result.push_back( target );
+		}
+	}
+
+	return result;
+}
+
 void Metadata::registerValue( IECore::TypeId typeId, IECore::InternedString key, IECore::ConstDataPtr value )
 {
 	registerValue( typeId, key, [value]( const GraphComponent * ){ return value; } );
@@ -386,14 +609,7 @@ void Metadata::registerValue( IECore::TypeId typeId, IECore::InternedString key,
 		m.replace( it, namedValue );
 	}
 
-	if( typeId == Node::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Node::staticTypeId() ) )
-	{
-		nodeValueChangedSignal()( typeId, key, nullptr );
-	}
-	else if( typeId == Plug::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Plug::staticTypeId() ) )
-	{
-		plugValueChangedSignal()( typeId, "", key, nullptr );
-	}
+	emitValueChangedSignals( typeId, key, Metadata::ValueChangedReason::StaticRegistration );
 }
 
 void Metadata::deregisterValue( IECore::TypeId typeId, IECore::InternedString key )
@@ -406,21 +622,14 @@ void Metadata::deregisterValue( IECore::TypeId typeId, IECore::InternedString ke
 	}
 
 	m.erase( it );
-
-	if( typeId == Node::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Node::staticTypeId() ) )
-	{
-		nodeValueChangedSignal()( typeId, key, nullptr );
-	}
-	else if( typeId == Plug::staticTypeId() || RunTimeTyped::inheritsFrom( typeId, Plug::staticTypeId() ) )
-	{
-		plugValueChangedSignal()( typeId, "", key, nullptr );
-	}
+	emitValueChangedSignals( typeId, key, Metadata::ValueChangedReason::StaticDeregistration );
 }
 
 void Metadata::deregisterValue( IECore::TypeId ancestorTypeId, const StringAlgo::MatchPattern &plugPath, IECore::InternedString key )
 {
 	auto &m = graphComponentMetadataMap()[ancestorTypeId];
-	auto &plugValues = m.plugPathsToValues[StringAlgo::matchPatternPath( plugPath, '.' )];
+	const StringAlgo::MatchPatternPath matchPatternPath = StringAlgo::matchPatternPath( plugPath, '.' );
+	auto &plugValues = m.plugPathsToValues[matchPatternPath];
 
 	auto it = plugValues.find( key );
 	if( it == plugValues.end() )
@@ -429,7 +638,8 @@ void Metadata::deregisterValue( IECore::TypeId ancestorTypeId, const StringAlgo:
 	}
 
 	plugValues.erase( it );
-	plugValueChangedSignal()( ancestorTypeId, plugPath, key, nullptr );
+
+	emitPlugValueChangedSignals( ancestorTypeId, plugPath, matchPatternPath, key, Metadata::ValueChangedReason::StaticDeregistration );
 }
 
 void Metadata::deregisterValue( GraphComponent *target, IECore::InternedString key )
@@ -462,7 +672,7 @@ std::vector<Node*> Metadata::nodesWithMetadata( GraphComponent *root, IECore::In
 	}
 	else
 	{
-		for( RecursiveNodeIterator it( root ); !it.done(); ++it )
+		for( Node::RecursiveIterator it( root ); !it.done(); ++it )
 		{
 			if( valueInternal( it->get(), key, instanceOnly ) )
 			{
@@ -480,8 +690,9 @@ void Metadata::registerValue( IECore::TypeId ancestorTypeId, const StringAlgo::M
 
 void Metadata::registerValue( IECore::TypeId ancestorTypeId, const StringAlgo::MatchPattern &plugPath, IECore::InternedString key, PlugValueFunction value )
 {
-	auto &graphComponentMetadata = graphComponentMetadataMap()[ancestorTypeId];
-	auto &plugValues = graphComponentMetadata.plugPathsToValues[StringAlgo::matchPatternPath( plugPath, '.' )];
+	auto &m = graphComponentMetadataMap()[ancestorTypeId];
+	const StringAlgo::MatchPatternPath matchPatternPath = StringAlgo::matchPatternPath( plugPath, '.' );
+	auto &plugValues = m.plugPathsToValues[matchPatternPath];
 
 	GraphComponentMetadata::NamedPlugValue namedValue( key, value );
 
@@ -495,7 +706,7 @@ void Metadata::registerValue( IECore::TypeId ancestorTypeId, const StringAlgo::M
 		plugValues.replace( it, namedValue );
 	}
 
-	plugValueChangedSignal()( ancestorTypeId, plugPath, key, nullptr );
+	emitPlugValueChangedSignals( ancestorTypeId, plugPath, matchPatternPath, key, Metadata::ValueChangedReason::StaticRegistration );
 }
 
 std::vector<Plug*> Metadata::plugsWithMetadata( GraphComponent *root, IECore::InternedString key, bool instanceOnly )
@@ -542,9 +753,11 @@ void Metadata::registerValue( GraphComponent *target, IECore::InternedString key
 	registerInstanceValue( target, key, value, persistent );
 }
 
-void Metadata::registeredValues( const GraphComponent *target, std::vector<IECore::InternedString> &keys, bool instanceOnly, bool persistentOnly )
+std::vector<IECore::InternedString> Metadata::registeredValues( const GraphComponent *target, unsigned registrationTypes )
 {
-	if( !instanceOnly )
+	std::vector<IECore::InternedString> keys;
+
+	if( registrationTypes & RegistrationTypes::TypeId  )
 	{
 		IECore::TypeId typeId = target->typeId();
 		while( typeId != InvalidTypeId )
@@ -561,7 +774,10 @@ void Metadata::registeredValues( const GraphComponent *target, std::vector<IECor
 			typeId = RunTimeTyped::baseTypeId( typeId );
 		}
 		std::reverse( keys.begin(), keys.end() );
+	}
 
+	if( registrationTypes & RegistrationTypes::TypeIdDescendant )
+	{
 		if( const Plug *plug = runTimeCast<const Plug>( target ) )
 		{
 			vector<InternedString> plugPathKeys;
@@ -597,90 +813,136 @@ void Metadata::registeredValues( const GraphComponent *target, std::vector<IECor
 			keys.insert( keys.end(), plugPathKeys.rbegin(), plugPathKeys.rend() );
 		}
 	}
-	registeredInstanceValues( target, keys, persistentOnly );
+
+	if( registrationTypes & RegistrationTypes::Instance )
+	{
+		registeredInstanceValues( target, keys, registrationTypes );
+	}
+
+	return keys;
 }
 
-IECore::ConstDataPtr Metadata::valueInternal( const GraphComponent *target, IECore::InternedString key, bool instanceOnly )
+void Metadata::registeredValues( const GraphComponent *target, std::vector<IECore::InternedString> &keys, bool instanceOnly, bool persistentOnly )
+{
+	keys = registeredValues( target, registrationTypes( instanceOnly, persistentOnly ) );
+}
+
+IECore::ConstDataPtr Metadata::valueInternal( const GraphComponent *target, IECore::InternedString key, unsigned registrationTypes )
 {
 	// Look for instance values first. These override
 	// everything else.
 
-	if( OptionalData iv = instanceValue( target, key ) )
+	if( registrationTypes & RegistrationTypes::Instance )
 	{
-		return *iv;
-	}
-
-	if( instanceOnly )
-	{
-		return nullptr;
+		bool persistent;
+		if( OptionalData iv = instanceValue( target, key, &persistent ) )
+		{
+			if(
+				( !persistent && ( registrationTypes & RegistrationTypes::InstanceNonPersistent ) ) ||
+				( persistent  && ( registrationTypes & RegistrationTypes::InstancePersistent ) )
+			)
+			{
+				return *iv;
+			}
+		}
 	}
 
 	// If the target is a plug, then look for a path-based
 	// value. These are more specific than type-based values.
+	// We allow metadata registered to higher-level components
+	// such as Nodes to take precedence over registrations to
+	// lower-level components such as Plugs, as a node may have
+	// specific needs for the presentation or behaviour of its
+	// plugs and thus have good reason to override their metadata.
 
-	if( const Plug *plug = runTimeCast<const Plug>( target ) )
+	if( registrationTypes & RegistrationTypes::TypeIdDescendant )
 	{
-		const GraphComponent *ancestor = plug->parent();
-		vector<InternedString> plugPath( { plug->getName() } );
-		while( ancestor )
+		if( const Plug *plug = runTimeCast<const Plug>( target ) )
 		{
-			IECore::TypeId typeId = ancestor->typeId();
-			while( typeId != InvalidTypeId )
+			const GraphComponent *ancestor = plug->parent();
+			vector<InternedString> plugPath( { plug->getName() } );
+			Metadata::PlugValueFunction valueFn;
+			while( ancestor )
 			{
-				auto nIt = graphComponentMetadataMap().find( typeId );
-				if( nIt != graphComponentMetadataMap().end() )
+				IECore::TypeId typeId = ancestor->typeId();
+				while( typeId != InvalidTypeId )
 				{
-					// First do a direct lookup using the plug path.
-					auto it = nIt->second.plugPathsToValues.find( plugPath );
-					const auto eIt = nIt->second.plugPathsToValues.end();
-					if( it != eIt )
+					auto nIt = graphComponentMetadataMap().find( typeId );
+					if( nIt != graphComponentMetadataMap().end() )
 					{
-						auto vIt = it->second.find( key );
-						if( vIt != it->second.end() )
-						{
-							return vIt->second( plug );
-						}
-					}
-					// And only if the direct lookup fails, do a full search using
-					// wildcard matches.
-					for( it = nIt->second.plugPathsToValues.begin(); it != eIt; ++it )
-					{
-						if( StringAlgo::match( plugPath, it->first ) )
+						// First do a direct lookup using the plug path.
+						auto it = nIt->second.plugPathsToValues.find( plugPath );
+						const auto eIt = nIt->second.plugPathsToValues.end();
+						if( it != eIt )
 						{
 							auto vIt = it->second.find( key );
 							if( vIt != it->second.end() )
 							{
-								return vIt->second( plug );
+								valueFn = vIt->second;
+								break;
 							}
 						}
+
+						// And only if the direct lookup fails, do a full search using
+						// wildcard matches.
+						for( it = nIt->second.plugPathsToValues.begin(); it != eIt; ++it )
+						{
+							if( StringAlgo::match( plugPath, it->first ) )
+							{
+								auto vIt = it->second.find( key );
+								if( vIt != it->second.end() )
+								{
+									valueFn = vIt->second;
+									break;
+								}
+							}
+						}
+
+						if( valueFn != nullptr )
+						{
+							break;
+						}
 					}
+					typeId = RunTimeTyped::baseTypeId( typeId );
 				}
-				typeId = RunTimeTyped::baseTypeId( typeId );
+
+				plugPath.insert( plugPath.begin(), ancestor->getName() );
+				ancestor = ancestor->parent();
 			}
 
-			plugPath.insert( plugPath.begin(), ancestor->getName() );
-			ancestor = ancestor->parent();
+			if( valueFn != nullptr )
+			{
+				return valueFn( plug );
+			}
 		}
 	}
 
 	// Finally look for values registered to the type
 
-	IECore::TypeId typeId = target->typeId();
-	while( typeId != InvalidTypeId )
+	if( registrationTypes & RegistrationTypes::TypeId )
 	{
-		auto nIt = graphComponentMetadataMap().find( typeId );
-		if( nIt != graphComponentMetadataMap().end() )
+		IECore::TypeId typeId = target->typeId();
+		while( typeId != InvalidTypeId )
 		{
-			auto vIt = nIt->second.values.find( key );
-			if( vIt != nIt->second.values.end() )
+			auto nIt = graphComponentMetadataMap().find( typeId );
+			if( nIt != graphComponentMetadataMap().end() )
 			{
-				return vIt->second( target );
+				auto vIt = nIt->second.values.find( key );
+				if( vIt != nIt->second.values.end() )
+				{
+					return vIt->second( target );
+				}
 			}
+			typeId = RunTimeTyped::baseTypeId( typeId );
 		}
-		typeId = RunTimeTyped::baseTypeId( typeId );
 	}
 
 	return nullptr;
+}
+
+IECore::ConstDataPtr Metadata::valueInternal( const GraphComponent *target, IECore::InternedString key, bool instanceOnly )
+{
+	return Metadata::valueInternal( target, key, registrationTypes( instanceOnly ) );
 }
 
 Metadata::ValueChangedSignal &Metadata::valueChangedSignal()
@@ -689,19 +951,34 @@ Metadata::ValueChangedSignal &Metadata::valueChangedSignal()
 	return *s;
 }
 
-Metadata::NodeValueChangedSignal &Metadata::nodeValueChangedSignal()
+Metadata::NodeValueChangedSignal &Metadata::nodeValueChangedSignal( Node *node )
 {
-	static NodeValueChangedSignal *s = new NodeValueChangedSignal;
+	return nodeSignals( node, /* createIfMissing = */ true )->nodeSignal;
+}
+
+Metadata::PlugValueChangedSignal &Metadata::plugValueChangedSignal( Node *node )
+{
+	return nodeSignals( node, /* createIfMissing = */ true )->plugSignal;
+}
+
+Metadata::LegacyNodeValueChangedSignal &Metadata::nodeValueChangedSignal()
+{
+	static LegacyNodeValueChangedSignal *s = new LegacyNodeValueChangedSignal;
 	return *s;
 }
 
-Metadata::PlugValueChangedSignal &Metadata::plugValueChangedSignal()
+Metadata::LegacyPlugValueChangedSignal &Metadata::plugValueChangedSignal()
 {
-	static PlugValueChangedSignal *s = new PlugValueChangedSignal;
+	static LegacyPlugValueChangedSignal *s = new LegacyPlugValueChangedSignal;
 	return *s;
 }
 
-void Metadata::clearInstanceMetadata( const GraphComponent *graphComponent )
+void Metadata::instanceDestroyed( GraphComponent *graphComponent )
 {
 	instanceMetadataMap().erase( graphComponent );
+	if( auto node = runTimeCast<Node>( graphComponent ) )
+	{
+		SignalsMapLock lock;
+		signalsMap( lock ).erase( node );
+	}
 }

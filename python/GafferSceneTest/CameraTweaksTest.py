@@ -79,7 +79,7 @@ class CameraTweaksTest( GafferSceneTest.SceneTestCase ) :
 			c["focalLengthWorldScale"].setValue( random.uniform( 0.01, 10 ) )
 			c["focusDistance"].setValue( random.uniform( 0.01, 100 ) )
 			c["renderSettingOverrides"]["filmFit"]["enabled"].setValue( True )
-			c["renderSettingOverrides"]["filmFit"]["value"].setValue( random.choice( IECoreScene.Camera.FilmFit.names.values() ) )
+			c["renderSettingOverrides"]["filmFit"]["value"].setValue( random.choice( list( IECoreScene.Camera.FilmFit.names.values() ) ) )
 			c["renderSettingOverrides"]["shutter"]["enabled"].setValue( True )
 			c["renderSettingOverrides"]["shutter"]["value"].setValue( imath.V2f( random.uniform( -0.5, 0 ), random.uniform( 0, 0.5 ) ) )
 			c["renderSettingOverrides"]["pixelAspectRatio"]["enabled"].setValue( True )
@@ -87,8 +87,13 @@ class CameraTweaksTest( GafferSceneTest.SceneTestCase ) :
 
 			self.assertEqual( c["out"].object( "/camera" ), tweaks["out"].object( "/camera" ) )
 
-			for mode in GafferScene.TweakPlug.Mode.names.values():
-			#for mode in [ GafferScene.TweakPlug.Mode.Replace ]:
+			for mode in [
+				m for m in Gaffer.TweakPlug.Mode.names.values() if m not in [
+					Gaffer.TweakPlug.Mode.ListAppend,
+					Gaffer.TweakPlug.Mode.ListPrepend,
+					Gaffer.TweakPlug.Mode.ListRemove
+				]
+			] :
 				for name, value in [
 						("projection", "orthographic" ),
 						( "aperture", imath.V2f( 10, 20 ) ),
@@ -105,11 +110,17 @@ class CameraTweaksTest( GafferSceneTest.SceneTestCase ) :
 						( "apertureAspectRatio", 0.15 ),
 					]:
 
-					if type( value ) in [ str ] and mode in [ GafferScene.TweakPlug.Mode.Add, GafferScene.TweakPlug.Mode.Subtract, GafferScene.TweakPlug.Mode.Multiply ] :
+					if type( value ) in [ str ] and mode in [
+						Gaffer.TweakPlug.Mode.Add,
+						Gaffer.TweakPlug.Mode.Subtract,
+						Gaffer.TweakPlug.Mode.Multiply,
+						Gaffer.TweakPlug.Mode.Min,
+						Gaffer.TweakPlug.Mode.Max
+					] :
 						continue
 
 					tweaks["tweaks"].clearChildren()
-					tweaks["tweaks"].addChild( GafferScene.TweakPlug( name, value ) )
+					tweaks["tweaks"].addChild( Gaffer.TweakPlug( name, value ) )
 					tweaks["tweaks"]["tweak"]["mode"].setValue( mode )
 
 					if name == "fieldOfView":
@@ -122,18 +133,32 @@ class CameraTweaksTest( GafferSceneTest.SceneTestCase ) :
 					else:
 						orig = c["out"].object( "/camera" ).parameters()[name].value
 
-					if mode == GafferScene.TweakPlug.Mode.Remove:
+					if mode == Gaffer.TweakPlug.Mode.Remove:
 						if not name in [ "fieldOfView", "apertureAspectRatio" ]:
 							self.assertFalse( name in tweaks["out"].object( "/camera" ).parameters() )
 						continue
-					elif mode == GafferScene.TweakPlug.Mode.Replace:
+					elif mode == Gaffer.TweakPlug.Mode.Replace:
 						ref = value
-					elif mode == GafferScene.TweakPlug.Mode.Add:
+					elif mode == Gaffer.TweakPlug.Mode.Add:
 						ref = orig + value
-					elif mode == GafferScene.TweakPlug.Mode.Multiply:
+					elif mode == Gaffer.TweakPlug.Mode.Multiply:
 						ref = orig * value
-					elif mode == GafferScene.TweakPlug.Mode.Subtract:
+					elif mode == Gaffer.TweakPlug.Mode.Subtract:
 						ref = orig - value
+					elif mode == Gaffer.TweakPlug.Mode.Create:
+						ref = value
+					elif mode == Gaffer.TweakPlug.Mode.CreateIfMissing :
+						ref = orig
+					elif mode == GafferScene.TweakPlug.Mode.Min:
+						if type( value ) == imath.V2f:
+							ref = imath.V2f( min( orig[0], value[0] ), min( orig[1], value[1] ) )
+						else:
+							ref = min( orig, value )
+					elif mode == GafferScene.TweakPlug.Mode.Max:
+						if type( value ) == imath.V2f:
+							ref = imath.V2f( max( orig[0], value[0] ), max( orig[1], value[1] ) )
+						else:
+							ref = max( orig, value )
 
 					if name == "fieldOfView":
 						modified = tweaks["out"].object( "/camera" ).calculateFieldOfView()[0]
@@ -152,6 +177,28 @@ class CameraTweaksTest( GafferSceneTest.SceneTestCase ) :
 						self.assertAlmostEqual( modified[1], ref[1], places = 4 )
 					else:
 						self.assertAlmostEqual( modified, ref, places = 4 )
+
+	def testIgnoreMissing( self ) :
+
+		camera = GafferScene.Camera()
+		cameraFilter = GafferScene.PathFilter()
+		cameraFilter["paths"].setValue( IECore.StringVectorData( [ "/camera" ] ) )
+
+		tweaks = GafferScene.CameraTweaks()
+		tweaks["in"].setInput( camera["out"] )
+		tweaks["filter"].setInput( cameraFilter["out"] )
+
+		tweaks["tweaks"].addChild( Gaffer.TweakPlug( "test", 10 ) )
+		self.assertEqual( tweaks["tweaks"][0]["mode"].getValue(), Gaffer.TweakPlug.Mode.Replace )
+		with self.assertRaisesRegex( Gaffer.ProcessException, ".*This parameter does not exist" ) :
+			tweaks["out"].object( "/camera" ).parameters()
+
+		tweaks["ignoreMissing"].setValue( True )
+		self.assertNotIn( "test", tweaks["out"].object( "/camera" ).parameters() )
+
+		tweaks["tweaks"][0]["mode"].setValue( Gaffer.TweakPlug.Mode.Create )
+		self.assertIn( "test", tweaks["out"].object( "/camera" ).parameters() )
+		self.assertEqual( tweaks["out"].object( "/camera" ).parameters()["test"], IECore.IntData( 10 ) )
 
 if __name__ == "__main__":
 	unittest.main()

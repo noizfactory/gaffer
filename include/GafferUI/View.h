@@ -35,27 +35,32 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_VIEW_H
-#define GAFFERUI_VIEW_H
+#pragma once
 
+#include "GafferUI/Tool.h"
 #include "GafferUI/ViewportGadget.h"
 
 #include "Gaffer/Node.h"
+#include "Gaffer/NumericPlug.h"
+#include "Gaffer/StringPlug.h"
 
 #include "boost/regex.hpp"
 
 #include <functional>
+#include <unordered_map>
 
 namespace Gaffer
 {
 
 IE_CORE_FORWARDDECLARE( Context )
+IE_CORE_FORWARDDECLARE( EditScope )
 
 } // namespace Gaffer
 
 namespace GafferUI
 {
 
+IE_CORE_FORWARDDECLARE( ContextTracker )
 IE_CORE_FORWARDDECLARE( View )
 
 } // namespace GafferUI
@@ -82,7 +87,7 @@ class GAFFERUI_API View : public Gaffer::Node
 
 		~View() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::View, ViewTypeId, Gaffer::Node );
+		GAFFER_NODE_DECLARE_TYPE( GafferUI::View, ViewTypeId, Gaffer::Node );
 
 		/// The contents for the view are provided by the input to this plug.
 		/// The view can be switched by connecting a new input - this is how
@@ -92,26 +97,41 @@ class GAFFERUI_API View : public Gaffer::Node
 		template<typename T=Gaffer::Plug>
 		const T *inPlug() const;
 
+		/// Returns the ScriptNode this view was created for.
+		Gaffer::ScriptNode *scriptNode();
+		const Gaffer::ScriptNode *scriptNode() const;
+
+		/// The current EditScope for the view is specified by connecting
+		/// an `EditScope::outPlug()` into this plug.
+		Gaffer::Plug *editScopePlug();
+		const Gaffer::Plug *editScopePlug() const;
+		/// The `editScope()` method is a convenience that returns the connected
+		/// EditScope node, or null if nothing is connected.
+		Gaffer::EditScope *editScope();
+		const Gaffer::EditScope *editScope() const;
+
 		/// The Context in which the View should operate.
-		Gaffer::Context *getContext();
-		const Gaffer::Context *getContext() const;
-		/// May be overridden by derived classes to perform
-		/// additional work, but they _must_ call the base
-		/// class implementation.
-		virtual void setContext( Gaffer::ContextPtr context );
-		/// Signal emitted by setContext().
+		const Gaffer::Context *context() const;
+		/// Signal emitted when the result of `context()` has changed.
 		UnarySignal &contextChangedSignal();
 
 		/// Subclasses are responsible for presenting their content in this viewport.
 		ViewportGadget *viewportGadget();
 		const ViewportGadget *viewportGadget() const;
 
+		/// All Tools connected to this View. Use `Tool::registeredTools()` to
+		/// query the available tools and `Tool::create()` to add a tool.
+		ToolContainer *tools();
+		const ToolContainer *tools() const;
+
+		class DisplayTransform;
+
 		/// @name Factory
 		///////////////////////////////////////////////////////////////////
 		//@{
 		/// Creates a View for the specified plug.
 		static ViewPtr create( Gaffer::PlugPtr input );
-		typedef std::function<ViewPtr ( Gaffer::PlugPtr )> ViewCreator;
+		using ViewCreator = std::function<ViewPtr ( Gaffer::ScriptNodePtr )>;
 		/// Registers a function which will return a View instance for a
 		/// plug of a specific type.
 		static void registerView( IECore::TypeId plugType, ViewCreator creator );
@@ -127,7 +147,7 @@ class GAFFERUI_API View : public Gaffer::Node
 		/// class should construct a plug of a suitable type and pass it
 		/// to the View constructor. For instance, the SceneView will pass
 		/// a ScenePlug so that only scenes may be viewed.
-		View( const std::string &name, Gaffer::PlugPtr input );
+		View( const std::string &name, Gaffer::ScriptNodePtr scriptNode, Gaffer::PlugPtr input );
 
 		/// The View may want to perform preprocessing of the input before
 		/// displaying it, for instance by applying a LUT to an image. This
@@ -152,35 +172,37 @@ class GAFFERUI_API View : public Gaffer::Node
 		template<typename T=Gaffer::Plug>
 		T *preprocessedInPlug();
 
-		/// Called when the context changes. Derived classes should call the
-		/// base class implementation if they override this method.
-		virtual void contextChanged( const IECore::InternedString &name );
-		/// Returns the connection used to trigger the call to contextChanged(). Derived
-		/// classes may block this temporarily if they want to prevent the triggering -
-		/// this can be useful when modifying the context.
-		boost::signals::connection &contextChangedConnection();
-
 		template<class T>
 		struct ViewDescription
 		{
 			ViewDescription( IECore::TypeId plugType );
 			ViewDescription( IECore::TypeId nodeType, const std::string &plugPathRegex );
-			static ViewPtr creator( Gaffer::PlugPtr input );
 		};
+
+		bool acceptsInput( const Gaffer::Plug *plug, const Gaffer::Plug *inputPlug ) const override;
 
 	private :
 
-		ViewportGadgetPtr m_viewportGadget;
-		Gaffer::ContextPtr m_context;
-		UnarySignal m_contextChangedSignal;
-		boost::signals::scoped_connection m_contextChangedConnection;
+		void contextTrackerChanged();
+		void toolsChildAdded( Gaffer::GraphComponent *child );
+		void toolPlugSet( Gaffer::Plug *plug );
 
-		typedef std::map<IECore::TypeId, ViewCreator> CreatorMap;
+		const Gaffer::ScriptNodePtr m_scriptNode;
+
+		using ToolPlugSetMap = std::unordered_map<Tool *, Gaffer::Signals::ScopedConnection>;
+		ToolPlugSetMap m_toolPlugSetConnections;
+
+		ViewportGadgetPtr m_viewportGadget;
+		ContextTrackerPtr m_contextTracker;
+		Gaffer::ConstContextPtr m_context;
+		UnarySignal m_contextChangedSignal;
+
+		using CreatorMap = std::map<IECore::TypeId, ViewCreator>;
 		static CreatorMap &creators();
 
-		typedef std::pair<boost::regex, ViewCreator> RegexAndCreator;
-		typedef std::vector<RegexAndCreator> RegexAndCreatorVector;
-		typedef std::map<IECore::TypeId, RegexAndCreatorVector> NamedCreatorMap;
+		using RegexAndCreator = std::pair<boost::regex, ViewCreator>;
+		using RegexAndCreatorVector = std::vector<RegexAndCreator>;
+		using NamedCreatorMap = std::map<IECore::TypeId, RegexAndCreatorVector>;
 		static NamedCreatorMap &namedCreators();
 
 		static size_t g_firstPlugIndex;
@@ -190,8 +212,60 @@ class GAFFERUI_API View : public Gaffer::Node
 
 };
 
+/// Optional component that can be added to any view, adding plugs to manage
+/// a display transform applied to `Layer::Main`.
+class GAFFERUI_API View::DisplayTransform : public Gaffer::Node
+{
+
+	public :
+
+		/// The new DisplayTransform will be owned by `view`.
+		DisplayTransform( View *view );
+		~DisplayTransform() override;
+
+		GAFFER_NODE_DECLARE_TYPE( GafferUI::View::DisplayTransform, ViewDisplayTransformTypeId, Gaffer::Node );
+
+		/// Function that returns an OpenGL shader that applies a display
+		/// transform. In addition to the shader parameters required by `ViewportGadget::setPostProcessShader()`,
+		/// the shader should also have the following parameters :
+		///
+		/// - `bool absoluteValue` : Flips negative values to positive (useful when viewing a difference value).
+		/// - `bool clipping` : Marks regions outside `0 - 1`.
+		/// - `color multiply` : Applies a multiplier before the color transform.
+		/// - `float power` : Applies `pow( c, power )` _after_ the color transform.
+		/// - `int soloChannel` : Set to 0-3 to pick channels RGBA, or -2 for luminance.
+		///   Default -1 uses all channels as a color.
+		using DisplayTransformCreator = std::function<IECoreGL::Shader::SetupPtr ()>;
+
+		static void registerDisplayTransform( const std::string &name, DisplayTransformCreator creator );
+		static void deregisterDisplayTransform( const std::string &name );
+		static std::vector<std::string> registeredDisplayTransforms();
+
+	private :
+
+		View *view();
+		Gaffer::StringPlug *namePlug();
+		Gaffer::IntPlug *soloChannelPlug();
+		Gaffer::BoolPlug *clippingPlug();
+		Gaffer::FloatPlug *exposurePlug();
+		Gaffer::FloatPlug *gammaPlug();
+		Gaffer::BoolPlug *absolutePlug();
+
+		void contextChanged();
+		void registrationChanged( const std::string &name );
+		void plugDirtied( const Gaffer::Plug *plug );
+		void preRender();
+		bool keyPress( const KeyEvent &event );
+
+		IECoreGL::Shader::SetupPtr m_shader;
+		IECore::MurmurHash m_shaderContextHash;
+		bool m_shaderDirty;
+		bool m_parametersDirty;
+
+		static size_t g_firstPlugIndex;
+
+};
+
 } // namespace GafferUI
 
 #include "GafferUI/View.inl"
-
-#endif // GAFFERUI_VIEW_H

@@ -58,7 +58,7 @@ namespace
 {
 
 template<typename T>
-std::string serialisationRepr( const T *plug, const Serialisation *serialisation = nullptr )
+std::string serialisationRepr( const T *plug, Serialisation *serialisation = nullptr )
 {
 	std::string extraArgs = "";
 
@@ -70,6 +70,11 @@ std::string serialisationRepr( const T *plug, const Serialisation *serialisation
 		boost::python::object interpretationRepr = interpretationAsPythonObject.attr( "__repr__" )();
 		extraArgs = "interpretation = " + std::string( boost::python::extract<std::string>( interpretationRepr ) );
 		boost::replace_first( extraArgs, "_IECore", "GeometricData" );
+
+		if( serialisation )
+		{
+			serialisation->addModule( "IECore" );
+		}
 	}
 
 	return ValuePlugSerialiser::repr( plug, extraArgs, serialisation );
@@ -87,15 +92,15 @@ class CompoundNumericPlugSerialiser : public ValuePlugSerialiser
 
 	public :
 
-		std::string constructor( const Gaffer::GraphComponent *graphComponent, const Serialisation &serialisation ) const override
+		std::string constructor( const Gaffer::GraphComponent *graphComponent, Serialisation &serialisation ) const override
 		{
 			return serialisationRepr( static_cast<const T *>( graphComponent ), &serialisation );
 		}
 
 };
 
-template<typename T>
-void setValue( T *plug, const typename T::ValueType value )
+template<typename T, typename ValueType = typename T::ValueType>
+void setValue( T *plug, const ValueType &value )
 {
 	// we use a GIL release here to prevent a lock in the case where this triggers a graph
 	// evaluation which decides to go back into python on another thread:
@@ -131,18 +136,18 @@ void ungang( T *plug )
 }
 
 template<typename T>
-void bind()
+PlugClass<T> bind()
 {
-	typedef typename T::ValueType V;
+	using V = typename T::ValueType;
 
-	PlugClass<T>()
-		.def( init<const char *, Plug::Direction, V, V, V, unsigned, IECore::GeometricData::Interpretation>(
+	PlugClass<T> cls;
+		cls.def( init<const char *, Plug::Direction, V, V, V, unsigned, IECore::GeometricData::Interpretation>(
 				(
 					boost::python::arg_( "name" )=GraphComponent::defaultName<T>(),
 					boost::python::arg_( "direction" )=Plug::In,
 					boost::python::arg_( "defaultValue" )=V( 0 ),
-					boost::python::arg_( "minValue" )=V(Imath::limits<typename V::BaseType>::min()),
-					boost::python::arg_( "maxValue" )=V(Imath::limits<typename V::BaseType>::max()),
+					boost::python::arg_( "minValue" )=V(std::numeric_limits<typename V::BaseType>::lowest()),
+					boost::python::arg_( "maxValue" )=V(std::numeric_limits<typename V::BaseType>::max()),
 					boost::python::arg_( "flags" )=Plug::Default,
 					boost::python::arg_( "interpretation" )=IECore::GeometricData::None
 				)
@@ -163,8 +168,14 @@ void bind()
 		.def( "__repr__", &repr<T> )
 	;
 
+	scope s = cls;
+
+	const PyTypeObject *valueType = boost::python::to_python_value<const V &>().get_pytype();
+	s.attr( "ValueType" ) = boost::python::object( boost::python::handle<>( boost::python::borrowed( const_cast<PyTypeObject *>( valueType ) ) ) );
+
 	Serialisation::registerSerialiser( T::staticTypeId(), new CompoundNumericPlugSerialiser<T>() );
 
+	return cls;
 }
 
 } // namespace
@@ -175,6 +186,8 @@ void GafferModule::bindCompoundNumericPlug()
 	bind<V3fPlug>();
 	bind<V2iPlug>();
 	bind<V3iPlug>();
-	bind<Color3fPlug>();
+	bind<Color3fPlug>()
+		.def( "setValue", &setValue<Color3fPlug, Imath::V3f> )
+	;
 	bind<Color4fPlug>();
 }

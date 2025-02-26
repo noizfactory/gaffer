@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_MESHTOPOINTS_H
-#define GAFFERSCENE_MESHTOPOINTS_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/Deformer.h"
 
 namespace Gaffer
 {
@@ -49,30 +48,24 @@ IE_CORE_FORWARDDECLARE( StringPlug )
 namespace GafferScene
 {
 
-class GAFFERSCENE_API MeshToPoints : public SceneElementProcessor
+class GAFFERSCENE_API MeshToPoints : public Deformer
 {
 
 	public :
 
-		MeshToPoints( const std::string &name=defaultName<MeshToPoints>() );
+		explicit MeshToPoints( const std::string &name=defaultName<MeshToPoints>() );
 		~MeshToPoints() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::MeshToPoints, MeshToPointsTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::MeshToPoints, MeshToPointsTypeId, Deformer );
 
 		Gaffer::StringPlug *typePlug();
 		const Gaffer::StringPlug *typePlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
-
 	protected :
 
-		bool processesBound() const override;
-		void hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::Box3f computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const override;
-
-		bool processesObject() const override;
+		bool affectsProcessedObject( const Gaffer::Plug *input ) const override;
 		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const override;
+		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const override;
 
 	private :
 
@@ -83,5 +76,3 @@ class GAFFERSCENE_API MeshToPoints : public SceneElementProcessor
 IE_CORE_DECLAREPTR( MeshToPoints )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_MESHTOPOINTS_H

@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import inspect
 import unittest
 
@@ -73,8 +73,7 @@ class SceneSwitchTest( GafferSceneTest.SceneTestCase ) :
 		for p in [ switch["in"][0], switch["in"][1] ] :
 			for n in p.keys() :
 				a = switch.affects( p[n] )
-				self.assertEqual( len( a ), 1 )
-				self.assertTrue( a[0].isSame( switch["out"][n] ) )
+				self.assertEqual( a, [ switch["out"][n], switch["connectedInputs"] ] )
 
 		a = set( switch.affects( switch["enabled"] ) )
 		self.assertEqual( a, set( switch["out"].children() ) )
@@ -173,7 +172,7 @@ class SceneSwitchTest( GafferSceneTest.SceneTestCase ) :
 	def testLoadFileFromVersion0_49( self ) :
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/sceneSwitch-0.49.1.0.gfr" )
+		s["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "sceneSwitch-0.49.1.0.gfr" )
 		s.load()
 
 		self.assertEqual( s["SceneSwitch"]["in"][0].getInput(), s["Plane"]["out"] )

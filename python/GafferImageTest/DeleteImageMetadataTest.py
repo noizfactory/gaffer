@@ -45,7 +45,7 @@ import GafferImageTest
 
 class DeleteImageMetadataTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def test( self ) :
 

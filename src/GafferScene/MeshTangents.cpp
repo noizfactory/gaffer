@@ -44,11 +44,12 @@ using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( MeshTangents );
+GAFFER_NODE_DEFINE_TYPE( MeshTangents );
 
 size_t MeshTangents::g_firstPlugIndex = 0;
 
-MeshTangents::MeshTangents( const std::string &name ) : SceneElementProcessor( name )
+MeshTangents::MeshTangents( const std::string &name )
+	:	ObjectProcessor( name, PathMatcher::EveryMatch )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new IntPlug( "mode", Plug::In, Mode::UV, /* min */ 0, /* max */ Mode::NumberOfModes ) );
@@ -61,11 +62,6 @@ MeshTangents::MeshTangents( const std::string &name ) : SceneElementProcessor( n
 	addChild( new StringPlug( "vTangent", Plug::In, "vTangent" ) );
 	addChild( new StringPlug( "tangent", Plug::In, "tangent" ) );
 	addChild( new StringPlug( "biTangent", Plug::In, "biTangent" ) );
-
-	// Fast pass-throughs for things we don't modify
-	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
 }
 
 MeshTangents::~MeshTangents()
@@ -172,23 +168,26 @@ const Gaffer::StringPlug *MeshTangents::biTangentPlug() const
 	return getChild<StringPlug>( g_firstPlugIndex + 9 );
 }
 
-void MeshTangents::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+bool MeshTangents::affectsProcessedObject( const Gaffer::Plug *input ) const
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if( input == uvSetPlug() || input == positionPlug() || input == orthogonalPlug() || input == modePlug() || input == leftHandedPlug() || input == uTangentPlug() || input == vTangentPlug() || input == tangentPlug() || input == biTangentPlug() || input == normalPlug() )
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
-}
-
-bool MeshTangents::processesObject() const
-{
-	return true;
+	return
+		ObjectProcessor::affectsProcessedObject( input ) ||
+		input == uvSetPlug() ||
+		input == positionPlug() ||
+		input == orthogonalPlug() ||
+		input == modePlug() ||
+		input == leftHandedPlug() ||
+		input == uTangentPlug() ||
+		input == vTangentPlug() ||
+		input == tangentPlug() ||
+		input == biTangentPlug() ||
+		input == normalPlug()
+	;
 }
 
 void MeshTangents::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
+	ObjectProcessor::hashProcessedObject( path, context, h );
 	uvSetPlug()->hash( h );
 	positionPlug()->hash( h );
 	orthogonalPlug()->hash( h );
@@ -201,9 +200,9 @@ void MeshTangents::hashProcessedObject( const ScenePath &path, const Gaffer::Con
 	normalPlug()->hash( h );
 }
 
-IECore::ConstObjectPtr MeshTangents::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr MeshTangents::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
-	const MeshPrimitive *mesh = runTimeCast<const MeshPrimitive>( inputObject.get() );
+	const MeshPrimitive *mesh = runTimeCast<const MeshPrimitive>( inputObject );
 	if( !mesh )
 	{
 		return inputObject;
@@ -223,7 +222,7 @@ IECore::ConstObjectPtr MeshTangents::computeProcessedObject( const ScenePath &pa
 		std::string uTangent = uTangentPlug()->getValue();
 		std::string vTangent = vTangentPlug()->getValue();
 
-		tangentPrimvars = MeshAlgo::calculateTangentsFromUV( mesh, uvSet, position, ortho, leftHanded );
+		tangentPrimvars = MeshAlgo::calculateTangentsFromUV( mesh, uvSet, position, ortho, leftHanded, context->canceller() );
 
 		meshWithTangents->variables[uTangent] = tangentPrimvars.first;
 		meshWithTangents->variables[vTangent] = tangentPrimvars.second;
@@ -236,15 +235,15 @@ IECore::ConstObjectPtr MeshTangents::computeProcessedObject( const ScenePath &pa
 
 		if ( mode == Mode::FirstEdge )
 		{
-			tangentPrimvars = MeshAlgo::calculateTangentsFromFirstEdge( mesh, position, normal, ortho, leftHanded  );
+			tangentPrimvars = MeshAlgo::calculateTangentsFromFirstEdge( mesh, position, normal, ortho, leftHanded, context->canceller() );
 		}
 		else if ( mode == Mode::TwoEdges )
 		{
-			tangentPrimvars = MeshAlgo::calculateTangentsFromTwoEdges( mesh, position, normal, ortho, leftHanded  );
+			tangentPrimvars = MeshAlgo::calculateTangentsFromTwoEdges( mesh, position, normal, ortho, leftHanded, context->canceller() );
 		}
 		else
 		{
-			tangentPrimvars = MeshAlgo::calculateTangentsFromPrimitiveCentroid( mesh, position, normal, ortho, leftHanded  );
+			tangentPrimvars = MeshAlgo::calculateTangentsFromPrimitiveCentroid( mesh, position, normal, ortho, leftHanded, context->canceller() );
 		}
 
 		meshWithTangents->variables[tangent] = tangentPrimvars.first;

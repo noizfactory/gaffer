@@ -42,10 +42,12 @@
 #include "Gaffer/Plug.h"
 #include "Gaffer/Reference.h"
 #include "Gaffer/ScriptNode.h"
+#include "Gaffer/Spreadsheet.h"
 
 #include "IECore/SimpleTypedData.h"
 
-#include <boost/regex.hpp>
+#include "boost/algorithm/string/predicate.hpp"
+#include "boost/regex.hpp"
 
 using namespace std;
 using namespace IECore;
@@ -59,6 +61,10 @@ InternedString g_bookmarkedName( "bookmarked" );
 InternedString g_numericBookmarkBaseName( "numericBookmark" );
 IECore::InternedString g_connectionColorKey( "connectionGadget:color" );
 IECore::InternedString g_noduleColorKey( "nodule:color" );
+const std::string g_annotationPrefix( "annotation:" );
+const InternedString g_annotations( "annotations" );
+const InternedString g_spreadsheetColumnWidth( "spreadsheet:columnWidth" );
+const InternedString g_spreadsheetColumnLabel( "spreadsheet:columnLabel" );
 
 void copy( const Gaffer::GraphComponent *src , Gaffer::GraphComponent *dst , IECore::InternedString key , bool overwrite )
 {
@@ -81,6 +87,69 @@ IECore::InternedString numericBookmarkMetadataName( int bookmark )
 	}
 
 	return g_numericBookmarkBaseName.string() + std::to_string( bookmark );
+}
+
+const Gaffer::GraphComponent *readOnlyReason( const Gaffer::GraphComponent *graphComponent, bool first )
+{
+	const Gaffer::GraphComponent *reason = nullptr;
+
+	bool haveNodeDescendants = false;
+
+	while( graphComponent )
+	{
+		const Gaffer::Node *node = runTimeCast<const Gaffer::Node>( graphComponent );
+
+		if(
+			Gaffer::MetadataAlgo::getReadOnly( graphComponent ) ||
+			( node && haveNodeDescendants && Gaffer::MetadataAlgo::getChildNodesAreReadOnly( node ) ) )
+		{
+			reason = graphComponent;
+			if( first )
+			{
+				return reason;
+			}
+		}
+
+		if( !haveNodeDescendants && node )
+		{
+			haveNodeDescendants = true;
+		}
+
+		graphComponent = graphComponent->parent();
+	}
+
+	return reason;
+}
+
+bool ancestorChildNodesAreReadOnly( const Gaffer::GraphComponent *graphComponent )
+{
+
+	bool haveNodeDescendants = false;
+	const Gaffer::Node *node = runTimeCast<const Gaffer::Node>( graphComponent );
+	if ( node )
+	{
+		haveNodeDescendants = true;
+	}
+
+	graphComponent = graphComponent->parent();
+
+	while( graphComponent )
+	{
+		const Gaffer::Node *node = runTimeCast<const Gaffer::Node>( graphComponent );
+
+		if( node && haveNodeDescendants && Gaffer::MetadataAlgo::getChildNodesAreReadOnly( node ) )
+		{
+			return true;
+		}
+
+		if( !haveNodeDescendants && node )
+		{
+			haveNodeDescendants = true;
+		}
+
+		graphComponent = graphComponent->parent();
+	}
+	return false;
 }
 
 } // namespace
@@ -115,25 +184,12 @@ bool getChildNodesAreReadOnly( const Node *node )
 
 bool readOnly( const GraphComponent *graphComponent )
 {
-	bool haveNodeDescendants = false;
+	return ::readOnlyReason( graphComponent, /* first = */ true ) != nullptr;
+}
 
-	while( graphComponent )
-	{
-		const Node *node = runTimeCast<const Node>( graphComponent );
-
-		if( getReadOnly( graphComponent ) || ( node && haveNodeDescendants && getChildNodesAreReadOnly( node ) ) )
-		{
-			return true;
-		}
-
-		if( !haveNodeDescendants && node )
-		{
-			haveNodeDescendants = true;
-		}
-
-		graphComponent = graphComponent->parent();
-	}
-	return false;
+const GraphComponent *readOnlyReason( const GraphComponent *graphComponent )
+{
+	return ::readOnlyReason( graphComponent, /* first = */ false );
 }
 
 bool readOnlyAffectedByChange( const GraphComponent *graphComponent, IECore::TypeId changedNodeTypeId, const IECore::StringAlgo::MatchPattern &changedPlugPath, const IECore::InternedString &changedKey, const Gaffer::Plug *changedPlug )
@@ -184,6 +240,19 @@ bool readOnlyAffectedByChange( const GraphComponent *graphComponent, IECore::Typ
 	return false;
 }
 
+bool readOnlyAffectedByChange( const GraphComponent *graphComponent, const Gaffer::GraphComponent *changedGraphComponent, const IECore::InternedString &changedKey )
+{
+	if( changedKey == g_readOnlyName )
+	{
+		return changedGraphComponent == graphComponent || changedGraphComponent->isAncestorOf( graphComponent );
+	}
+	else if( changedKey == g_childNodesAreReadOnlyName )
+	{
+		return changedGraphComponent->isAncestorOf( graphComponent );
+	}
+	return false;
+}
+
 bool readOnlyAffectedByChange( const IECore::InternedString &changedKey )
 {
 	return changedKey == g_readOnlyName || changedKey == g_childNodesAreReadOnlyName;
@@ -216,7 +285,7 @@ void bookmarks( const Node *node, std::vector<NodePtr> &bookmarks )
 {
 	bookmarks.clear();
 
-	for( NodeIterator it( node ); !it.done(); ++it )
+	for( Node::Iterator it( node ); !it.done(); ++it )
 	{
 		if( getBookmarked( it->get() ) )
 		{
@@ -227,7 +296,7 @@ void bookmarks( const Node *node, std::vector<NodePtr> &bookmarks )
 
 void setNumericBookmark( ScriptNode *scriptNode, int bookmark, Node *node )
 {
-	if( scriptNode->isExecuting() && node && node->ancestor<Reference>() )
+	if( scriptNode->isExecuting() && node && ancestorChildNodesAreReadOnly( node ) )
 	{
 		return;
 	}
@@ -264,12 +333,8 @@ void setNumericBookmark( ScriptNode *scriptNode, int bookmark, Node *node )
 Node *getNumericBookmark( ScriptNode *scriptNode, int bookmark )
 {
 	// Return the first valid one we find. There should only ever be just one valid matching node.
-	for( Node *nodeWithMetadata : Metadata::nodesWithMetadata( scriptNode, numericBookmarkMetadataName( bookmark ), /* instanceOnly = */ true ) )
-	{
-		return nodeWithMetadata;
-	}
-
-	return nullptr;
+	std::vector<Node *> nodes = Metadata::nodesWithMetadata( scriptNode, numericBookmarkMetadataName( bookmark ), /* instanceOnly = */ true );
+	return !nodes.empty() ? nodes.front() : nullptr;
 }
 
 int numericBookmark( const Node *node )
@@ -291,6 +356,188 @@ bool numericBookmarkAffectedByChange( const IECore::InternedString &changedKey )
 	boost::regex expr{ g_numericBookmarkBaseName.string() + "[1-9]" };
 	return boost::regex_match( changedKey.string(), expr );
 }
+
+// Annotations
+// ===========
+
+Imath::Color3f Annotation::g_defaultColor( 0.05 );
+std::string Annotation::g_defaultText;
+
+Annotation::Annotation( const std::string &text )
+	:	textData( new StringData( text ) ), colorData( nullptr )
+{
+}
+
+Annotation::Annotation( const std::string &text, const Imath::Color3f &color )
+	:	textData( new StringData( text ) ), colorData( new Color3fData( color ) )
+{
+}
+
+Annotation::Annotation( const IECore::ConstStringDataPtr &text, const IECore::ConstColor3fDataPtr &color )
+	:	textData( text ), colorData( color )
+{
+}
+
+bool Annotation::operator == ( const Annotation &rhs )
+{
+	auto dataEqual = [] ( const Data *a, const Data *b ) {
+		if( a )
+		{
+			return b && b->isEqualTo( a );
+		}
+		else
+		{
+			return !b;
+		}
+	};
+
+	return
+		dataEqual( textData.get(), rhs.textData.get() ) &&
+		dataEqual( colorData.get(), rhs.colorData.get() )
+	;
+}
+
+void addAnnotation( Node *node, const std::string &name, const Annotation &annotation, bool persistent )
+{
+	const string prefix = g_annotationPrefix + name + ":";
+	if( annotation.textData )
+	{
+		Metadata::registerValue( node, prefix + "text", annotation.textData, persistent );
+	}
+	else
+	{
+		throw IECore::Exception( "Annotation must have text" );
+	}
+
+	if( annotation.colorData )
+	{
+		Metadata::registerValue( node, prefix + "color", annotation.colorData, persistent );
+	}
+	else
+	{
+		Metadata::deregisterValue( node, prefix + "color" );
+	}
+}
+
+Annotation getAnnotation( const Node *node, const std::string &name, bool inheritTemplate )
+{
+	const string prefix = g_annotationPrefix + name + ":";
+	auto text = Metadata::value<StringData>( node, prefix + "text" );
+	if( !text )
+	{
+		return Annotation();
+	}
+
+	Annotation result( text, Metadata::value<Color3fData>( node, prefix + "color" ) );
+	if( !result.colorData && inheritTemplate  )
+	{
+		result.colorData = Metadata::value<Color3fData>( g_annotations, name + ":color" );
+	}
+	return result;
+}
+
+void removeAnnotation( Node *node, const std::string &name )
+{
+	const string prefix = g_annotationPrefix + name + ":";
+	const vector<InternedString> keys = Metadata::registeredValues( node );
+
+	for( const auto &key : keys )
+	{
+		if( boost::starts_with( key.string(), prefix ) )
+		{
+			Metadata::deregisterValue( node, key );
+		}
+	}
+}
+
+void annotations( const Node *node, std::vector<std::string> &names )
+{
+	names = annotations( node );
+}
+
+std::vector<std::string> annotations( const Node *node, Gaffer::Metadata::RegistrationTypes types )
+{
+	std::vector<std::string> result;
+
+	const vector<InternedString> keys = Metadata::registeredValues( node, types );
+
+	for( const auto &key : keys )
+	{
+		if( boost::starts_with( key.string(), g_annotationPrefix ) && boost::ends_with( key.string(), ":text" ) )
+		{
+			result.push_back( key.string().substr( g_annotationPrefix.size(), key.string().size() - g_annotationPrefix.size() - 5 ) );
+		}
+	}
+
+	return result;
+}
+
+void addAnnotationTemplate( const std::string &name, const Annotation &annotation, bool user )
+{
+	if( annotation.textData )
+	{
+		Metadata::registerValue( g_annotations, name + ":text", annotation.textData );
+	}
+	else
+	{
+		Metadata::deregisterValue( g_annotations, name + ":text" );
+	}
+
+	if( annotation.colorData )
+	{
+		Metadata::registerValue( g_annotations, name + ":color", annotation.colorData );
+	}
+	else
+	{
+		Metadata::deregisterValue( g_annotations, name + ":color" );
+	}
+
+	Metadata::registerValue( g_annotations, name + ":user", new BoolData( user ) );
+}
+
+Annotation getAnnotationTemplate( const std::string &name )
+{
+	return Annotation(
+		Metadata::value<StringData>( g_annotations, name + ":text" ),
+		Metadata::value<Color3fData>( g_annotations, name + ":color" )
+	);
+}
+
+void removeAnnotationTemplate( const std::string &name )
+{
+	Metadata::deregisterValue( g_annotations, name + ":text" );
+	Metadata::deregisterValue( g_annotations, name + ":color" );
+}
+
+void annotationTemplates( std::vector<std::string> &names, bool userOnly )
+{
+	vector<InternedString> keys;
+	Metadata::registeredValues( g_annotations, keys );
+	for( const auto &key : keys )
+	{
+		if( boost::ends_with( key.string(), ":text" ) )
+		{
+			const string name = key.string().substr( 0, key.string().size() - 5 );
+			if( userOnly )
+			{
+				auto user = Metadata::value<BoolData>( g_annotations, name + ":user" );
+				if( !user || !user->readable() )
+				{
+					continue;
+				}
+			}
+			names.push_back( name );
+		}
+	}
+}
+
+bool annotationsAffectedByChange( const IECore::InternedString &changedKey )
+{
+	return boost::starts_with( changedKey.c_str(), g_annotationPrefix );
+}
+
+// Change queries
+// ==============
 
 bool affectedByChange( const Plug *plug, IECore::TypeId changedTypeId, const IECore::StringAlgo::MatchPattern &changedPlugPath, const Gaffer::Plug *changedPlug )
 {
@@ -372,7 +619,7 @@ bool childAffectedByChange( const GraphComponent *parent, IECore::TypeId changed
 		return parent == changedNode->parent();
 	}
 
-	for( NodeIterator it( parent ); !it.done(); ++it )
+	for( Node::Iterator it( parent ); !it.done(); ++it )
 	{
 		if( (*it)->isInstanceOf( changedNodeTypeId ) )
 		{
@@ -444,10 +691,28 @@ bool affectedByChange( const Node *node, IECore::TypeId changedNodeTypeId, const
 	return node->isInstanceOf( changedNodeTypeId );
 }
 
+// Copying
+// =======
+
+void copy( const GraphComponent *from, GraphComponent *to, bool persistent )
+{
+	copyIf(
+		from, to,
+		[]( const GraphComponent *, const GraphComponent *, InternedString ) { return true; },
+		persistent
+	);
+}
+
 void copy( const GraphComponent *from, GraphComponent *to, const IECore::StringAlgo::MatchPattern &exclude, bool persistentOnly, bool persistent )
 {
-	vector<IECore::InternedString> keys;
-	Metadata::registeredValues( from, keys, /* instanceOnly = */ false, /* persistentOnly = */ persistentOnly );
+	/// \todo Change function signature to take `RegistrationTypes` directly.
+	unsigned registrationTypes = Metadata::RegistrationTypes::TypeId | Metadata::RegistrationTypes::TypeIdDescendant | Metadata::RegistrationTypes::InstancePersistent;
+	if( !persistentOnly )
+	{
+		registrationTypes |= Metadata::RegistrationTypes::InstanceNonPersistent;
+	}
+
+	const vector<IECore::InternedString> keys = Metadata::registeredValues( from, registrationTypes );
 	for( vector<IECore::InternedString>::const_iterator it = keys.begin(), eIt = keys.end(); it != eIt; ++it )
 	{
 		if( StringAlgo::matchMultiple( it->string(), exclude ) )
@@ -470,6 +735,75 @@ void copyColors( const Gaffer::Plug *srcPlug , Gaffer::Plug *dstPlug, bool overw
 {
 	::copy(srcPlug, dstPlug, g_connectionColorKey, overwrite);
 	::copy(srcPlug, dstPlug, g_noduleColorKey, overwrite);
+}
+
+// Promotability
+// =============
+
+bool isPromotable( const GraphComponent *from, const GraphComponent *to, const InternedString &name )
+{
+	/// \todo Return false if the metadata entry already exists on the `to` plug.
+	/// Allowing those copies often overrides metadata that should be controlled
+	/// globally with per-instance metadata.
+
+	if( boost::ends_with( name.string(), ":promotable" ) )
+	{
+		// No need to promote "<name>:promotable". If it's true, that's the default
+		// which will apply to the promoted plug anyway. And if it's false, then we're not
+		// promoting.
+		return false;
+	}
+	if( auto promotable = Metadata::value<BoolData>( from, name.string() + ":promotable" ) )
+	{
+		if( !promotable->readable() )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+/// Cleanup
+/// =======
+
+void deregisterRedundantValues( GraphComponent *graphComponent )
+{
+	for( const auto &key : Metadata::registeredValues( graphComponent, Metadata::RegistrationTypes::Instance ) )
+	{
+		ConstDataPtr instanceValue = Metadata::value( graphComponent, key, (unsigned)Metadata::RegistrationTypes::Instance );
+		ConstDataPtr typeValue = Metadata::value( graphComponent, key, (unsigned)Metadata::RegistrationTypes::TypeId | Metadata::RegistrationTypes::TypeIdDescendant );
+		if(
+			( (bool)instanceValue == (bool)typeValue ) &&
+			( !instanceValue || instanceValue->isEqualTo( typeValue.get() ) )
+		)
+		{
+			// We can remove the instance value, because the lookup will fall
+			// back to an identical value.
+			Gaffer::Metadata::deregisterValue( graphComponent, key );
+		}
+
+		// Special-case for badly promoted spreadsheet metadata of old.
+		if( key == g_spreadsheetColumnWidth || key == g_spreadsheetColumnLabel )
+		{
+			if( auto row = graphComponent->ancestor<Spreadsheet::RowPlug>() )
+			{
+				if( auto rows = row->parent<Spreadsheet::RowsPlug>() )
+				{
+					if( row != rows->defaultRow() )
+					{
+						// Override on non-default row doesn't agree with the value
+						// that should be mirrored from the default row. Remove it.
+						Gaffer::Metadata::deregisterValue( graphComponent, key );
+					}
+				}
+			}
+		}
+	}
+
+	for( auto &child : GraphComponent::Range( *graphComponent ) )
+	{
+		deregisterRedundantValues( child.get() );
+	}
 }
 
 } // namespace MetadataAlgo

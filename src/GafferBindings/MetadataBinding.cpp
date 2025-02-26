@@ -40,6 +40,7 @@
 
 #include "GafferBindings/DataBinding.h"
 #include "GafferBindings/Serialisation.h"
+#include "GafferBindings/ValuePlugBinding.h"
 
 #include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
@@ -51,8 +52,9 @@
 
 #include "IECore/SimpleTypedData.h"
 
-#include "boost/format.hpp"
 #include "boost/python/raw_function.hpp"
+
+#include "fmt/format.h"
 
 using namespace boost::python;
 using namespace IECore;
@@ -62,19 +64,9 @@ using namespace GafferBindings;
 namespace GafferBindings
 {
 
-void metadataModuleDependencies( const Gaffer::GraphComponent *graphComponent, std::set<std::string> &modules )
+std::string metadataSerialisation( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation )
 {
-	/// \todo Derive from the registered values so we can support
-	/// datatypes from other modules.
-	modules.insert( "imath" );
-	modules.insert( "IECore" );
-	modules.insert( "Gaffer" );
-}
-
-std::string metadataSerialisation( const Gaffer::GraphComponent *graphComponent, const std::string &identifier )
-{
-	std::vector<InternedString> keys;
-	Metadata::registeredValues( graphComponent, keys, /* instanceOnly = */ true, /* persistentOnly = */ true );
+	const std::vector<InternedString> keys = Metadata::registeredValues( graphComponent, Metadata::RegistrationTypes::InstancePersistent );
 
 	const Plug *plug = runTimeCast<const Plug>( graphComponent );
 	const Reference *reference = plug ? runTimeCast<const Reference>( plug->node() ) : nullptr;
@@ -97,32 +89,33 @@ std::string metadataSerialisation( const Gaffer::GraphComponent *graphComponent,
 		ConstDataPtr value = Metadata::value( graphComponent, *it );
 		object pythonValue = dataToPython( value.get(), /* copy = */ false );
 
-		object repr = boost::python::import( "IECore" ).attr( "repr" );
-		std::string stringValue = extract<std::string>( repr( pythonValue ) );
+		/// \todo `valueRepr()` probably belongs somewhere more central. Maybe on Serialisation itself?
+		const std::string stringValue = ValuePlugSerialiser::valueRepr( pythonValue, &serialisation );
 
 		// \todo: To clean this up we might add a registerSerialisation( key,
 		// functionReturningSerialiser ) method. Once there's a second use case
 		// we'll have more information about what the API should look like.
 		if( MetadataAlgo::numericBookmarkAffectedByChange( *it ) )
 		{
-			result += boost::str(
-				boost::format( "Gaffer.MetadataAlgo.setNumericBookmark( %s.scriptNode(), %s, %s )\n" ) %
-				identifier %
-				MetadataAlgo::numericBookmark( IECore::runTimeCast<const Node>( graphComponent ) ) %
+			result += fmt::format(
+				"Gaffer.MetadataAlgo.setNumericBookmark( {}.scriptNode(), {}, {} )\n",
+				identifier, MetadataAlgo::numericBookmark( IECore::runTimeCast<const Node>( graphComponent ) ),
 				identifier
 			);
 		}
 		else
 		{
-			result += boost::str(
-				boost::format( "Gaffer.Metadata.registerValue( %s, %s, %s )\n" ) %
-				identifier %
-				key %
-				stringValue
+			result += fmt::format(
+				"Gaffer.Metadata.registerValue( {}, {}, {} )\n",
+				identifier, key, stringValue
 			);
 		}
 	}
 
+	if( result.size() )
+	{
+		serialisation.addModule( "Gaffer" );
+	}
 	return result;
 }
 

@@ -36,7 +36,8 @@
 
 import re
 import unittest
-import subprocess32 as subprocess
+import os
+import subprocess
 
 import Gaffer
 import GafferTest
@@ -55,10 +56,10 @@ class StatsApplicationTest( GafferTest.TestCase ) :
 		script["b"] = Gaffer.Box()
 		script["b"]["n"] = GafferTest.AddNode()
 
-		script["fileName"].setValue( self.temporaryDirectory() + "/script.gfr" )
+		script["fileName"].setValue( self.temporaryDirectory() / "script.gfr" )
 		script.save()
 
-		o = subprocess.check_output( [ "gaffer", "stats", script["fileName"].getValue() ] )
+		o = subprocess.check_output( [ str( Gaffer.executablePath() ), "stats", script["fileName"].getValue() ], universal_newlines = True )
 
 		self.assertTrue( Gaffer.About.versionString() in o )
 		self.assertTrue( re.search( r"frameRange\.start\s*10", o ) )

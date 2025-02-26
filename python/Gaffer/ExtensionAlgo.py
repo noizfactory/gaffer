@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import re
 
 import IECore
@@ -48,34 +48,32 @@ import Gaffer
 # loaded automatically by Gaffer.
 def exportExtension( name, boxes, directory ) :
 
-	pythonDir = os.path.join( directory, "python", name )
-	os.makedirs( pythonDir )
+	if isinstance( directory, str ) :
+		directory = pathlib.Path( directory )
 
-	with open( os.path.join( pythonDir, "__init__.py" ), "w" ) as initFile :
+	pythonDir = directory / "python" / name
+	pythonDir.mkdir( parents = True, exist_ok = True )
+
+	with open( pythonDir / "__init__.py", "w", encoding = "utf-8" ) as initFile :
+
+		for box in boxes :
+			exportNode( name, box, pythonDir / (box.getName() + ".py") )
+			initFile.write( "from .{name} import {name}\n".format( name = box.getName() ) )
+
+	uiDir = directory / "python" / (name + "UI")
+	uiDir.mkdir( parents = True, exist_ok = True )
+
+	with open( uiDir / "__init__.py", "w", encoding = "utf-8" ) as initFile :
 
 		for box in boxes :
 
-			with open( os.path.join( pythonDir, box.getName() + ".py" ), "w" ) as nodeFile :
-				nodeFile.write( __nodeDefinition( box, name ) )
+			exportNodeUI( name, box, uiDir / (box.getName() + "UI.py" ) )
+			initFile.write( "from . import {name}UI\n".format( name = box.getName() ) )
 
-			initFile.write( "from {name} import {name}\n".format( name = box.getName() ) )
+	startupDir = directory / "startup" / "gui"
+	startupDir.mkdir( parents = True, exist_ok = True )
 
-	uiDir = os.path.join( directory, "python", name + "UI" )
-	os.makedirs( uiDir )
-
-	with open( os.path.join( uiDir, "__init__.py" ), "w" ) as initFile :
-
-		for box in boxes :
-
-			with open( os.path.join( uiDir, box.getName() + "UI.py" ), "w" ) as uiFile :
-				uiFile.write( __uiDefinition( box, name ) )
-
-			initFile.write( "import {name}UI\n".format( name = box.getName() ) )
-
-	startupDir = os.path.join( directory, "startup", "gui" )
-	os.makedirs( startupDir )
-
-	with open( os.path.join( startupDir, name + ".py" ), "w" ) as startupFile :
+	with open( startupDir / (name + ".py"), "w", encoding = "utf-8" ) as startupFile :
 
 		nodeMenuDefinition = []
 		for box in boxes :
@@ -98,6 +96,16 @@ def exportExtension( name, boxes, directory ) :
 				nodeMenuDefinition = "\n".join( nodeMenuDefinition )
 			)
 		)
+
+def exportNode( moduleName, box, fileName ) :
+
+	with open( fileName, "w", encoding = "utf-8" ) as nodeFile :
+		nodeFile.write( __nodeDefinition( box, moduleName ) )
+
+def exportNodeUI( moduleName, box, fileName ) :
+
+	with open( fileName, "w", encoding = "utf-8" ) as uiFile :
+		uiFile.write( __uiDefinition( box, moduleName ) )
 
 __startupTemplate = """\
 import GafferUI
@@ -125,10 +133,22 @@ class {name}( Gaffer.SubGraph ) :
 
 {constructor}
 
-IECore.registerRunTimeTyped( {name}, typeName = "{extension}::{name}" )
+		self.__removeDynamicFlags()
+
+	# Remove dynamic flags using the same logic used by the Reference node.
+	## \todo : Create the plugs without the flags in the first place.
+	def __removeDynamicFlags( self ) :
+
+		for plug in Gaffer.Plug.Range( self ) :
+			plug.setFlags( Gaffer.Plug.Flags.Dynamic, False )
+			if not isinstance( plug, ( Gaffer.SplineffPlug, Gaffer.SplinefColor3fPlug, Gaffer.SplinefColor4fPlug ) ) :
+				for plug in Gaffer.Plug.RecursiveRange( plug ) :
+					plug.setFlags( Gaffer.Plug.Flags.Dynamic, False )
+
+IECore.registerRunTimeTyped( {name}, typeName = "{moduleName}::{name}" )
 """
 
-def __nodeDefinition( box, extension ) :
+def __nodeDefinition( box, moduleName ) :
 
 	invisiblePlug = re.compile( "^__.*$" )
 	children = Gaffer.StandardSet()
@@ -142,7 +162,7 @@ def __nodeDefinition( box, extension ) :
 	with Gaffer.Context() as context :
 		context["serialiser:includeVersionMetadata"] = IECore.BoolData( False )
 		context["serialiser:protectParentNamespace"] = IECore.BoolData( False )
-		context["valuePlugSerialiser:resetParentPlugDefaults"] = IECore.BoolData( True )
+		context["valuePlugSerialiser:omitParentNodePlugValues"] = IECore.BoolData( True )
 		context["plugSerialiser:includeParentPlugMetadata"] = IECore.BoolData( False )
 		constructor = Gaffer.Serialisation( box, "self", children ).result()
 
@@ -158,18 +178,18 @@ def __nodeDefinition( box, extension ) :
 		imports = "\n".join( sorted( imports ) ),
 		name = box.getName(),
 		constructor = __indent( "\n".join( constructorLines ), 2 ),
-		extension = extension
+		moduleName = moduleName
 	)
 
 __uiTemplate = """\
 import imath
 import IECore
 import Gaffer
-import {extension}
+import {moduleName}
 
 Gaffer.Metadata.registerNode(
 
-	{extension}.{name},
+	{moduleName}.{name},
 
 {metadata}
 {plugMetadata}
@@ -177,11 +197,11 @@ Gaffer.Metadata.registerNode(
 )
 """
 
-def __uiDefinition( box, extension ) :
+def __uiDefinition( box, moduleName ) :
 
 	return __uiTemplate.format(
 
-		extension = extension,
+		moduleName = moduleName,
 		name = box.getName(),
 		metadata = __indent( __metadata( box ), 1 ),
 		plugMetadata = __indent( __plugMetadata( box ), 1 )
@@ -191,7 +211,7 @@ def __uiDefinition( box, extension ) :
 def __metadata( graphComponent ) :
 
 	items = []
-	for k in Gaffer.Metadata.registeredValues( graphComponent, instanceOnly = True, persistentOnly = True ) :
+	for k in Gaffer.Metadata.registeredValues( graphComponent, Gaffer.Metadata.RegistrationTypes.InstancePersistent ) :
 
 		v = Gaffer.Metadata.value( graphComponent, k )
 		items.append(
@@ -225,4 +245,3 @@ def __plugMetadata( box ) :
 		return "plugs = {\n\n" + __indent( "\n".join( items ), 1 ) + "\n}\n"
 	else :
 		return ""
-

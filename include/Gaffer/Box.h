@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_BOX_H
-#define GAFFER_BOX_H
+#pragma once
 
 #include "Gaffer/SubGraph.h"
+
+#include <filesystem>
 
 namespace Gaffer
 {
@@ -52,10 +53,10 @@ class GAFFER_API Box : public SubGraph
 
 	public :
 
-		Box( const std::string &name=defaultName<Box>() );
+		explicit Box( const std::string &name=defaultName<Box>() );
 		~Box() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Box, BoxTypeId, SubGraph );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Box, BoxTypeId, SubGraph );
 
 		/// \deprecated Use PlugAlgo::canPromote() instead.
 		bool canPromotePlug( const Plug *descendantPlug ) const;
@@ -68,7 +69,7 @@ class GAFFER_API Box : public SubGraph
 
 		/// Exports the contents of the Box so that it can be referenced
 		/// by a Reference node.
-		void exportForReference( const std::string &fileName ) const;
+		void exportForReference( const std::filesystem::path &fileName ) const;
 
 		/// Creates a Box by containing a set of child nodes which
 		/// were previously held by a different parent.
@@ -77,9 +78,8 @@ class GAFFER_API Box : public SubGraph
 
 };
 
-typedef FilteredChildIterator<TypePredicate<Box> > BoxIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<Box> > RecursiveBoxIterator;
+/// \deprecated Use Box::Iterator etc instead.
+using BoxIterator = FilteredChildIterator<TypePredicate<Box> >;
+using RecursiveBoxIterator = FilteredRecursiveChildIterator<TypePredicate<Box> >;
 
 } // namespace Gaffer
-
-#endif // GAFFER_BOX_H

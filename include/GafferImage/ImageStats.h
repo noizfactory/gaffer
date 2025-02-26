@@ -34,14 +34,15 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_IMAGESTATS_H
-#define GAFFERIMAGE_IMAGESTATS_H
+#pragma once
 
 #include "GafferImage/ImagePlug.h"
+#include "GafferImage/DeepState.h"
 
 #include "Gaffer/BoxPlug.h"
 #include "Gaffer/CompoundNumericPlug.h"
 #include "Gaffer/ComputeNode.h"
+#include "Gaffer/StringPlug.h"
 
 namespace GafferImage
 {
@@ -53,18 +54,31 @@ class GAFFERIMAGE_API ImageStats : public Gaffer::ComputeNode
 
 	public :
 
-		ImageStats( const std::string &name=staticTypeName() );
+		explicit ImageStats( const std::string &name=defaultName<ImageStats>() );
 		~ImageStats() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ImageStats, ImageStatsTypeId, Gaffer::ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ImageStats, ImageStatsTypeId, Gaffer::ComputeNode );
+
+		enum AreaSource
+		{
+			Area = 0,
+			DataWindow = 1,
+			DisplayWindow = 2,
+		};
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 		GafferImage::ImagePlug *inPlug();
 		const GafferImage::ImagePlug *inPlug() const;
 
+		Gaffer::StringPlug *viewPlug();
+		const Gaffer::StringPlug *viewPlug() const;
+
 		Gaffer::StringVectorDataPlug *channelsPlug();
 		const Gaffer::StringVectorDataPlug *channelsPlug() const;
+
+		Gaffer::IntPlug *areaSourcePlug();
+		const Gaffer::IntPlug *areaSourcePlug() const;
 
 		Gaffer::Box2iPlug *areaPlug();
 		const Gaffer::Box2iPlug *areaPlug() const;
@@ -80,15 +94,26 @@ class GAFFERIMAGE_API ImageStats : public Gaffer::ComputeNode
 
 	protected :
 
-		/// Implemented to hash the area we are sampling along with the channel context and regionOfInterest.
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-
-		/// Computes the min, max and average plugs by analyzing the input ImagePlug.
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
+		Gaffer::ValuePlug::CachePolicy hashCachePolicy( const Gaffer::ValuePlug *output ) const override;
+
 
 	private :
 
-		std::string channelName( int colorIndex ) const;
+		// Stats for individual tiles
+		Gaffer::ObjectPlug *tileStatsPlug();
+		const Gaffer::ObjectPlug *tileStatsPlug() const;
+
+		// Combined stats, before they get broken out into 3 seperate plugs
+		Gaffer::ObjectPlug *allStatsPlug();
+		const Gaffer::ObjectPlug *allStatsPlug() const;
+
+		// Input plug to receive the flattened image from the internal
+		// DeepState plug.
+		ImagePlug *flattenedInPlug();
+		const ImagePlug *flattenedInPlug() const;
 
 		static size_t g_firstPlugIndex;
 
@@ -97,5 +122,3 @@ class GAFFERIMAGE_API ImageStats : public Gaffer::ComputeNode
 IE_CORE_DECLAREPTR( ImageStats );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_IMAGESTATS_H

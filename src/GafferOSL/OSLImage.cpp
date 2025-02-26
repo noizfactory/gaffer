@@ -41,6 +41,8 @@
 #include "GafferOSL/OSLShader.h"
 #include "GafferOSL/ShadingEngine.h"
 
+#include "GafferImage/ImageAlgo.h"
+
 #include "Gaffer/Context.h"
 #include "Gaffer/NameValuePlug.h"
 #include "Gaffer/ScriptNode.h"
@@ -50,16 +52,17 @@
 #include "IECore/CompoundData.h"
 #include "IECore/MessageHandler.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferImage;
 using namespace GafferOSL;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( OSLImage );
+GAFFER_NODE_DEFINE_TYPE( OSLImage );
 
 size_t OSLImage::g_firstPlugIndex = 0;
 
@@ -72,11 +75,12 @@ OSLImage::OSLImage( const std::string &name )
 	addChild( new GafferScene::ShaderPlug( "__shader", Plug::In, Plug::Default & ~Plug::Serialisable ) );
 
 	addChild( new Gaffer::ObjectPlug( "__shading", Gaffer::Plug::Out, new CompoundData() ) );
+	addChild( new Gaffer::StringVectorDataPlug( "__affectedChannels", Gaffer::Plug::Out, new StringVectorData() ) );
 
 	addChild( new Plug( "channels", Plug::In, Plug::Default & ~Plug::AcceptsInputs ) );
 	addChild( new OSLCode( "__oslCode" ) );
 	addChild( new GafferImage::Constant( "__defaultConstant" ) );
-	addChild( new GafferImage::ImagePlug( "__defaultIn" ) );
+	addChild( new GafferImage::ImagePlug( "__defaultIn", Plug::In, Plug::Default & ~Plug::Serialisable ) );
 	shaderPlug()->setInput( oslCode()->outPlug() );
 	defaultConstant()->formatPlug()->setInput( defaultFormatPlug() );
 	defaultInPlug()->setInput( defaultConstant()->outPlug() );
@@ -85,7 +89,10 @@ OSLImage::OSLImage( const std::string &name )
 	channelsPlug()->childRemovedSignal().connect( boost::bind( &OSLImage::channelsRemoved, this, ::_1, ::_2 ) );
 
 	// We don't ever want to change these, so we make pass-through connections.
+	outPlug()->viewNamesPlug()->setInput( inPlug()->viewNamesPlug() );
 	outPlug()->metadataPlug()->setInput( inPlug()->metadataPlug() );
+	outPlug()->deepPlug()->setInput( inPlug()->deepPlug() );
+	outPlug()->sampleOffsetsPlug()->setInput( inPlug()->sampleOffsetsPlug() );
 }
 
 OSLImage::~OSLImage()
@@ -122,44 +129,54 @@ const Gaffer::ObjectPlug *OSLImage::shadingPlug() const
 	return getChild<ObjectPlug>( g_firstPlugIndex + 2 );
 }
 
+Gaffer::StringVectorDataPlug *OSLImage::affectedChannelsPlug()
+{
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 3 );
+}
+
+const Gaffer::StringVectorDataPlug *OSLImage::affectedChannelsPlug() const
+{
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 3 );
+}
+
 Gaffer::Plug *OSLImage::channelsPlug()
 {
-	return getChild<Gaffer::Plug>( g_firstPlugIndex + 3 );
+	return getChild<Gaffer::Plug>( g_firstPlugIndex + 4 );
 }
 
 const Gaffer::Plug *OSLImage::channelsPlug() const
 {
-	return getChild<Gaffer::Plug>( g_firstPlugIndex + 3 );
+	return getChild<Gaffer::Plug>( g_firstPlugIndex + 4 );
 }
 
 GafferOSL::OSLCode *OSLImage::oslCode()
 {
-	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 4 );
+	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 5 );
 }
 
 const GafferOSL::OSLCode *OSLImage::oslCode() const
 {
-	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 4 );
+	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 5 );
 }
 
 GafferImage::Constant *OSLImage::defaultConstant()
 {
-	return getChild<GafferImage::Constant>( g_firstPlugIndex + 5 );
+	return getChild<GafferImage::Constant>( g_firstPlugIndex + 6 );
 }
 
 const GafferImage::Constant *OSLImage::defaultConstant() const
 {
-	return getChild<GafferImage::Constant>( g_firstPlugIndex + 5 );
+	return getChild<GafferImage::Constant>( g_firstPlugIndex + 6 );
 }
 
 GafferImage::ImagePlug *OSLImage::defaultInPlug()
 {
-	return getChild<GafferImage::ImagePlug>( g_firstPlugIndex + 6 );
+	return getChild<GafferImage::ImagePlug>( g_firstPlugIndex + 7 );
 }
 
 const GafferImage::ImagePlug *OSLImage::defaultInPlug() const
 {
-	return getChild<GafferImage::ImagePlug>( g_firstPlugIndex + 6 );
+	return getChild<GafferImage::ImagePlug>( g_firstPlugIndex + 7 );
 }
 
 const GafferImage::ImagePlug *OSLImage::defaultedInPlug() const
@@ -184,14 +201,28 @@ void OSLImage::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outpu
 		input == inPlug()->formatPlug() ||
 		input == defaultInPlug()->formatPlug() ||
 		input == inPlug()->channelNamesPlug() ||
-		input == inPlug()->channelDataPlug()
+		input == inPlug()->channelDataPlug() ||
+		input == inPlug()->deepPlug() ||
+		input == inPlug()->sampleOffsetsPlug()
 	)
 	{
 		outputs.push_back( shadingPlug() );
 	}
-	else if( input == shadingPlug() )
+
+	if( input == shaderPlug() || input == shadingPlug() )
+	{
+		// shaderPlug() is affected by all the children of channelsPlug due to connections
+		// made in updateChannels, so this implicitly catches any changes to the channelsPlug
+		outputs.push_back( affectedChannelsPlug() );
+	}
+
+	if( input == affectedChannelsPlug() || input == inPlug()->channelNamesPlug() )
 	{
 		outputs.push_back( outPlug()->channelNamesPlug() );
+	}
+
+	if( input == shadingPlug() )
+	{
 		outputs.push_back( outPlug()->channelDataPlug()	);
 	}
 
@@ -232,6 +263,41 @@ void OSLImage::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *con
 	{
 		hashShading( context, h );
 	}
+	else if( output == affectedChannelsPlug() )
+	{
+		bool hasClosures = false;
+		for( NameValuePlug::Iterator inputPlug( channelsPlug() ); !inputPlug.done(); ++inputPlug )
+		{
+			BoolPlug* enabledPlug = (*inputPlug)->enabledPlug();
+			if( enabledPlug )
+			{
+				if( !enabledPlug->getValue() )
+				{
+					continue;
+				}
+			}
+
+			(*inputPlug)->namePlug()->hash( h );
+			int valueType = (*inputPlug)->valuePlug()->typeId();
+			if( valueType == ClosurePlug::staticTypeId() )
+			{
+				hasClosures = true;
+			}
+			h.append( valueType );
+		}
+
+		if( hasClosures )
+		{
+			const Box2i dataWindow = defaultedInPlug()->dataWindowPlug()->getValue();
+			if( !dataWindow.isEmpty() )
+			{
+				ImagePlug::ChannelDataScope channelDataScope( context );
+				Imath::V2i dataTileOrigin = ImagePlug::tileOrigin( dataWindow.min );
+				channelDataScope.setTileOrigin( &dataTileOrigin );
+				shadingPlug()->hash( h );
+			}
+		}
+	}
 }
 
 void OSLImage::compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const
@@ -241,12 +307,78 @@ void OSLImage::compute( Gaffer::ValuePlug *output, const Gaffer::Context *contex
 		static_cast<ObjectPlug *>( output )->setValue( computeShading( context ) );
 		return;
 	}
+	else if( output == affectedChannelsPlug() )
+	{
+		set<string> result;
+
+		bool hasClosures = false;
+		for( NameValuePlug::Iterator inputPlug( channelsPlug() ); !inputPlug.done(); ++inputPlug )
+		{
+			BoolPlug* enabledPlug = (*inputPlug)->enabledPlug();
+			if( enabledPlug )
+			{
+				if( !enabledPlug->getValue() )
+				{
+					continue;
+				}
+			}
+
+			std::string name = (*inputPlug)->namePlug()->getValue();
+			int valueType = (*inputPlug)->valuePlug()->typeId();
+			switch( valueType )
+			{
+				case ClosurePlugTypeId :
+					hasClosures = true;
+					break;
+				case FloatPlugTypeId :
+					result.insert( name );
+					break;
+				case Color3fPlugTypeId :
+					// Logic must imitate outLayer in shaders/GafferOSL/ImageProcessing.h
+					result.insert( ImageAlgo::channelName( name, "R" ) );
+					result.insert( ImageAlgo::channelName( name, "G" ) );
+					result.insert( ImageAlgo::channelName( name, "B" ) );
+					break;
+			}
+		}
+
+		if( hasClosures )
+		{
+			// If there are closures, then new names can be created during shading, and we have to actually
+			// run the shader
+			const Box2i dataWindow = defaultedInPlug()->dataWindowPlug()->getValue();
+			if( !dataWindow.isEmpty() )
+			{
+				ImagePlug::ChannelDataScope channelDataScope( context );
+				Imath::V2i dataTileOrigin = ImagePlug::tileOrigin( dataWindow.min );
+				channelDataScope.setTileOrigin( &dataTileOrigin );
+
+				ConstCompoundDataPtr shading = runTimeCast<const CompoundData>( shadingPlug()->getValue() );
+				for( CompoundDataMap::const_iterator it = shading->readable().begin(), eIt = shading->readable().end(); it != eIt; ++it )
+				{
+					result.insert( it->first );
+				}
+			}
+		}
+
+		// Note that this result has been sorted through insertion into the set
+		StringVectorDataPtr resultVector = new StringVectorData( vector<string>( result.begin(), result.end() ) );
+		static_cast<StringVectorDataPlug *>( output )->setValue( resultVector );
+	}
 
 	ImageProcessor::compute( output, context );
 }
 
 Gaffer::ValuePlug::CachePolicy OSLImage::computeCachePolicy( const Gaffer::ValuePlug *output ) const
 {
+	if( output == shadingPlug() )
+	{
+		// shadingEngine->shade( ... ) uses tbb internally, so we need to at least isolate it to
+		// prevent hangs due to task stealing causing false recursion.
+		// Using TaskCollaboration allows for an actual speedup when multiple threads request the
+		// same channelData
+		return ValuePlug::CachePolicy::TaskCollaboration;
+	}
 	if( output == outPlug()->channelDataPlug() )
 	{
 		// We disable caching for the channel data plug, because our compute
@@ -263,13 +395,7 @@ void OSLImage::hashChannelNames( const GafferImage::ImagePlug *output, const Gaf
 	ImageProcessor::hashChannelNames( output, context, h );
 	defaultedInPlug()->channelNamesPlug()->hash( h );
 
-	const Box2i dataWindow = defaultedInPlug()->dataWindowPlug()->getValue();
-	if( !dataWindow.isEmpty() )
-	{
-		ImagePlug::ChannelDataScope channelDataScope( context );
-		channelDataScope.setTileOrigin( ImagePlug::tileOrigin( dataWindow.min ) );
-		shadingPlug()->hash( h );
-	}
+	affectedChannelsPlug()->hash( h);
 }
 
 IECore::ConstStringVectorDataPtr OSLImage::computeChannelNames( const Gaffer::Context *context, const GafferImage::ImagePlug *parent ) const
@@ -278,17 +404,10 @@ IECore::ConstStringVectorDataPtr OSLImage::computeChannelNames( const Gaffer::Co
 
 	set<string> result( channelNamesData->readable().begin(), channelNamesData->readable().end() );
 
-	const Box2i dataWindow = defaultedInPlug()->dataWindowPlug()->getValue();
-	if( !dataWindow.isEmpty() )
+	ConstStringVectorDataPtr affectedChannels = affectedChannelsPlug()->getValue();
+	for( const std::string &i : affectedChannels->readable() )
 	{
-		ImagePlug::ChannelDataScope channelDataScope( context );
-		channelDataScope.setTileOrigin( ImagePlug::tileOrigin( dataWindow.min ) );
-
-		ConstCompoundDataPtr shading = runTimeCast<const CompoundData>( shadingPlug()->getValue() );
-		for( CompoundDataMap::const_iterator it = shading->readable().begin(), eIt = shading->readable().end(); it != eIt; ++it )
-		{
-			result.insert( it->first );
-		}
+		result.insert( i );
 	}
 
 	return new StringVectorData( vector<string>( result.begin(), result.end() ) );
@@ -297,36 +416,56 @@ IECore::ConstStringVectorDataPtr OSLImage::computeChannelNames( const Gaffer::Co
 void OSLImage::hashChannelData( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
 	ImageProcessor::hashChannelData( output, context, h );
+
 	const std::string &channelName = context->get<std::string>( ImagePlug::channelNameContextName );
-	h.append( channelName );
-	shadingPlug()->hash( h );
+	const V2i &tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
 
-	ConstStringVectorDataPtr channelNamesData;
 	{
-		ImagePlug::GlobalScope c( context );
-		channelNamesData = defaultedInPlug()->channelNamesPlug()->getValue();
+		Context::EditableScope c( context );
+		c.remove( ImagePlug::channelNameContextName );
+		c.remove( ImagePlug::tileOriginContextName );
+
+		ConstStringVectorDataPtr affectedChannels = affectedChannelsPlug()->getValue();
+
+		if( std::binary_search( affectedChannels->readable().begin(), affectedChannels->readable().end(), channelName ) )
+		{
+			// Channel is affected, include shading hash
+			c.set( ImagePlug::tileOriginContextName, &tileOrigin );
+			shadingPlug()->hash( h );
+			h.append( channelName );
+			return;
+		}
 	}
 
-	if(
-		std::find( channelNamesData->readable().begin(), channelNamesData->readable().end(), channelName ) != 
-		channelNamesData->readable().end()
-	)
-	{
-		defaultedInPlug()->channelDataPlug()->hash( h );
-	}
+	// Not in affectedChannels, just pass through the input hash
+	h = defaultedInPlug()->channelDataPlug()->hash();
 }
 
 IECore::ConstFloatVectorDataPtr OSLImage::computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const GafferImage::ImagePlug *parent ) const
 {
-	ConstCompoundDataPtr shadedPoints = runTimeCast<const CompoundData>( shadingPlug()->getValue() );
-	ConstFloatVectorDataPtr result = shadedPoints->member<FloatVectorData>( channelName );
-
-	if( !result )
 	{
-		result = defaultedInPlug()->channelDataPlug()->getValue();
+		Context::EditableScope c( context );
+		c.remove( ImagePlug::channelNameContextName );
+		c.remove( ImagePlug::tileOriginContextName );
+
+		ConstStringVectorDataPtr affectedChannels = affectedChannelsPlug()->getValue();
+
+		if( std::binary_search( affectedChannels->readable().begin(), affectedChannels->readable().end(), channelName ) )
+		{
+			// Channel is affected, evaluate shading
+			c.set( ImagePlug::tileOriginContextName, &tileOrigin );
+
+			ConstCompoundDataPtr shadedPoints = runTimeCast<const CompoundData>( shadingPlug()->getValue() );
+			ConstFloatVectorDataPtr result = shadedPoints->member<FloatVectorData>( channelName );
+			if( result )
+			{
+				return result;
+			}
+		}
 	}
 
-	return result;
+	// Not written by OSL, just pass through the input data
+	return defaultedInPlug()->channelDataPlug()->getValue();
 }
 
 void OSLImage::hashFormat( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
@@ -367,10 +506,17 @@ void OSLImage::hashShading( const Gaffer::Context *context, IECore::MurmurHash &
 	h.append( context->get<V2i>( ImagePlug::tileOriginContextName ) );
 
 	ConstStringVectorDataPtr channelNamesData;
+	bool deep;
 	{
 		ImagePlug::GlobalScope c( context );
 		defaultedInPlug()->formatPlug()->hash( h );
 		channelNamesData = defaultedInPlug()->channelNamesPlug()->getValue();
+		deep = defaultedInPlug()->deepPlug()->getValue();
+	}
+
+	if( deep )
+	{
+		defaultedInPlug()->sampleOffsetsPlug()->hash( h );
 	}
 
 	{
@@ -379,7 +525,7 @@ void OSLImage::hashShading( const Gaffer::Context *context, IECore::MurmurHash &
 		{
 			if( shadingEngine->needsAttribute( channelName ) )
 			{
-				c.setChannelName( channelName );
+				c.setChannelName( &channelName );
 				defaultedInPlug()->channelDataPlug()->hash( h );
 			}
 		}
@@ -405,13 +551,38 @@ IECore::ConstCompoundDataPtr OSLImage::computeShading( const Gaffer::Context *co
 	const V2i tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
 	Format format;
 	ConstStringVectorDataPtr channelNamesData;
+	bool deep;
 	{
 		ImagePlug::GlobalScope c( context );
 		format = defaultedInPlug()->formatPlug()->getValue();
 		channelNamesData = defaultedInPlug()->channelNamesPlug()->getValue();
+		deep = defaultedInPlug()->deepPlug()->getValue();
 	}
 
 	CompoundDataPtr shadingPoints = new CompoundData();
+	ConstIntVectorDataPtr sampleOffsetsData;
+
+	if( deep )
+	{
+		sampleOffsetsData = defaultedInPlug()->sampleOffsetsPlug()->getValue();
+	}
+
+	{
+		ImagePlug::ChannelDataScope c( context );
+
+		for( const auto &channelName : channelNamesData->readable() )
+		{
+			if( shadingEngine->needsAttribute( channelName ) )
+			{
+				c.setChannelName( &channelName );
+				shadingPoints->writable()[channelName] = boost::const_pointer_cast<FloatVectorData>(
+					defaultedInPlug()->channelDataPlug()->getValue()
+				);
+			}
+		}
+	}
+
+	int numSamples = sampleOffsetsData ? sampleOffsetsData->readable().back() : ImagePlug::tilePixels();
 
 	V3fVectorDataPtr pData = new V3fVectorData;
 	FloatVectorDataPtr uData = new FloatVectorData;
@@ -421,25 +592,50 @@ IECore::ConstCompoundDataPtr OSLImage::computeShading( const Gaffer::Context *co
 	vector<float> &uWritable = uData->writable();
 	vector<float> &vWritable = vData->writable();
 
-	const size_t tileSize = ImagePlug::tileSize();
-	pWritable.reserve( tileSize * tileSize );
-	uWritable.reserve( tileSize * tileSize );
-	vWritable.reserve( tileSize * tileSize );
+	pWritable.reserve( numSamples );
+	uWritable.reserve( numSamples );
+	vWritable.reserve( numSamples );
 
 	const V2f uvStep = V2f( 1.0f ) / format.getDisplayWindow().size();
 	// UV value for the pixel at 0,0
 	const V2f uvOrigin = (V2f(0.5) - format.getDisplayWindow().min) * uvStep;
+	const V2i pMax = tileOrigin + V2i( ImagePlug::tileSize() );
 
-	const V2i pMax = tileOrigin + V2i( tileSize );
-	V2i p;
-	for( p.y = tileOrigin.y; p.y < pMax.y; ++p.y )
+	if( !deep )
 	{
-		const float v = uvOrigin.y + p.y * uvStep.y;
-		for( p.x = tileOrigin.x; p.x < pMax.x; ++p.x )
+		V2i p;
+		for( p.y = tileOrigin.y; p.y < pMax.y; ++p.y )
 		{
-			uWritable.push_back( uvOrigin.x + p.x * uvStep.x );
-			vWritable.push_back( v );
-			pWritable.push_back( V3f( p.x + 0.5f, p.y + 0.5f, 0.0f ) );
+			const float v = uvOrigin.y + p.y * uvStep.y;
+			for( p.x = tileOrigin.x; p.x < pMax.x; ++p.x )
+			{
+				uWritable.push_back( uvOrigin.x + p.x * uvStep.x );
+				vWritable.push_back( v );
+				pWritable.push_back( V3f( p.x + 0.5f, p.y + 0.5f, 0.0f ) );
+			}
+		}
+	}
+	else
+	{
+		const std::vector< int > &sampleOffsets = sampleOffsetsData->readable();
+		int prevOffset = 0;
+		int index = 0;
+		V2i p;
+		for( p.y = tileOrigin.y; p.y < pMax.y; ++p.y )
+		{
+			const float v = uvOrigin.y + p.y * uvStep.y;
+			for( p.x = tileOrigin.x; p.x < pMax.x; ++p.x )
+			{
+				int offset = sampleOffsets[index];
+				for( int j = 0; j < offset - prevOffset; j++ )
+				{
+					uWritable.push_back( uvOrigin.x + p.x * uvStep.x );
+					vWritable.push_back( v );
+					pWritable.push_back( V3f( p.x + 0.5f, p.y + 0.5f, j ) );
+				}
+				prevOffset = offset;
+				index++;
+			}
 		}
 	}
 
@@ -447,19 +643,6 @@ IECore::ConstCompoundDataPtr OSLImage::computeShading( const Gaffer::Context *co
 	shadingPoints->writable()["u"] = uData;
 	shadingPoints->writable()["v"] = vData;
 
-	{
-		ImagePlug::ChannelDataScope c( context );
-		for( const auto &channelName : channelNamesData->readable() )
-		{
-			if( shadingEngine->needsAttribute( channelName ) )
-			{
-				c.setChannelName( channelName );
-				shadingPoints->writable()[channelName] = boost::const_pointer_cast<FloatVectorData>(
-					defaultedInPlug()->channelDataPlug()->getValue()
-				);
-			}
-		}
-	}
 
 	CompoundDataPtr result = shadingEngine->shade( shadingPoints.get() );
 
@@ -494,7 +677,7 @@ void OSLImage::updateChannels()
 
 	std::string code = "Ci = 0;\n";
 
-	for( NameValuePlugIterator inputPlug( channelsPlug() ); !inputPlug.done(); ++inputPlug )
+	for( NameValuePlug::Iterator inputPlug( channelsPlug() ); !inputPlug.done(); ++inputPlug )
 	{
 		std::string prefix = "";
 		BoolPlug* enabledPlug = (*inputPlug)->enabledPlug();

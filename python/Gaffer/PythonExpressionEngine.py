@@ -39,6 +39,7 @@ import re
 import ast
 import functools
 import inspect
+import pathlib
 import imath
 
 import IECore
@@ -56,8 +57,8 @@ class PythonExpressionEngine( Gaffer.Expression.Engine ) :
 		parser = _Parser( expression )
 
 		self.__expression = expression
-		self.__inPlugPaths = list( parser.plugReads )
-		self.__outPlugPaths = list( parser.plugWrites )
+		self.__inPlugPaths = sorted( parser.plugReads )
+		self.__outPlugPaths = sorted( parser.plugWrites )
 
 		inPlugs.extend( [ self.__plug( node, p ) for p in self.__inPlugPaths ] )
 		outPlugs.extend( [ self.__plug( node, p ) for p in self.__outPlugPaths ] )
@@ -68,19 +69,18 @@ class PythonExpressionEngine( Gaffer.Expression.Engine ) :
 		plugDict = {}
 		for plugPath, plug in zip( self.__inPlugPaths, inputs ) :
 			parentDict = plugDict
-			plugPathSplit = plugPath.split( "." )
-			for p in plugPathSplit[:-1] :
+			for p in plugPath[:-1] :
 				parentDict = parentDict.setdefault( p, {} )
 			if isinstance( plug, Gaffer.CompoundDataPlug ) :
 				value = IECore.CompoundData()
 				plug.fillCompoundData( value )
 			else :
 				value = plug.getValue()
-			parentDict[plugPathSplit[-1]] = value
+			parentDict[plugPath[-1]] = value
 
 		for plugPath in self.__outPlugPaths :
 			parentDict = plugDict
-			for p in plugPath.split( "." )[:-1] :
+			for p in plugPath[:-1] :
 				parentDict = parentDict.setdefault( p, {} )
 
 		executionDict = { "imath" : imath, "IECore" : IECore, "parent" : plugDict, "context" : _ContextProxy( context ) }
@@ -90,10 +90,20 @@ class PythonExpressionEngine( Gaffer.Expression.Engine ) :
 		result = IECore.ObjectVector()
 		for plugPath in self.__outPlugPaths :
 			parentDict = plugDict
-			plugPathSplit = plugPath.split( "." )
-			for p in plugPathSplit[:-1] :
+			for p in plugPath[:-1] :
 				parentDict = parentDict[p]
-			result.append( parentDict.get( plugPathSplit[-1], IECore.NullObject.defaultNullObject() ) )
+			r = parentDict.get( plugPath[-1], IECore.NullObject.defaultNullObject() )
+			try:
+				if isinstance( r, pathlib.Path ) :
+					result.append( r.as_posix() )
+				else :
+					result.append( r )
+			except:
+				raise TypeError(
+					"Unsupported type for result \"{}\" for expression output \"{}\"".format(
+						r, ".".join( plugPath )
+					)
+				)
 
 		return result
 
@@ -196,20 +206,23 @@ class PythonExpressionEngine( Gaffer.Expression.Engine ) :
 
 	def __plug( self, node, plugPath ) :
 
-		plug = node.parent().descendant( plugPath )
+		try :
+			plug = node.parent()
+			for p in plugPath :
+				plug = plug[p]
+		except KeyError :
+			raise RuntimeError( "\"{}\" does not exist".format( ".".join( plugPath ) ) ) from None
+
 		if isinstance( plug, Gaffer.ValuePlug ) :
 			return plug
-
-		if plug is None :
-			raise RuntimeError( "\"%s\" does not exist" % plugPath )
 		else :
-			raise RuntimeError( "\"%s\" is not a ValuePlug" % plugPath )
+			raise RuntimeError( "\"{}\" is not a ValuePlug".format( ".".join( plugPath ) ) )
 
 	def __plugRegex( self, node, plug ) :
 
 		identifier = self.identifier( node, plug )
-		regex = identifier.replace( "[", "\[" )
-		regex = regex.replace( "]", "\]" )
+		regex = identifier.replace( "[", r"\[" )
+		regex = regex.replace( "]", r"\]" )
 		regex = regex.replace( '"', "['\"']" )
 
 		return re.compile( regex )
@@ -254,6 +267,8 @@ class _Parser( ast.NodeVisitor ) :
 				contextName = self.__contextName( path )
 				if contextName :
 					self.contextReads.add( contextName )
+				else :
+					ast.NodeVisitor.generic_visit( self, node )
 
 	def visit_Call( self, node ) :
 
@@ -300,11 +315,10 @@ class _Parser( ast.NodeVisitor ) :
 		result = []
 		while node is not None :
 			if isinstance( node, ast.Subscript ) :
-				if isinstance( node.slice, ast.Index ) :
-					if isinstance( node.slice.value, ast.Str ) :
-						result.insert( 0, node.slice.value.s )
-					else :
-						return []
+				if isinstance( node.slice, ast.Constant ) and isinstance( node.slice.value, str ) :
+					result.insert( 0, node.slice.value )
+				else :
+					return []
 				node = node.value
 			elif isinstance( node, ast.Name ) :
 				result.insert( 0, node.id )
@@ -317,9 +331,9 @@ class _Parser( ast.NodeVisitor ) :
 	def __plugPath( self, path ) :
 
 		if len( path ) < 2 or path[0] != "parent" :
-			return ""
+			return ()
 		else :
-			return ".".join( path[1:] )
+			return tuple( path[1:] )
 
 	def __contextName( self, path ) :
 
@@ -352,6 +366,13 @@ def __boxPlugValueExtractor( plug, topLevelPlug, value ) :
 	vector = value.value.min() if vectorPlug.getName() == "min" else value.value.max()
 
 	return vector[index]
+
+def __compoundObjectPlugValueExtractor( plug, topLevelPlug, value ) :
+
+	if isinstance( value, IECore.CompoundData ) :
+		return IECore.CompoundObject( dict( value ) )
+	else :
+		return value
 
 def __defaultValueExtractor( plug, topLevelPlug, value ) :
 
@@ -394,6 +415,7 @@ _valueExtractors = {
 	Gaffer.Box2iPlug : __boxPlugValueExtractor,
 	Gaffer.Box3fPlug : __boxPlugValueExtractor,
 	Gaffer.Box3iPlug : __boxPlugValueExtractor,
+	Gaffer.CompoundObjectPlug : __compoundObjectPlugValueExtractor,
 }
 
 def _extractPlugValue( plug, topLevelPlug, value ) :
@@ -426,4 +448,3 @@ class _ContextProxy( object ) :
 			return getattr( self.__context, name )
 		else :
 			raise AttributeError( name )
-

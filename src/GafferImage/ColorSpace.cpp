@@ -36,6 +36,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "GafferImage/ColorSpace.h"
+#include "GafferImage/OpenColorIOAlgo.h"
 
 #include "Gaffer/StringPlug.h"
 
@@ -48,7 +49,7 @@ using namespace Gaffer;
 namespace GafferImage
 {
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ColorSpace );
+GAFFER_NODE_DEFINE_TYPE( ColorSpace );
 
 size_t ColorSpace::g_firstPlugIndex = 0;
 
@@ -91,32 +92,39 @@ bool ColorSpace::affectsTransform( const Gaffer::Plug *input ) const
 
 void ColorSpace::hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	std::string inSpace = inputSpacePlug()->getValue();
-	std::string outSpace = outputSpacePlug()->getValue();
+	string inputSpace = inputSpacePlug()->getValue();
+	string outputSpace = outputSpacePlug()->getValue();
 
-	if( inSpace == outSpace || inSpace.empty() || outSpace.empty() )
+	if( inputSpace.empty() )
 	{
-		h = MurmurHash();
-		return;
+		inputSpace = OpenColorIOAlgo::getWorkingSpace( Context::current() );
 	}
 
-	inputSpacePlug()->hash( h );
-	outputSpacePlug()->hash( h );
+	if( outputSpace.empty() )
+	{
+		outputSpace = OpenColorIOAlgo::getWorkingSpace( Context::current() );
+	}
+
+	h.append( inputSpace );
+	h.append( outputSpace );
 }
 
-OpenColorIO::ConstTransformRcPtr ColorSpace::transform() const
+OCIO_NAMESPACE::ConstTransformRcPtr ColorSpace::transform() const
 {
-	string inputSpace( inputSpacePlug()->getValue() );
-	string outputSpace( outputSpacePlug()->getValue() );
+	string inputSpace = inputSpacePlug()->getValue();
+	string outputSpace = outputSpacePlug()->getValue();
 
-	// no need to run the processor if we're not
-	// actually changing the color space.
-	if( ( inputSpace == outputSpace ) || inputSpace.empty() || outputSpace.empty() )
+	if( inputSpace.empty() )
 	{
-		return OpenColorIO::ColorSpaceTransformRcPtr();
+		inputSpace = OpenColorIOAlgo::getWorkingSpace( Context::current() );
 	}
 
-	OpenColorIO::ColorSpaceTransformRcPtr result = OpenColorIO::ColorSpaceTransform::Create();
+	if( outputSpace.empty() )
+	{
+		outputSpace = OpenColorIOAlgo::getWorkingSpace( Context::current() );
+	}
+
+	OCIO_NAMESPACE::ColorSpaceTransformRcPtr result = OCIO_NAMESPACE::ColorSpaceTransform::Create();
 	result->setSrc( inputSpace.c_str() );
 	result->setDst( outputSpace.c_str() );
 

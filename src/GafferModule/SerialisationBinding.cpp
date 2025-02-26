@@ -51,7 +51,6 @@
 
 #include "IECore/MessageHandler.h"
 
-#include "boost/format.hpp"
 #include "boost/python/suite/indexing/container_utils.hpp"
 #include "boost/tokenizer.hpp"
 
@@ -68,12 +67,29 @@ GraphComponentPtr parent( const Serialisation &serialisation )
 	return const_cast<GraphComponent *>( serialisation.parent() );
 }
 
+std::string childIdentifier( const Serialisation &serialisation, const std::string &parentIdentifier, const GraphComponent *child )
+{
+	return serialisation.childIdentifier( parentIdentifier, child );
+}
+
+std::string objectToBase64Wrapper( const IECore::Object *object )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return Serialisation::objectToBase64( object );
+}
+
+IECore::ObjectPtr objectFromBase64Wrapper( const std::string &base64String )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return Serialisation::objectFromBase64( base64String );
+}
+
 } // namespace
 
 void GafferModule::bindSerialisation()
 {
 
-	scope s = boost::python::class_<Serialisation>( "Serialisation", no_init )
+	scope s = boost::python::class_<Serialisation, boost::noncopyable>( "Serialisation", no_init )
 		.def(
 			init<const Gaffer::GraphComponent *, const std::string &, const Gaffer::Set *>
 			(
@@ -86,11 +102,17 @@ void GafferModule::bindSerialisation()
 		)
 		.def( "parent", &parent )
 		.def( "identifier", &Serialisation::identifier )
+		.def( "childIdentifier", &childIdentifier )
+		.def( "addModule", &Serialisation::addModule )
 		.def( "result", &Serialisation::result )
-		.def( "modulePath", (std::string (*)( object & ))&Serialisation::modulePath )
+		.def( "modulePath", (std::string (*)( const object & ))&Serialisation::modulePath )
 		.staticmethod( "modulePath" )
-		.def( "classPath", (std::string (*)( object & ))&Serialisation::classPath )
+		.def( "classPath", (std::string (*)( const object & ))&Serialisation::classPath )
 		.staticmethod( "classPath" )
+		.def( "objectToBase64", &objectToBase64Wrapper )
+		.staticmethod( "objectToBase64" )
+		.def( "objectFromBase64", &objectFromBase64Wrapper )
+		.staticmethod( "objectFromBase64" )
 		.def( "registerSerialiser", &Serialisation::registerSerialiser )
 		.staticmethod( "registerSerialiser" )
 		.def( "acquireSerialiser", &Serialisation::acquireSerialiser, return_value_policy<reference_existing_object>() )

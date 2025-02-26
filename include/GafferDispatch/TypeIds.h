@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERDISPATCH_TYPEIDS_H
-#define GAFFERDISPATCH_TYPEIDS_H
+#pragma once
 
 namespace GafferDispatch
 {
@@ -46,11 +45,11 @@ enum TypeId
 	TaskNodeTypeId = 110160,
 	TaskNodeTaskPlugTypeId = 110161,
 	DispatcherTypeId = 110162,
+	TaskListTypeId = 110163,
+	FrameMaskTypeId = 110164,
 
 	LastTypeId = 110180,
 
 };
 
 } // namespace GafferDispatch
-
-#endif // GAFFERDISPATCH_TYPEIDS_H

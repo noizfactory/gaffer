@@ -44,6 +44,7 @@
 #include "GafferImage/ImagePlug.h"
 #include "GafferImage/ImageProcessor.h"
 #include "GafferImage/Sampler.h"
+#include "GafferImage/FlatImageSource.h"
 
 #include "GafferBindings/ComputeNodeBinding.h"
 #include "GafferBindings/Serialisation.h"
@@ -54,6 +55,8 @@
 
 #include "IECorePython/SimpleTypedDataBinding.h"
 
+#include "fmt/format.h"
+
 using namespace boost::python;
 using namespace Gaffer;
 using namespace GafferImage;
@@ -62,79 +65,160 @@ using namespace GafferBindings;
 namespace
 {
 
-IECore::FloatVectorDataPtr channelData( const ImagePlug &plug,  const std::string &channelName, const Imath::V2i &tile, bool copy  )
+IECore::FloatVectorDataPtr channelData( const ImagePlug &plug,  const std::string &channelName, const Imath::V2i &tile, const char *viewName, bool copy )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	IECore::ConstFloatVectorDataPtr d = plug.channelData( channelName, tile );
+	std::string viewNameStr( viewName ? viewName : "" );
+	IECore::ConstFloatVectorDataPtr d = plug.channelData( channelName, tile, viewName ? &viewNameStr : nullptr );
 	return copy ? d->copy() : boost::const_pointer_cast<IECore::FloatVectorData>( d );
 }
 
-IECore::MurmurHash channelDataHash( const ImagePlug &plug, const std::string &channelName, const Imath::V2i &tileOrigin )
+IECore::MurmurHash channelDataHash( const ImagePlug &plug, const std::string &channelName, const Imath::V2i &tileOrigin, const char *viewName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.channelDataHash( channelName, tileOrigin );
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.channelDataHash( channelName, tileOrigin, viewName ? &viewNameStr : nullptr );
 }
 
-GafferImage::Format format( const ImagePlug &plug )
+IECore::StringVectorDataPtr viewNames( const ImagePlug &plug, bool copy )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.format();
-}
-
-IECore::MurmurHash formatHash( const ImagePlug &plug )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	return plug.formatHash();
-}
-
-Imath::Box2i dataWindow( const ImagePlug &plug )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	return plug.dataWindow();
-}
-
-IECore::MurmurHash dataWindowHash( const ImagePlug &plug )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	return plug.dataWindowHash();
-}
-
-IECore::StringVectorDataPtr channelNames( const ImagePlug &plug, bool copy )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	IECore::ConstStringVectorDataPtr d = plug.channelNames();
+	IECore::ConstStringVectorDataPtr d = plug.viewNames();
 	return copy ? d->copy() : boost::const_pointer_cast<IECore::StringVectorData>( d );
 }
 
-IECore::MurmurHash channelNamesHash( const ImagePlug &plug )
+IECore::MurmurHash viewNamesHash( const ImagePlug &plug )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.channelNamesHash();
+	return plug.viewNamesHash();
 }
 
-IECore::CompoundDataPtr metadata( const ImagePlug &plug, bool copy )
+GafferImage::Format format( const ImagePlug &plug, const char *viewName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	IECore::ConstCompoundDataPtr d = plug.metadata();
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.format( viewName ? &viewNameStr : nullptr );
+}
+
+IECore::MurmurHash formatHash( const ImagePlug &plug, const char *viewName )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.formatHash( viewName ? &viewNameStr : nullptr );
+}
+
+Imath::Box2i dataWindow( const ImagePlug &plug, const char *viewName )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.dataWindow( viewName ? &viewNameStr : nullptr );
+}
+
+IECore::MurmurHash dataWindowHash( const ImagePlug &plug, const char *viewName )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.dataWindowHash( viewName ? &viewNameStr : nullptr );
+}
+
+IECore::StringVectorDataPtr channelNames( const ImagePlug &plug, const char *viewName, bool copy )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	IECore::ConstStringVectorDataPtr d = plug.channelNames( viewName ? &viewNameStr : nullptr );
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::StringVectorData>( d );
+}
+
+IECore::MurmurHash channelNamesHash( const ImagePlug &plug, const char *viewName )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.channelNamesHash( viewName ? &viewNameStr : nullptr );
+}
+
+IECore::CompoundDataPtr metadata( const ImagePlug &plug, const char *viewName, bool copy )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	IECore::ConstCompoundDataPtr d = plug.metadata( viewName ? &viewNameStr : nullptr );
 	return copy ? d->copy() : boost::const_pointer_cast<IECore::CompoundData>( d );
 }
 
-IECore::MurmurHash metadataHash( const ImagePlug &plug )
+IECore::MurmurHash metadataHash( const ImagePlug &plug, const char *viewName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.metadataHash();
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.metadataHash( viewName ? &viewNameStr : nullptr );
 }
 
-IECoreImage::ImagePrimitivePtr image( const ImagePlug &plug )
+bool deep( const ImagePlug &plug, const char *viewName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.image();
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.deep( viewName ? &viewNameStr : nullptr );
 }
 
-IECore::MurmurHash imageHash( const ImagePlug &plug )
+IECore::MurmurHash deepHash( const ImagePlug &plug, const char *viewName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return plug.imageHash();
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.deepHash( viewName ? &viewNameStr : nullptr );
+}
+
+IECore::IntVectorDataPtr sampleOffsets( const ImagePlug &plug, const Imath::V2i &tile, const char *viewName, bool copy )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	IECore::ConstIntVectorDataPtr d = plug.sampleOffsets( tile, viewName ? &viewNameStr : nullptr );
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::IntVectorData>( d );
+}
+
+IECore::MurmurHash sampleOffsetsHash( const ImagePlug &plug, const Imath::V2i &tile, const char *viewName )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	std::string viewNameStr( viewName ? viewName : "" );
+	return plug.sampleOffsetsHash( tile, viewName ? &viewNameStr : nullptr );
+}
+
+std::string defaultViewName( )
+{
+	return ImagePlug::defaultViewName;
+}
+
+IECore::StringVectorDataPtr defaultViewNames( bool copy )
+{
+	IECore::ConstStringVectorDataPtr d = ImagePlug::defaultViewNames();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::StringVectorData>( d );
+}
+
+IECore::IntVectorDataPtr emptyTileSampleOffsets( bool copy )
+{
+	IECore::ConstIntVectorDataPtr d = ImagePlug::emptyTileSampleOffsets();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::IntVectorData>( d );
+}
+
+IECore::IntVectorDataPtr flatTileSampleOffsets( bool copy )
+{
+	IECore::ConstIntVectorDataPtr d = ImagePlug::flatTileSampleOffsets();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::IntVectorData>( d );
+}
+
+IECore::FloatVectorDataPtr emptyTile( bool copy )
+{
+	IECore::ConstFloatVectorDataPtr d = ImagePlug::emptyTile();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::FloatVectorData>( d );
+}
+
+IECore::FloatVectorDataPtr blackTile( bool copy )
+{
+	IECore::ConstFloatVectorDataPtr d = ImagePlug::blackTile();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::FloatVectorData>( d );
+}
+
+IECore::FloatVectorDataPtr whiteTile( bool copy )
+{
+	IECore::ConstFloatVectorDataPtr d = ImagePlug::whiteTile();
+	return copy ? d->copy() : boost::const_pointer_cast<IECore::FloatVectorData>( d );
 }
 
 boost::python::list registeredFormats()
@@ -158,21 +242,17 @@ std::string formatRepr( const GafferImage::Format &format )
 	else if ( format.getDisplayWindow().min == Imath::V2i( 0 ) )
 	{
 		Imath::Box2i box( format.getDisplayWindow() );
-		return std::string(
-			boost::str( boost::format(
-				"GafferImage.Format( %d, %d, %.3f )" )
-				% box.max.x % box.max.y % format.getPixelAspect()
-			)
+		return fmt::format(
+			"GafferImage.Format( {}, {}, {:.3f} )",
+			box.max.x, box.max.y, format.getPixelAspect()
 		);
 	}
 	else
 	{
 		Imath::Box2i box( format.getDisplayWindow() );
-		return std::string(
-			boost::str( boost::format(
-				"GafferImage.Format( imath.Box2i( imath.V2i( %d, %d ), imath.V2i( %d, %d ) ), %.3f )" )
-				% box.min.x % box.min.y % box.max.x % box.max.y % format.getPixelAspect()
-			)
+		return fmt::format(
+			"GafferImage.Format( imath.Box2i( imath.V2i( {}, {} ), imath.V2i( {}, {} ) ), {:.3f} )",
+			box.min.x, box.min.y, box.max.x, box.max.y, format.getPixelAspect()
 		);
 	}
 }
@@ -207,6 +287,12 @@ Format getValue( const FormatPlug *plug )
 	return plug->getValue();
 }
 
+FormatPlugPtr acquireDefaultFormatPlugWrapper( Gaffer::ScriptNode &scriptNode )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return FormatPlug::acquireDefaultFormatPlug( &scriptNode );
+}
+
 class FormatPlugSerialiser : public GafferBindings::ValuePlugSerialiser
 {
 
@@ -237,25 +323,41 @@ void GafferImageModule::bindCore()
 				)
 			)
 		)
-		.def( "channelData", &channelData, ( arg( "_copy" ) = true ) )
-		.def( "channelDataHash", &channelDataHash )
-		.def( "format", &format )
-		.def( "formatHash", &formatHash )
-		.def( "dataWindow", &dataWindow )
-		.def( "dataWindowHash", &dataWindowHash )
-		.def( "channelNames", &channelNames, ( arg( "_copy" ) = true ) )
-		.def( "channelNamesHash", &channelNamesHash )
-		.def( "metadata", &metadata, ( arg( "_copy" ) = true ) )
-		.def( "metadataHash", &metadataHash )
-		.def( "image", &image )
-		.def( "imageHash", &imageHash )
+		.def( "channelData", &channelData, ( arg( "viewName" ) = object(), arg( "_copy" ) = true ) )
+		.def( "channelDataHash", &channelDataHash, ( arg( "viewName" ) = object() ) )
+		.def( "viewNames", &viewNames, ( arg( "_copy" ) = true ) )
+		.def( "viewNamesHash", &viewNamesHash )
+		.def( "format", &format, ( arg( "viewName" ) = object() ) )
+		.def( "formatHash", &formatHash, ( arg( "viewName" ) = object() ) )
+		.def( "dataWindow", &dataWindow, ( arg( "viewName" ) = object() ) )
+		.def( "dataWindowHash", &dataWindowHash, ( arg( "viewName" ) = object() ) )
+		.def( "channelNames", &channelNames, ( arg( "viewName" ) = object(), arg( "_copy" ) = true ) )
+		.def( "channelNamesHash", &channelNamesHash, ( arg( "viewName" ) = object() ) )
+		.def( "metadata", &metadata, ( arg( "viewName" ) = object(), arg( "_copy" ) = true ) )
+		.def( "metadataHash", &metadataHash, ( arg( "viewName" ) = object() ) )
+		.def( "deep", &deep, ( arg( "viewName" ) = object() ) )
+		.def( "deepHash", &deepHash, ( arg( "viewName" ) = object() ) )
+		.def( "sampleOffsets", &sampleOffsets, ( arg( "viewName" ) = object(), arg( "_copy" ) = true ) )
+		.def( "sampleOffsetsHash", &sampleOffsetsHash, ( arg( "viewName" ) = object() ) )
 		.def( "tileSize", &ImagePlug::tileSize ).staticmethod( "tileSize" )
+		.def( "tilePixels", &ImagePlug::tilePixels ).staticmethod( "tilePixels" )
 		.def( "tileIndex", &ImagePlug::tileIndex ).staticmethod( "tileIndex" )
 		.def( "tileOrigin", &ImagePlug::tileOrigin ).staticmethod( "tileOrigin" )
+		.def( "pixelIndex", &ImagePlug::pixelIndex ).staticmethod( "pixelIndex" )
+		.add_static_property( "defaultViewName", &defaultViewName )
+		.def( "defaultViewNames", &defaultViewNames, ( arg( "_copy" ) = true ) ).staticmethod( "defaultViewNames" )
+		.def( "emptyTileSampleOffsets", &emptyTileSampleOffsets, ( arg( "_copy" ) = true ) ).staticmethod( "emptyTileSampleOffsets" )
+		.def( "flatTileSampleOffsets", &flatTileSampleOffsets, ( arg( "_copy" ) = true ) ).staticmethod( "flatTileSampleOffsets" )
+		.def( "emptyTile", &emptyTile, ( arg( "_copy" ) = true ) ).staticmethod( "emptyTile" )
+		.def( "blackTile", &blackTile, ( arg( "_copy" ) = true ) ).staticmethod( "blackTile" )
+		.def( "whiteTile", &whiteTile, ( arg( "_copy" ) = true ) ).staticmethod( "whiteTile" )
 	;
 
-	typedef ComputeNodeWrapper<ImageNode> ImageNodeWrapper;
+	using ImageNodeWrapper = ComputeNodeWrapper<ImageNode>;
 	GafferBindings::DependencyNodeClass<ImageNode, ImageNodeWrapper>();
+
+	using FlatImageSourceWrapper = ComputeNodeWrapper<FlatImageSource>;
+	GafferBindings::DependencyNodeClass<FlatImageSource, FlatImageSourceWrapper>();
 
 	class_<Format>( "Format" )
 
@@ -328,14 +430,14 @@ void GafferImageModule::bindCore()
 				)
 			)
 		)
-		.def( "defaultValue", &FormatPlug::defaultValue, return_value_policy<boost::python::copy_const_reference>() )
+		.def( "defaultValue", &FormatPlug::defaultValue )
 		.def( "setValue", &setValue )
 		.def( "getValue", &getValue )
 		.def( "setDefaultFormat", &FormatPlug::setDefaultFormat )
 		.staticmethod( "setDefaultFormat" )
 		.def( "getDefaultFormat", &FormatPlug::getDefaultFormat )
 		.staticmethod( "getDefaultFormat" )
-		.def( "acquireDefaultFormatPlug", &FormatPlug::acquireDefaultFormatPlug, return_value_policy<IECorePython::CastToIntrusivePtr>() )
+		.def( "acquireDefaultFormatPlug", &acquireDefaultFormatPlugWrapper )
 		.staticmethod( "acquireDefaultFormatPlug" )
 	;
 

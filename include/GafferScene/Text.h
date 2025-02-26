@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_TEXT_H
-#define GAFFERSCENE_TEXT_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -47,9 +46,9 @@ class GAFFERSCENE_API Text : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Text, TextTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Text, TextTypeId, ObjectSource );
 
-		Text( const std::string &name=defaultName<Text>() );
+		explicit Text( const std::string &name=defaultName<Text>() );
 		~Text() override;
 
 		Gaffer::StringPlug *textPlug();
@@ -74,5 +73,3 @@ class GAFFERSCENE_API Text : public ObjectSource
 IE_CORE_DECLAREPTR( Text )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_TEXT_H

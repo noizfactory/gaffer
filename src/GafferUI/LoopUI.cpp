@@ -38,8 +38,9 @@
 #include "GafferUI/PlugAdder.h"
 
 #include "Gaffer/Loop.h"
+#include "Gaffer/MetadataAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace IECore;
 using namespace Gaffer;
@@ -70,6 +71,12 @@ class LoopPlugAdder : public PlugAdder
 			{
 				return false;
 			}
+
+			if( MetadataAlgo::readOnly( m_node.get() ) )
+			{
+				return false;
+			}
+
 			return runTimeCast<const ValuePlug>( endpoint );
 		}
 
@@ -121,7 +128,7 @@ struct Registration
 
 	Registration()
 	{
-		NoduleLayout::registerCustomGadget( "GafferUI.LoopUI.PlugAdder", boost::bind( &create, ::_1 ) );
+		NoduleLayout::registerCustomGadget( "GafferUI.LoopUI.PlugAdder", &create );
 	}
 
 	private :

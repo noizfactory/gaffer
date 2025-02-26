@@ -34,13 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_FILTERRESULTS_H
-#define GAFFERSCENE_FILTERRESULTS_H
+#pragma once
 
 #include "GafferScene/Export.h"
 #include "GafferScene/TypeIds.h"
 
 #include "Gaffer/ComputeNode.h"
+#include "Gaffer/StringPlug.h"
 #include "Gaffer/TypedObjectPlug.h"
 
 namespace GafferScene
@@ -54,10 +54,10 @@ class GAFFERSCENE_API FilterResults : public Gaffer::ComputeNode
 
 	public :
 
-		FilterResults( const std::string &name=defaultName<FilterResults>() );
+		explicit FilterResults( const std::string &name=defaultName<FilterResults>() );
 		~FilterResults() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::FilterResults, FilterResultsTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::FilterResults, FilterResultsTypeId, ComputeNode );
 
 		ScenePlug *scenePlug();
 		const ScenePlug *scenePlug() const;
@@ -65,8 +65,14 @@ class GAFFERSCENE_API FilterResults : public Gaffer::ComputeNode
 		FilterPlug *filterPlug();
 		const FilterPlug *filterPlug() const;
 
+		Gaffer::StringPlug *rootPlug();
+		const Gaffer::StringPlug *rootPlug() const;
+
 		Gaffer::PathMatcherDataPlug *outPlug();
 		const Gaffer::PathMatcherDataPlug *outPlug() const;
+
+		Gaffer::StringVectorDataPlug *outStringsPlug();
+		const Gaffer::StringVectorDataPlug *outStringsPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -90,5 +96,3 @@ class GAFFERSCENE_API FilterResults : public Gaffer::ComputeNode
 IE_CORE_DECLAREPTR( FilterResults )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_FILTERRESULTS_H

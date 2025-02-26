@@ -2,13 +2,11 @@ import PyOpenColorIO
 
 import GafferImage
 
-def defaultColorSpace( fileName, fileFormat, dataType, metadata ) :
+def defaultColorSpace( fileName, fileFormat, dataType, metadata, config ) :
 
-	config = PyOpenColorIO.GetCurrentConfig()
-
-	linear = config.getColorSpace(PyOpenColorIO.Constants.ROLE_SCENE_LINEAR).getName()
-	log = config.getColorSpace(PyOpenColorIO.Constants.ROLE_COMPOSITING_LOG).getName()
-	display = config.getColorSpace(PyOpenColorIO.Constants.ROLE_COLOR_PICKING).getName()
+	linear = "" # Will be automatically substituted with the current value of `${ocio:workingSpace}`
+	log = config.getColorSpace( PyOpenColorIO.ROLE_COMPOSITING_LOG ).getName()
+	display = config.getColorSpace( PyOpenColorIO.ROLE_COLOR_PICKING ).getName()
 
 	colorSpaces = {
 
@@ -39,6 +37,7 @@ def defaultColorSpace( fileName, fileFormat, dataType, metadata ) :
 		"png" : display,
 		"pnm" : display,
 		"psd" : display,
+		"raw" : linear,
 		"rla" : display,
 		"sgi" : display,
 		"softimage" : display,
@@ -49,6 +48,9 @@ def defaultColorSpace( fileName, fileFormat, dataType, metadata ) :
 			"uint16" : display,
 			"uint32" : linear,
 			"float"  : linear,
+			"int8"  : linear,
+			"int16"  : linear,
+			"int"  : linear,
 		},
 
 		"zfile" : linear,

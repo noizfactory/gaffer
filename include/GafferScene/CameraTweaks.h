@@ -34,37 +34,37 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_CAMERATWEAKS_H
-#define GAFFERSCENE_CAMERATWEAKS_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
-#include "GafferScene/TweakPlug.h"
+#include "GafferScene/ObjectProcessor.h"
 
 #include "Gaffer/StringPlug.h"
+#include "Gaffer/TweakPlug.h"
 
 namespace GafferScene
 {
 
-class GAFFERSCENE_API CameraTweaks : public SceneElementProcessor
+class GAFFERSCENE_API CameraTweaks : public ObjectProcessor
 {
 
 	public :
 
-		CameraTweaks( const std::string &name=defaultName<CameraTweaks>() );
+		explicit CameraTweaks( const std::string &name=defaultName<CameraTweaks>() );
 		~CameraTweaks() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::CameraTweaks, CameraTweaksTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::CameraTweaks, CameraTweaksTypeId, ObjectProcessor );
 
-		GafferScene::TweaksPlug *tweaksPlug();
-		const GafferScene::TweaksPlug *tweaksPlug() const;
+		Gaffer::BoolPlug *ignoreMissingPlug();
+		const Gaffer::BoolPlug *ignoreMissingPlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+		Gaffer::TweaksPlug *tweaksPlug();
+		const Gaffer::TweaksPlug *tweaksPlug() const;
 
 	protected :
 
-		bool processesObject() const override;
+		bool affectsProcessedObject( const Gaffer::Plug *input ) const override;
 		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputAttributes ) const override;
+		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const override;
 
 		static size_t g_firstPlugIndex;
 
@@ -73,5 +73,3 @@ class GAFFERSCENE_API CameraTweaks : public SceneElementProcessor
 IE_CORE_DECLAREPTR( CameraTweaks )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_CAMERATWEAKS_H

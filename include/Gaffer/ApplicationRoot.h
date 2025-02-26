@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_APPLICATIONROOT_H
-#define GAFFER_APPLICATIONROOT_H
+#pragma once
 
 #include "Gaffer/ScriptNode.h"
 
@@ -45,12 +44,15 @@ namespace Gaffer
 
 IE_CORE_FORWARDDECLARE( Preferences )
 
+/// \todo Derive from Node and merge with `Gaffer.Application`,
+/// using `Gaffer::Plugs` instead of `IECore::Parameters` to
+/// provide command-line arguments.
 class GAFFER_API ApplicationRoot : public GraphComponent
 {
 
 	public :
 
-		ApplicationRoot( const std::string &name = defaultName<ApplicationRoot>() );
+		explicit ApplicationRoot( const std::string &name = defaultName<ApplicationRoot>() );
 		~ApplicationRoot() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::ApplicationRoot, ApplicationRootTypeId, GraphComponent );
@@ -77,7 +79,7 @@ class GAFFER_API ApplicationRoot : public GraphComponent
 		/// Sets the clipboard contents - a copy of clip is taken.
 		void setClipboardContents( const IECore::Object *clip );
 		/// A signal emitted when the clipboard contents have changed.
-		typedef boost::signal<void (ApplicationRoot *)> ClipboardSignal;
+		using ClipboardSignal = Signals::Signal<void (ApplicationRoot *), Signals::CatchingCombiner<void>>;
 		ClipboardSignal &clipboardContentsChangedSignal();
 		//@}
 
@@ -98,17 +100,17 @@ class GAFFER_API ApplicationRoot : public GraphComponent
 		/// Saves the current preferences to preferencesLocation()/preferences.py.
 		void savePreferences() const;
 		/// Saves the current preferences value to the specified file.
-		virtual void savePreferences( const std::string &fileName ) const;
+		virtual void savePreferences( const std::filesystem::path &fileName ) const;
 		/// Returns ~/gaffer/startup/appName - the directory in which preferences are
 		/// stored, and ensures that the directory exists. Other application components
 		/// may use this location to store settings they wish to persist across invocations.
 		/// \todo Perhaps this should include a major version number in the future.
-		std::string preferencesLocation() const;
+		std::filesystem::path preferencesLocation() const;
 		//@}
 
 	private :
 
-		std::string defaultPreferencesFileName() const;
+		std::filesystem::path defaultPreferencesFileName() const;
 
 		IECore::ObjectPtr m_clipboardContents;
 		ClipboardSignal m_clipboardContentsChangedSignal;
@@ -118,5 +120,3 @@ class GAFFER_API ApplicationRoot : public GraphComponent
 IE_CORE_DECLAREPTR( ApplicationRoot );
 
 } // namespace Gaffer
-
-#endif // GAFFER_APPLICATIONROOT_H

@@ -45,9 +45,12 @@
 
 #include "Gaffer/GraphComponent.h"
 
+#include "IECorePython/ExceptionAlgo.h"
 #include "IECorePython/ScopedGILRelease.h"
 
-#include "boost/format.hpp"
+#include "boost/python/suite/indexing/container_utils.hpp"
+
+#include "fmt/format.h"
 
 using namespace boost::python;
 using namespace GafferBindings;
@@ -73,7 +76,7 @@ boost::python::list items( GraphComponent &c )
 	boost::python::list l;
 	for( GraphComponent::ChildContainer::const_iterator it=ch.begin(); it!=ch.end(); it++ )
 	{
-		l.append( boost::python::make_tuple( (*it)->getName(), *it ) );
+		l.append( boost::python::make_tuple( (*it)->getName().c_str(), *it ) );
 	}
 	return l;
 }
@@ -138,6 +141,14 @@ void clearChildren( GraphComponent &g )
 	g.clearChildren();
 }
 
+void reorderChildren( GraphComponent &g, object pythonNewOrder )
+{
+	GraphComponent::ChildContainer newOrder;
+	boost::python::container_utils::extend_container( newOrder, pythonNewOrder );
+	IECorePython::ScopedGILRelease gilRelease;
+	g.reorderChildren( newOrder );
+}
+
 GraphComponentPtr getChild( GraphComponent &g, const IECore::InternedString &n )
 {
 	return g.getChild( n );
@@ -150,9 +161,7 @@ GraphComponentPtr descendant( GraphComponent &g, const std::string &n )
 
 void throwKeyError( const GraphComponent &g, const IECore::InternedString &n )
 {
-	const std::string error = boost::str(
-		boost::format( "'%s' is not a child of '%s'" ) % n.string() % g.getName()
-	);
+	const std::string error = fmt::format( "'{}' is not a child of '{}'", n.string(), g.getName().string() );
 	PyErr_SetString( PyExc_KeyError, error.c_str() );
 	throw_error_already_set();
 }
@@ -213,7 +222,7 @@ int length( GraphComponent &g )
 	return g.children().size();
 }
 
-bool nonZero( GraphComponent &g )
+bool toBool( GraphComponent &g )
 {
 	return true;
 }
@@ -245,34 +254,68 @@ std::string repr( const GraphComponent *g )
 
 struct UnarySlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, GraphComponentPtr g )
+	void operator()( boost::python::object slot, GraphComponentPtr g )
 	{
 		try
 		{
 			slot( g );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
+	}
+};
+
+struct NameChangedSlotCaller
+{
+	void operator()( boost::python::object slot, GraphComponentPtr g, IECore::InternedString oldName )
+	{
+		try
+		{
+			slot( g, oldName.string() );
+		}
+		catch( const error_already_set & )
+		{
+			IECorePython::ExceptionAlgo::translatePythonException();
+		}
 	}
 };
 
 struct BinarySlotCaller
 {
 
-	boost::signals::detail::unusable operator()( boost::python::object slot, GraphComponentPtr g, GraphComponentPtr gg )
+	void operator()( boost::python::object slot, GraphComponentPtr g, GraphComponentPtr gg )
 	{
 		try
 		{
 			slot( g, gg );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
+	}
+};
+
+struct ChildrenReorderedSlotCaller
+{
+
+	void operator()( boost::python::object slot, GraphComponentPtr g, const std::vector<size_t> &oldIndices )
+	{
+		try
+		{
+			boost::python::list oldIndicesList;
+			for( auto i : oldIndices )
+			{
+				oldIndicesList.append( i );
+			}
+			slot( g, oldIndicesList );
+		}
+		catch( const error_already_set & )
+		{
+			IECorePython::ExceptionAlgo::translatePythonException();
+		}
 	}
 };
 
@@ -280,7 +323,7 @@ struct BinarySlotCaller
 
 void GafferModule::bindGraphComponent()
 {
-	typedef GraphComponentWrapper<GraphComponent> Wrapper;
+	using Wrapper = GraphComponentWrapper<GraphComponent>;
 
 	scope s = GraphComponentClass<GraphComponent, Wrapper>()
 		.def( init<>() )
@@ -293,6 +336,7 @@ void GafferModule::bindGraphComponent()
 		.def( "addChild", &addChild )
 		.def( "removeChild", &removeChild )
 		.def( "clearChildren", &clearChildren )
+		.def( "reorderChildren", &reorderChildren )
 		.def( "setChild", &setChild )
 		.def( "getChild", &getChild )
 		.def( "descendant", &descendant )
@@ -303,7 +347,11 @@ void GafferModule::bindGraphComponent()
 		.def( "__delitem__", (void (*)( GraphComponent &, long ))&delItem )
 		.def( "__contains__", contains )
 		.def( "__len__", &length )
-		.def( "__nonzero__", &nonZero )
+// The default conversion to bool uses `__len__`, which trips a lot of
+// people up as they expect `if graphComponent` to be equivalent to
+// `if graphComponent is not None`. So we provide a more specific conversion
+// which is always true.
+		.def( "__bool__", &toBool )
 		.def( "__repr__", &repr )
 		.def( "items", &items )
 		.def( "keys", &keys )
@@ -316,9 +364,12 @@ void GafferModule::bindGraphComponent()
 		.def( "childAddedSignal", &GraphComponent::childAddedSignal, return_internal_reference<1>() )
 		.def( "childRemovedSignal", &GraphComponent::childRemovedSignal, return_internal_reference<1>() )
 		.def( "parentChangedSignal", &GraphComponent::parentChangedSignal, return_internal_reference<1>() )
+		.def( "childrenReorderedSignal", &GraphComponent::childrenReorderedSignal, return_internal_reference<1>() )
 	;
 
 	SignalClass<GraphComponent::UnarySignal, DefaultSignalCaller<GraphComponent::UnarySignal>, UnarySlotCaller>( "UnarySignal" );
+	SignalClass<GraphComponent::NameChangedSignal, DefaultSignalCaller<GraphComponent::NameChangedSignal>, NameChangedSlotCaller>( "NameChangedSignal" );
 	SignalClass<GraphComponent::BinarySignal, DefaultSignalCaller<GraphComponent::BinarySignal>, BinarySlotCaller>( "BinarySignal" );
+	SignalClass<GraphComponent::ChildrenReorderedSignal, DefaultSignalCaller<GraphComponent::ChildrenReorderedSignal>, ChildrenReorderedSlotCaller>( "BinarySignal" );
 
 }

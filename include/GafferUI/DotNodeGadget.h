@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_DOTNODEGADGET_H
-#define GAFFERUI_DOTNODEGADGET_H
+#pragma once
 
 #include "GafferUI/StandardNodeGadget.h"
 
@@ -44,6 +43,7 @@
 namespace Gaffer
 {
 
+IE_CORE_FORWARDDECLARE( Context )
 IE_CORE_FORWARDDECLARE( Plug )
 
 } // namespace Gaffer
@@ -58,12 +58,15 @@ class GAFFERUI_API DotNodeGadget : public StandardNodeGadget
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::DotNodeGadget, DotNodeGadgetTypeId, StandardNodeGadget );
 
-		DotNodeGadget( Gaffer::NodePtr node );
+		explicit DotNodeGadget( Gaffer::NodePtr node );
 		~DotNodeGadget() override;
+
+		Imath::Box3f bound() const override;
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		void updateFromContextTracker( const ContextTracker *contextTracker ) override;
 
 	private :
 
@@ -72,15 +75,16 @@ class GAFFERUI_API DotNodeGadget : public StandardNodeGadget
 		Gaffer::Node *upstreamNode();
 
 		void plugDirtied( const Gaffer::Plug *plug );
-		void nameChanged( const Gaffer::GraphComponent *graphComponent );
+		void nodeNameChanged( const Gaffer::GraphComponent *graphComponent );
 		void updateUpstreamNameChangedConnection();
 		void updateLabel();
 
 		bool dragEnter( const DragDropEvent &event );
 		bool drop( const DragDropEvent &event );
 
-		boost::signals::scoped_connection m_upstreamNameChangedConnection;
+		Gaffer::Signals::ScopedConnection m_upstreamNameChangedConnection;
 
+		Gaffer::ConstContextPtr m_labelContext;
 		std::string m_label;
 		Imath::V2f m_labelPosition;
 
@@ -90,9 +94,4 @@ class GAFFERUI_API DotNodeGadget : public StandardNodeGadget
 
 IE_CORE_DECLAREPTR( DotNodeGadget )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<DotNodeGadget> > DotNodeGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<DotNodeGadget> > RecursiveDotNodeGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_DOTNODEGADGET_H

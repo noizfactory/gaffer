@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import time
 import unittest
 
 import imath
@@ -46,17 +47,19 @@ import GafferTest
 import GafferUI
 import GafferUITest
 import GafferScene
+import GafferSceneTest
 import GafferSceneUI
 
 class SceneViewTest( GafferUITest.TestCase ) :
 
 	def testFactory( self ) :
 
-		sphere = GafferScene.Sphere()
-		view = GafferUI.View.create( sphere["out"] )
+		script = Gaffer.ScriptNode()
+		script["sphere"] = GafferScene.Sphere()
+		view = GafferUI.View.create( script["sphere"]["out"] )
 
 		self.assertTrue( isinstance( view, GafferSceneUI.SceneView ) )
-		self.assertTrue( view["in"].getInput().isSame( sphere["out"] ) )
+		self.assertTrue( view["in"].getInput().isSame( script["sphere"]["out"] ) )
 
 	def testExpandSelection( self ) :
 
@@ -66,42 +69,46 @@ class SceneViewTest( GafferUITest.TestCase ) :
 		#    |__D
 		#	 |__E
 
-		D = GafferScene.Sphere()
-		D["name"].setValue( "D" )
+		script = Gaffer.ScriptNode()
 
-		E = GafferScene.Sphere()
-		E["name"].setValue( "E" )
+		script["D"] = GafferScene.Sphere()
+		script["D"]["name"].setValue( "D" )
 
-		C = GafferScene.Group()
-		C["name"].setValue( "C" )
+		script["E"] = GafferScene.Sphere()
+		script["E"]["name"].setValue( "E" )
 
-		C["in"][0].setInput( D["out"] )
-		C["in"][1].setInput( E["out"] )
+		script["C"] = GafferScene.Group()
+		script["C"]["name"].setValue( "C" )
 
-		B = GafferScene.Sphere()
-		B["name"].setValue( "B" )
+		script["C"]["in"][0].setInput( script["D"]["out"] )
+		script["C"]["in"][1].setInput( script["E"]["out"] )
 
-		A = GafferScene.Group()
-		A["name"].setValue( "A" )
-		A["in"][0].setInput( B["out"] )
-		A["in"][1].setInput( C["out"] )
+		script["B"] = GafferScene.Sphere()
+		script["B"]["name"].setValue( "B" )
 
-		view = GafferUI.View.create( A["out"] )
+		script["A"] = GafferScene.Group()
+		script["A"]["name"].setValue( "A" )
+		script["A"]["in"][0].setInput( script["B"]["out"] )
+		script["A"]["in"][1].setInput( script["C"]["out"] )
+
+		view = GafferUI.View.create( script["A"]["out"] )
 
 		def setSelection( paths ) :
-			GafferSceneUI.ContextAlgo.setSelectedPaths( view.getContext(), IECore.PathMatcher( paths ) )
+			GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( view.scriptNode(), IECore.PathMatcher( paths ) )
 
 		def getSelection() :
-			return set( GafferSceneUI.ContextAlgo.getSelectedPaths( view.getContext() ).paths() )
+			return set( GafferSceneUI.ScriptNodeAlgo.getSelectedPaths( view.scriptNode() ).paths() )
 
 		setSelection( [ "/A" ] )
 		self.assertEqual( getSelection(), set( [ "/A" ] ) )
 
 		def setExpandedPaths( paths ) :
-			GafferSceneUI.ContextAlgo.setExpandedPaths( view.getContext(), IECore.PathMatcher( paths ) )
+			visibleSet = GafferSceneUI.ScriptNodeAlgo.getVisibleSet( view.scriptNode() )
+			visibleSet.expansions = IECore.PathMatcher( paths )
+			GafferSceneUI.ScriptNodeAlgo.setVisibleSet( view.scriptNode(), visibleSet )
 
 		def getExpandedPaths() :
-			return set( GafferSceneUI.ContextAlgo.getExpandedPaths( view.getContext() ).paths() )
+			return set( GafferSceneUI.ScriptNodeAlgo.getVisibleSet( view.scriptNode() ).expansions.paths() )
 
 		setExpandedPaths( [ "/" ] )
 		self.assertEqual( getExpandedPaths(), set( [ "/" ] ) )
@@ -267,12 +274,13 @@ class SceneViewTest( GafferUITest.TestCase ) :
 		self.assertEqual( getViewCameraTransform(), imath.M44f().translate( imath.V3f( 200, 0, 0 ) ) )
 
 		# Change the viewer context - since look-through is disabled the user camera should not move.
-		viewer.getContext().setFrame( 10 )
+		script.context().setFrame( 10 )
 		self.waitForIdle( 100 )
 		self.assertEqual( getViewCameraTransform(), imath.M44f().translate( imath.V3f( 200, 0, 0 ) ) )
 
 		# Work around "Internal C++ object (PySide.QtWidgets.QWidget) already deleted" error. In an
 		# ideal world we'll fix this, but it's unrelated to what we're testing here.
+		viewer.setNodeSet( Gaffer.StandardSet() )
 		window.removeChild( viewer )
 
 	def testFrame( self ) :
@@ -334,6 +342,19 @@ class SceneViewTest( GafferUITest.TestCase ) :
 		self.assertTrue( cameraContains( script["Group"]["out"], "/group/sphere" ) )
 		self.assertTrue( cameraContains( script["Group"]["out"], "/group/sphere1" ) )
 
+	def testInitialClippingPlanes( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["sphere"] = GafferScene.Sphere()
+		view = GafferUI.View.create( script["sphere"]["out"] )
+		view["camera"]["clippingPlanes"].setValue( imath.V2f( 1, 10 ) )
+
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual(
+			view.viewportGadget().getCamera().getClippingPlanes(),
+			imath.V2f( 1, 10 )
+		)
+
 	def testClippingPlanesAndFOV( self ) :
 
 		script = Gaffer.ScriptNode()
@@ -348,7 +369,7 @@ class SceneViewTest( GafferUITest.TestCase ) :
 
 			self.assertEqual(
 				view["camera"]["clippingPlanes"].getValue(),
-				view.viewportGadget().getCamera().parameters()["clippingPlanes"].value
+				view.viewportGadget().getCamera().getClippingPlanes()
 			)
 			self.assertAlmostEqual(
 				view["camera"]["fieldOfView"].getValue(),
@@ -402,6 +423,80 @@ class SceneViewTest( GafferUITest.TestCase ) :
 		view["camera"]["lookThroughEnabled"].setValue( False )
 
 		assertDefaultCamera()
+
+	def testClippingPlaneConstraints( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["sphere"] = GafferScene.Sphere()
+		view = GafferUI.View.create( script["sphere"]["out"] )
+
+		# Far must be greater than near
+
+		view["camera"]["clippingPlanes"].setValue( imath.V2f( 10, 1 ) )
+		self.assertEqual(
+			view["camera"]["clippingPlanes"].getValue(),
+			imath.V2f( 1, 10 )
+		)
+
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual(
+			view.viewportGadget().getCamera().getClippingPlanes(),
+			imath.V2f( 1, 10 )
+		)
+
+		# Values must be 0.0001 at a minimum
+
+		view["camera"]["clippingPlanes"].setValue( imath.V2f( 0, 1 ) )
+		self.assertEqual(
+			view["camera"]["clippingPlanes"].getValue(),
+			imath.V2f( 0.0001, 1 )
+		)
+
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual(
+			view.viewportGadget().getCamera().getClippingPlanes(),
+			imath.V2f( 0.0001, 1 )
+		)
+
+	def testChangingClippingPlanesUpdatesAllFreeCameras( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["sphere"] = GafferScene.Sphere()
+		view = GafferUI.View.create( script["sphere"]["out"] )
+
+		expectedClippingPlanes = view["camera"]["clippingPlanes"].getValue()
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual( view.viewportGadget().getCamera().getClippingPlanes(), expectedClippingPlanes )
+
+		view["camera"]["freeCamera"].setValue( "top" )
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual( view.viewportGadget().getCamera().getClippingPlanes(), expectedClippingPlanes )
+		self.assertEqual( view["camera"]["clippingPlanes"].getValue(), expectedClippingPlanes )
+
+		expectedClippingPlanes = imath.V2f( 1, 10 )
+		view["camera"]["clippingPlanes"].setValue( expectedClippingPlanes )
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual( view.viewportGadget().getCamera().getClippingPlanes(), expectedClippingPlanes )
+		self.assertEqual( view["camera"]["clippingPlanes"].getValue(), expectedClippingPlanes )
+
+		view["camera"]["freeCamera"].setValue( "perspective" )
+		view.viewportGadget().preRenderSignal()( view.viewportGadget() ) # Force update
+		self.assertEqual( view.viewportGadget().getCamera().getClippingPlanes(), expectedClippingPlanes )
+		self.assertEqual( view["camera"]["clippingPlanes"].getValue(), expectedClippingPlanes )
+
+	def testConstructWhileBackgroundTaskRuns( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		def task( canceller ) :
+
+			while True :
+				IECore.Canceller.check( canceller )
+				time.sleep( 0.01 )
+
+		backgroundTask = Gaffer.BackgroundTask( script["fileName"], task )
+		GafferSceneUI.SceneView( script )
+		backgroundTask.cancelAndWait()
 
 if __name__ == "__main__":
 	unittest.main()

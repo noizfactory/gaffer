@@ -76,7 +76,7 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 			## \todo This is fighting the default sizing applied in the Label constructor. Really we need a standard
 			# way of controlling size behaviours for all widgets in the public API.
 			self.__collapsible.getCornerWidget()._qtWidget().setSizePolicy( QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed )
-			self.__collapseStateChangedConnection = self.__collapsible.stateChangedSignal().connect( Gaffer.WeakMethod( self.__collapseStateChanged ) )
+			self.__collapseStateChangedConnection = self.__collapsible.stateChangedSignal().connect( Gaffer.WeakMethod( self.__collapseStateChanged ), scoped = True )
 
 		GafferUI.PlugValueWidget.__init__(
 			self,
@@ -85,8 +85,8 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 			**kw
 		)
 
-		self.__plugAddedConnection = plug.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
-		self.__plugRemovedConnection = plug.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
+		self.__plugAddedConnection = plug.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = True )
+		self.__plugRemovedConnection = plug.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = True )
 		self.__childrenChangedPending = False
 
 		# arrange to build the rest of the ui in a deferred fashion. this means that we will be
@@ -97,26 +97,20 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 		# allows the top level window to get the sizing right, and for collapsed uis we build when the
 		# the ui first becomes visible due to being opened.
 		if collapsed == True :
-			self.__visibilityChangedConnection = self.__column.visibilityChangedSignal().connect( Gaffer.WeakMethod( self.__visibilityChanged ) )
+			self.__visibilityChangedConnection = self.__column.visibilityChangedSignal().connect( Gaffer.WeakMethod( self.__visibilityChanged ), scoped = True )
 		else :
-			self.__parentChangedConnection = self.parentChangedSignal().connect( Gaffer.WeakMethod( self.__parentChanged ) )
+			self.__parentChangedConnection = self.parentChangedSignal().connect( Gaffer.WeakMethod( self.__parentChanged ), scoped = True )
 
-		self.__visibilityChangedConnection = self.__column.visibilityChangedSignal().connect( Gaffer.WeakMethod( self.__visibilityChanged ) )
+		self.__visibilityChangedConnection = self.__column.visibilityChangedSignal().connect( Gaffer.WeakMethod( self.__visibilityChanged ), scoped = True )
 
 		self.__childPlugUIs = {} # mapping from child plug to PlugWidget
 
 		self.__summary = summary
 
-		CompoundPlugValueWidget._updateFromPlug( self )
-
 	## Returns a PlugValueWidget representing the specified child plug.
-	# Because the ui is built lazily on demand, this might return None due
-	# to the user not having opened up the ui - in this case lazy=False may
-	# be passed to force the creation of the ui.
-	def childPlugValueWidget( self, childPlug, lazy=True ) :
+	def childPlugValueWidget( self, childPlug ) :
 
-		if not lazy and len( self.__childPlugUIs ) == 0 :
-			self.__updateChildPlugUIs()
+		self.__updateChildPlugUIs()
 
 		w = self.__childPlugUIs.get( childPlug, None )
 		if w is None :
@@ -130,26 +124,7 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		return True
 
-	## Overridden to propagate status to children.
-	def setReadOnly( self, readOnly ) :
-
-		if readOnly == self.getReadOnly() :
-			return
-
-		GafferUI.PlugValueWidget.setReadOnly( self, readOnly )
-
-		for w in self.__childPlugUIs.values() :
-			if w is None :
-				continue
-			if isinstance( w, GafferUI.PlugValueWidget ) :
-				w.setReadOnly( readOnly )
-			elif isinstance(  w, GafferUI.PlugWidget ) :
-				w.labelPlugValueWidget().setReadOnly( readOnly )
-				w.plugValueWidget().setReadOnly( readOnly )
-			else :
-				w.plugValueWidget().setReadOnly( readOnly )
-
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
 
 		if self.__summary is not None and self.__collapsible is not None :
 			with self.getContext() :
@@ -200,7 +175,7 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		# ditch child uis we don't need any more
 		childPlugs = self._childPlugs()
-		for childPlug in self.__childPlugUIs.keys() :
+		for childPlug in list( self.__childPlugUIs.keys() ) :
 			if childPlug not in childPlugs :
 				del self.__childPlugUIs[childPlug]
 
@@ -213,14 +188,6 @@ class CompoundPlugValueWidget( GafferUI.PlugValueWidget ) :
 				widget = self._childPlugWidget( childPlug )
 				assert( isinstance( widget, ( GafferUI.PlugValueWidget, type( None ) ) ) or hasattr( widget, "plugValueWidget" ) )
 				self.__childPlugUIs[childPlug] = widget
-				if widget is not None :
-					if isinstance( widget, GafferUI.PlugValueWidget ) :
-						widget.setReadOnly( self.getReadOnly() )
-					elif isinstance(  widget, GafferUI.PlugWidget ) :
-						widget.labelPlugValueWidget().setReadOnly( self.getReadOnly() )
-						widget.plugValueWidget().setReadOnly( self.getReadOnly() )
-					else :
-						widget.plugValueWidget().setReadOnly( self.getReadOnly() )
 			else :
 				widget = self.__childPlugUIs[childPlug]
 			if widget is not None :

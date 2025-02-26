@@ -35,6 +35,7 @@
 ##########################################################################
 
 import imath
+import unittest
 
 import IECore
 
@@ -50,6 +51,7 @@ class SerialisationTest( GafferTest.TestCase ) :
 			Gaffer.Node.__init__( self, name )
 
 			self.initArgument = initArgument
+			self.needsAdditionalModules = False
 
 			self["childNodeNeedingSerialisation"] = GafferTest.AddNode()
 			self["childNodeNotNeedingSerialisation"] = GafferTest.AddNode()
@@ -66,24 +68,32 @@ class SerialisationTest( GafferTest.TestCase ) :
 
 			def constructor( self, node, serialisation ) :
 
+				if node.needsAdditionalModules :
+					serialisation.addModule( "ConstructorModule" )
 				return ( "GafferTest.SerialisationTest.SerialisationTestNode( \"%s\", %d )" % ( node.getName(), node.initArgument ) )
 
 			def postConstructor( self, node, identifier, serialisation ) :
 
 				result = Gaffer.NodeSerialiser.postConstructor( self, node, identifier, serialisation )
 				result += identifier + ".postConstructorWasHere = True\n"
+				if node.needsAdditionalModules :
+					serialisation.addModule( "PostConstructorModule" )
 				return result
 
 			def postHierarchy( self, node, identifier, serialisation ) :
 
 				result = Gaffer.NodeSerialiser.postHierarchy( self, node, identifier, serialisation )
 				result += identifier + ".postHierarchyWasHere = True\n"
+				if node.needsAdditionalModules :
+					serialisation.addModule( "PostHierarchyModule" )
 				return result
 
 			def postScript( self, node, identifier, serialisation ) :
 
 				result = Gaffer.NodeSerialiser.postScript( self, node, identifier, serialisation )
 				result += identifier + ".postScriptWasHere = True\n"
+				if node.needsAdditionalModules :
+					serialisation.addModule( "PostScriptModule" )
 				return result
 
 			def childNeedsSerialisation( self, child, serialisation ) :
@@ -125,6 +135,15 @@ class SerialisationTest( GafferTest.TestCase ) :
 		self.assertEqual( s2["n"].postHierarchyWasHere, True )
 		self.assertEqual( s2["n"].postScriptWasHere, True )
 
+		# Test calls to `Serialisation.addModule()`
+
+		s["n"].needsAdditionalModules = True
+		ss = s.serialise()
+		self.assertIn( "import ConstructorModule", ss )
+		self.assertIn( "import PostConstructorModule", ss )
+		self.assertIn( "import PostHierarchyModule", ss )
+		self.assertIn( "import PostScriptModule", ss )
+
 	def testParentAccessor( self ) :
 
 		n = Gaffer.Node()
@@ -163,11 +182,9 @@ class SerialisationTest( GafferTest.TestCase ) :
 
 	class Outer( object ) :
 
-			class Inner( object ) :
+		class Inner( object ) :
 
-					# Emulate feature coming in Python 3.
-					# See https://www.python.org/dev/peps/pep-3155/
-					__qualname__ = "Outer.Inner"
+			pass
 
 	def testClassPathForNestedClasses( self ) :
 
@@ -227,6 +244,85 @@ class SerialisationTest( GafferTest.TestCase ) :
 		self.assertNotIn( "a1", scope["parent"] )
 		self.assertEqual( scope["parent"]["b"]["op1"].getInput(), scope["parent"]["a"]["sum"] )
 
+	def testChildIdentifier( self ) :
+
+		node = Gaffer.Node()
+		node["a"] = GafferTest.AddNode()
+		node["b"] = GafferTest.AddNode()
+
+		filter = Gaffer.StandardSet( [ node["a"] ] )
+		serialisation = Gaffer.Serialisation( node, filter = filter )
+
+		aIdentifier = serialisation.identifier( node["a"] )
+		self.assertEqual(
+			serialisation.identifier( node["a"]["op1"] ),
+			serialisation.childIdentifier( aIdentifier, node["a"]["op1"] )
+		)
+
+		bIdentifier = serialisation.identifier( node["b"] )
+		self.assertEqual( bIdentifier, "" )
+		self.assertEqual( serialisation.childIdentifier( bIdentifier, node["b"]["op1"] ), "" )
+
+	def testBase64ObjectConversions( self ) :
+
+		# Test StringData with all possible byte values (except 0,
+		# because we can't construct a StringData with a null at the start).
+		allBytes = bytes().join( [ bytes( [ i ] ) for i in range( 1, 256 ) ] )
+		for i in range( 0, len( allBytes ) ) :
+			o = IECore.StringData( allBytes[:i] )
+			b = Gaffer.Serialisation.objectToBase64( o )
+			self.assertEqual(
+				Gaffer.Serialisation.objectFromBase64( b ),
+				o
+			)
+
+		# Test CompoundData
+		o = IECore.CompoundData( {
+			"a" : 10,
+			"b" : 20,
+			"c" : IECore.CompoundData( {
+				"d" : imath.V3f( 1, 2, 3 )
+			} )
+		} )
+		b = Gaffer.Serialisation.objectToBase64( o )
+		self.assertEqual(
+			Gaffer.Serialisation.objectFromBase64( b ),
+			o
+		)
+
+	@unittest.skipIf( GafferTest.inCI(), "Performance not relevant on CI platform" )
+	@GafferTest.TestRunner.PerformanceTestMethod( repeat = 1 )
+	def testSwitchPerformance( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		def build( maxDepth, upstreamNode = None, depth = 0 ) :
+
+			node = Gaffer.Switch()
+			node.setup( Gaffer.V3iPlug() )
+			if upstreamNode is not None :
+				node["in"][0].setInput( upstreamNode["out"] )
+
+			script.addChild( node )
+
+			if depth < maxDepth :
+				build( maxDepth, node, depth + 1 )
+				build( maxDepth, node, depth + 1 )
+
+		with Gaffer.DirtyPropagationScope() :
+			build( 13 )
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			script.serialise()
+
+	def testAddModule( self ) :
+
+		node = Gaffer.Node()
+		serialisation = Gaffer.Serialisation( node )
+		serialisation.addModule( "MyModule" )
+		serialisation.addModule( "MyModule" )
+
+		self.assertEqual( serialisation.result().count( "import MyModule" ), 1 )
 
 if __name__ == "__main__":
 	unittest.main()

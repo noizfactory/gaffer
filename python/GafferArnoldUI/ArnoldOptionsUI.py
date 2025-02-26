@@ -49,7 +49,7 @@ def __renderingSummary( plug ) :
 	if plug["bucketScanning"]["enabled"].getValue() :
 		info.append( "Bucket Scanning %s" % plug["bucketScanning"]["value"].getValue().capitalize() )
 	if plug["parallelNodeInit"]["enabled"].getValue() :
-		info.append( "Parallel Init %s" % plug["parallelNodeInit"]["value"].getValue() )
+		info.append( "Parallel Init %s" % ( "On" if plug["parallelNodeInit"]["value"].getValue() else "Off" ) )
 	if plug["threads"]["enabled"].getValue() :
 		info.append( "Threads %d" % plug["threads"]["value"].getValue() )
 	return ", ".join( info )
@@ -69,12 +69,18 @@ def __samplingSummary( plug ) :
 		info.append( "SSS %d" % plug["giSSSSamples"]["value"].getValue() )
 	if plug["giVolumeSamples"]["enabled"].getValue() :
 		info.append( "Volume %d" % plug["giVolumeSamples"]["value"].getValue() )
+	if plug["lightSamples"]["enabled"].getValue() :
+		info.append( "Light %d" % plug["lightSamples"]["value"].getValue() )
 	if plug["aaSeed"]["enabled"].getValue() :
 		info.append( "Seed {0}".format( plug["aaSeed"]["value"].getValue() ) )
 	if plug["aaSampleClamp"]["enabled"].getValue() :
 		info.append( "Clamp {0}".format( GafferUI.NumericWidget.valueToString( plug["aaSampleClamp"]["value"].getValue() ) ) )
 	if plug["aaSampleClampAffectsAOVs"]["enabled"].getValue() :
 		info.append( "Clamp AOVs {0}".format( "On" if plug["aaSampleClampAffectsAOVs"]["value"].getValue() else "Off" ) )
+	if plug["indirectSampleClamp"]["enabled"].getValue() :
+		info.append( "Indirect Clamp {0}".format( GafferUI.NumericWidget.valueToString( plug["indirectSampleClamp"]["value"].getValue() ) ) )
+	if plug["lowLightThreshold"]["enabled"].getValue() :
+		info.append( "Low Light {0}".format( GafferUI.NumericWidget.valueToString( plug["lowLightThreshold"]["value"].getValue() ) ) )
 	return ", ".join( info )
 
 def __adaptiveSamplingSummary( plug ) :
@@ -85,7 +91,16 @@ def __adaptiveSamplingSummary( plug ) :
 	if plug["aaSamplesMax"]["enabled"].getValue() :
 		info.append( "AA Max %d" % plug["aaSamplesMax"]["value"].getValue() )
 	if plug["aaAdaptiveThreshold"]["enabled"].getValue() :
-		info.append( "Threshold %d" % plug["aaAdaptiveThreshold"]["value"].getValue() )
+		info.append( "Threshold %s" % GafferUI.NumericWidget.valueToString( plug["aaAdaptiveThreshold"]["value"].getValue() ) )
+	return ", ".join( info )
+
+def __interactiveRenderingSummary( plug ) :
+
+	info = []
+	if plug["enableProgressiveRender"]["enabled"].getValue() :
+		info.append( "Progressive %s" % ( "On" if plug["enableProgressiveRender"]["value"].getValue() else "Off" ) )
+	if plug["progressiveMinAASamples"]["enabled"].getValue() :
+		info.append( "Min AA %d" % plug["progressiveMinAASamples"]["value"].getValue() )
 	return ", ".join( info )
 
 def __rayDepthSummary( plug ) :
@@ -109,6 +124,12 @@ def __subdivisionSummary( plug ) :
 	info = []
 	if plug["maxSubdivisions"]["enabled"].getValue():
 		info.append( "Max Subdivisions  %d" % plug["maxSubdivisions"]["value"].getValue() )
+	if plug["subdivDicingCamera"]["enabled"].getValue():
+		info.append( "Dicing Camera %s" % plug["subdivDicingCamera"]["value"].getValue() )
+	if plug["subdivFrustumCulling"]["enabled"].getValue():
+		info.append( "Frustum Culling %s" % ( "On" if plug["subdivFrustumCulling"]["value"].getValue() else "Off" ) )
+	if plug["subdivFrustumPadding"]["enabled"].getValue():
+		info.append( "Frustum Padding %s" % GafferUI.NumericWidget.valueToString( plug["subdivFrustumPadding"]["value"].getValue() ) )
 	return ", ".join( info )
 
 def __texturingSummary( plug ) :
@@ -120,6 +141,12 @@ def __texturingSummary( plug ) :
 		info.append( "Per File Stats {0}".format( "On" if plug["texturePerFileStats"]["value"].getValue() else "Off" ) )
 	if plug["textureMaxSharpen"]["enabled"].getValue() :
 		info.append( "Sharpen {0}".format( GafferUI.NumericWidget.valueToString( plug["textureMaxSharpen"]["value"].getValue() ) ) )
+	if plug["textureUseExistingTx"]["enabled"].getValue() :
+		info.append( "Use `.tx` {0}".format( "On" if plug["textureUseExistingTx"]["value"].getValue() else "Off" ) )
+	if plug["textureAutoGenerateTx"]["enabled"].getValue() :
+		info.append( "Auto `.tx` {0}".format( "On" if plug["textureAutoGenerateTx"]["value"].getValue() else "Off" ) )
+	if plug["textureAutoTxPath"]["enabled"].getValue() :
+		info.append( "Auto `.tx` path" )
 	return ", ".join( info )
 
 def __featuresSummary( plug ) :
@@ -134,8 +161,8 @@ def __featuresSummary( plug ) :
 		( "ignoreSubdivision", "Subdivs" ),
 		( "ignoreDisplacement", "Disp" ),
 		( "ignoreBump", "Bump" ),
-		( "ignoreMotionBlur", "MBlur" ),
 		( "ignoreSSS", "SSS" ),
+		( "ignoreImagers", "Imagers" ),
 	) :
 		if plug[childName]["enabled"].getValue() :
 			info.append( label + ( " Off " if plug[childName]["value"].getValue() else " On" ) )
@@ -176,7 +203,9 @@ def __statisticsSummary( plug ) :
 
 	info = []
 	if plug["statisticsFileName"]["enabled"].getValue() :
-		info.append( "File name: " + plug["statisticsFileName"]["value"].getValue() )
+		info.append( "Stats File: " + plug["statisticsFileName"]["value"].getValue() )
+	if plug["profileFileName"]["enabled"].getValue() :
+		info.append( "Profile File: " + plug["profileFileName"]["value"].getValue() )
 
 	return ", ".join( info )
 
@@ -222,6 +251,7 @@ Gaffer.Metadata.registerNode(
 			"layout:section:Rendering:summary", __renderingSummary,
 			"layout:section:Sampling:summary", __samplingSummary,
 			"layout:section:Adaptive Sampling:summary", __adaptiveSamplingSummary,
+			"layout:section:Interactive Rendering:summary", __interactiveRenderingSummary,
 			"layout:section:Ray Depth:summary", __rayDepthSummary,
 			"layout:section:Subdivision:summary", __subdivisionSummary,
 			"layout:section:Texturing:summary", __texturingSummary,
@@ -398,6 +428,30 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"options.lightSamples" : [
+
+			"description",
+			"""
+			Specifies a fixed number of light samples to be taken at each
+			shading point. This enables "Global Light Sampling", which provides
+			significantly improved performance for scenes containing large numbers
+			of lights. In this mode, the `samples` setting on each light is ignored,
+			and instead the fixed number of samples is distributed among all the
+			lights according to their contribution at the shading point.
+
+			A value of `0` disables Global Light Sampling, reverting to the original
+			per-light sampling algorithm.
+
+			> Note : Global Light Sampling currently has limitations. See
+			> https://help.autodesk.com/view/ARNOL/ENU/?guid=arnold_user_guide_ac_render_settings_ac_lights_settings_html
+			> for more details.
+			""",
+
+			"layout:section", "Sampling",
+			"label", "Light Samples",
+
+		],
+
 		"options.aaSeed" : [
 
 			"description",
@@ -469,6 +523,8 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		# Adaptive Sampling
+
 		"options.enableAdaptiveSampling" : [
 
 			"description",
@@ -511,6 +567,36 @@ Gaffer.Metadata.registerNode(
 
 			"layout:section", "Adaptive Sampling",
 			"label", "AA Adaptive Threshold",
+
+		],
+
+		# Interactive rendering
+
+		"options.enableProgressiveRender" : [
+
+			"description",
+			"""
+			Enables progressive rendering, with a series of coarse low-resolution
+			renders followed by a full quality render updated continuously.
+			""",
+
+			"layout:section", "Interactive Rendering",
+			"label", "Progressive",
+
+		],
+
+		"options.progressiveMinAASamples" : [
+
+			"description",
+			"""
+			Controls the coarseness of the first low resolution pass
+			of interactive rendering. A value of `-4` starts with 16x16 pixel
+			blocks, `-3` gives 8x8 blocks, `-2` gives 4x4, `-1` gives 2x2 and
+			`0` disables the low resolution passes completely.
+			""",
+
+			"layout:section", "Interactive Rendering",
+			"label", "Min AA Samples",
 
 		],
 
@@ -607,6 +693,53 @@ Gaffer.Metadata.registerNode(
 			"label", "Max Subdivisions",
 		],
 
+		"options.subdivDicingCamera" : [
+
+			"description",
+			"""
+			If specified, adaptive subdivision will be performed
+			relative to this camera, instead of the render camera.
+			""",
+
+			"layout:section", "Subdivision",
+			"label", "Subdiv Dicing Camera",
+		],
+
+		"options.subdivDicingCamera.value" : [
+			"plugValueWidget:type", "GafferSceneUI.ScenePathPlugValueWidget",
+			"path:valid", True,
+			"scenePathPlugValueWidget:setNames", IECore.StringVectorData( [ "__cameras" ] ),
+			"scenePathPlugValueWidget:setsLabel", "Show only cameras",
+		],
+
+		"options.subdivFrustumCulling" : [
+
+			"description",
+			"""
+			Disable subdivision of polygons outside the camera frustum.
+			( Uses dicing camera if one has been set ).
+			Saves performance, at the cost of inaccurate reflections
+			and shadows.
+			""",
+
+			"layout:section", "Subdivision",
+			"label", "Subdiv Frustum Culling",
+		],
+
+		"options.subdivFrustumPadding" : [
+
+			"description",
+			"""
+			When using subdivFrustumCulling, adds a world space bound
+			around the frustum where subdivision still occurs.  Can be
+			used to improve shadows, reflections, and objects the motion
+			blur into frame.
+			""",
+
+			"layout:section", "Subdivision",
+			"label", "Subdiv Frustum Padding",
+		],
+
 		# Texturing
 
 		"options.textureMaxMemoryMB" : [
@@ -656,6 +789,65 @@ Gaffer.Metadata.registerNode(
 
 			"layout:section", "Texturing",
 			"label", "Max Sharpen",
+		],
+
+		"options.textureUseExistingTx" : [
+
+			"description",
+			"""
+			Automatically uses a `<filename>.tx` file if it exists, in
+			preference to a `<filename>.jpg` (or any other file format) that has
+			been specified. Particularly useful when used with
+			`textureAutoGenerateTx`, which will automatically create the `.tx`
+			file as necessary.
+
+			> Info : The `.tx` file format provides improved performance and
+			reduced memory usage, because it contains mip-mapped textures.
+			""",
+
+			"layout:section", "Texturing",
+			"label", "Use Existing `.tx`",
+
+		],
+
+		"options.textureAutoGenerateTx" : [
+
+			"description",
+			"""
+			Automatically generates a `<filename>.tx` when given
+			`<filename>.jpg` (or any other file format). Requires that
+			`textureUseExistingTx` is also turned on. By default, textures
+			are generated in the same folder as the source texture. Use
+			`textureAutoTxPath` to specify an alternative destination.
+
+			> Caution : This feature might cause problems if multiple render
+			farm nodes are trying to convert the same textures in the same
+			target folder at the same time, resulting in potential crashes,
+			corrupt textures, and poor performance.
+			""",
+
+			"layout:section", "Texturing",
+			"label", "Auto Generate `.tx`",
+
+		],
+
+		"options.textureAutoTxPath" : [
+
+			"description",
+			"""
+			Specifies an alternate destination folder for textures generated
+			by `textureAutoGenerateTx`.
+			""",
+
+			"layout:section", "Texturing",
+			"label", "Auto `.tx` Path",
+
+		],
+
+		"options.textureAutoTxPath.value" : [
+
+			"plugValueWidget:type", "GafferUI.FileSystemPathPlugValueWidget",
+
 		],
 
 		# Features
@@ -751,25 +943,22 @@ Gaffer.Metadata.registerNode(
 
 		],
 
-		"options.ignoreMotionBlur" : [
+		"options.ignoreSSS" : [
 
 			"description",
 			"""
-			Ignores motion blur. Note that the turn
-			off motion blur completely, it is more
-			efficient to use the motion blur controls
-			in the StandardOptions node.
+			Disables all subsurface scattering.
 			""",
 
 			"layout:section", "Features",
 
 		],
 
-		"options.ignoreSSS" : [
+		"options.ignoreImagers" : [
 
 			"description",
 			"""
-			Disables all subsurface scattering.
+			Disables all imagers.
 			""",
 
 			"layout:section", "Features",
@@ -915,7 +1104,21 @@ Gaffer.Metadata.registerNode(
 			""",
 
 			"layout:section", "Statistics",
-			"label", "File Name",
+			"label", "Statistics File",
+
+		],
+
+		"options.profileFileName" : [
+
+			"description",
+			"""
+			The name of a profile json file where Arnold will store a
+			detailed node performance graph. Use chrome://tracing to
+			view the profile.
+			""",
+
+			"layout:section", "Statistics",
+			"label", "Profile File",
 
 		],
 
@@ -1020,4 +1223,3 @@ for plugPrefix in ( "log", "console" ) :
 			}
 
 		)
-

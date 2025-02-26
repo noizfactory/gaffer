@@ -46,6 +46,13 @@ import GafferSceneTest
 
 class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 
+	def assertExpectedOutStrings( self, node ) :
+
+		self.assertEqual(
+			node["outStrings"].getValue(),
+			IECore.StringVectorData( node["out"].getValue().value.paths() )
+		)
+
 	def testChangingFilter( self ) :
 
 		p = GafferScene.Plane()
@@ -68,6 +75,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 				"/group/plane"
 			] )
 		)
+		self.assertExpectedOutStrings( n )
 
 		f["paths"].setValue( IECore.StringVectorData( [ "/group/p*" ] ) )
 
@@ -77,6 +85,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 				"/group/plane"
 			] )
 		)
+		self.assertExpectedOutStrings( n )
 
 	def testChangingScene( self ) :
 
@@ -92,6 +101,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 		n["filter"].setInput( f["out"] )
 
 		self.assertEqual( n["out"].getValue().value, IECore.PathMatcher() )
+		self.assertExpectedOutStrings( n )
 
 		p["name"].setValue( "plain" )
 
@@ -101,6 +111,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 				"/group/plain"
 			] )
 		)
+		self.assertExpectedOutStrings( n )
 
 	def testDirtyPropagation( self ) :
 
@@ -133,7 +144,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 
 		script["instancer"] = GafferScene.Instancer()
 		script["instancer"]["in"].setInput( script["plane"]["out"] )
-		script["instancer"]["instances"].setInput( script["sphere"]["out"] )
+		script["instancer"]["prototypes"].setInput( script["sphere"]["out"] )
 		script["instancer"]["parent"].setValue( "/plane" )
 
 		script["filter"] = GafferScene.PathFilter()
@@ -158,6 +169,7 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 			] )
 		)
 
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration:hashAliasing" } )
 	def testComputeCacheRecursion( self ) :
 
 		script = Gaffer.ScriptNode()
@@ -182,6 +194,140 @@ class FilterResultsTest( GafferSceneTest.SceneTestCase ) :
 		h = script["filterResults2"]["out"].hash()
 		Gaffer.ValuePlug.clearCache()
 		script["filterResults2"]["out"].getValue( h )
+
+	def testRoot( self ) :
+
+		# /group
+		#    /group
+		#        /plane
+		#    /plane
+
+		plane = GafferScene.Plane()
+
+		innerGroup = GafferScene.Group()
+		innerGroup["in"][0].setInput( plane["out"] )
+
+		outerGroup = GafferScene.Group()
+		outerGroup["in"][0].setInput( innerGroup["out"] )
+		outerGroup["in"][1].setInput( plane["out"] )
+
+		filter = GafferScene.PathFilter()
+		filter["paths"].setValue( IECore.StringVectorData( [ "/..." ] ) )
+
+		filterResults = GafferScene.FilterResults()
+		filterResults["scene"].setInput( outerGroup["out"] )
+		filterResults["filter"].setInput( filter["out"] )
+
+		self.assertEqual(
+			filterResults["out"].getValue().value,
+			IECore.PathMatcher( [
+				"/",
+				"/group",
+				"/group/group",
+				"/group/group/plane",
+				"/group/plane",
+			] )
+		)
+
+		hash = filterResults["out"].hash()
+
+		filterResults["root"].setValue( "/group/group" )
+		self.assertEqual(
+			filterResults["out"].getValue().value,
+			IECore.PathMatcher( [
+				"/group/group",
+				"/group/group/plane",
+			] )
+		)
+		self.assertNotEqual( filterResults["out"].hash(), hash )
+
+	def testRootMatchVsNoMatch( self ) :
+
+		plane = GafferScene.Plane()
+		pathFilter = GafferScene.PathFilter()
+
+		filterResults = GafferScene.FilterResults()
+		filterResults["scene"].setInput( plane["out"] )
+		filterResults["filter"].setInput( pathFilter["out"] )
+		self.assertEqual( filterResults["outStrings"].getValue(), IECore.StringVectorData() )
+
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/" ] ) )
+		self.assertEqual( filterResults["outStrings"].getValue(), IECore.StringVectorData( [ "/" ] ) )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration" } )
+	def testTaskCollaboration( self ) :
+
+		infiniteScene = GafferScene.ScenePlug()
+		infiniteScene["childNames"].setValue( IECore.InternedStringVectorData( [ "one", "two" ] ) )
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/*" * 12 ] ) )
+
+		filterResults = GafferScene.FilterResults()
+		filterResults["scene"].setInput( infiniteScene )
+		filterResults["filter"].setInput( pathFilter["out"] )
+
+		# This checks that we only do a single compute when lots of threads hammer on the same
+		# result. We repeat it a number of times to increase the chances of exposing bugs that
+		# allow duplicate computes (we had one during development that only showed up very
+		# intermittently).
+
+		for i in range( 0, 100 ) :
+
+			Gaffer.ValuePlug.clearCache()
+
+			with Gaffer.PerformanceMonitor() as pm :
+				GafferTest.parallelGetValue( filterResults["out"], 10000 )
+
+			self.assertEqual( pm.plugStatistics( filterResults["__internalOut"] ).computeCount, 1 )
+
+	@unittest.skipIf( GafferTest.inCI(), "Performance not relevant on CI platform" )
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testHashPerformance( self ):
+
+		sphere = GafferScene.Sphere()
+
+		duplicate = GafferScene.Duplicate()
+		duplicate["in"].setInput( sphere["out"] )
+		duplicate["target"].setValue( '/sphere' )
+		duplicate["copies"].setValue( 1000000 )
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ '...' ] ) )
+
+		filterResults = GafferScene.FilterResults()
+		filterResults["scene"].setInput( duplicate["out"] )
+		filterResults["filter"].setInput( pathFilter["out"] )
+
+		# Evaluate the root childNames beforehand to focus our timing on the hash
+		duplicate["out"].childNames( "/" )
+
+		with GafferTest.TestRunner.PerformanceScope():
+			filterResults["out"].hash()
+
+	@unittest.skipIf( GafferTest.inCI(), "Performance not relevant on CI platform" )
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testComputePerformance( self ):
+
+		sphere = GafferScene.Sphere()
+
+		duplicate = GafferScene.Duplicate()
+		duplicate["in"].setInput( sphere["out"] )
+		duplicate["target"].setValue( '/sphere' )
+		duplicate["copies"].setValue( 1000000 )
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ '...' ] ) )
+
+		filterResults = GafferScene.FilterResults()
+		filterResults["scene"].setInput( duplicate["out"] )
+		filterResults["filter"].setInput( pathFilter["out"] )
+
+		# Evaluate the root childNames beforehand to focus our timing on the compute
+		duplicate["out"].childNames( "/" )
+
+		with GafferTest.TestRunner.PerformanceScope():
+			filterResults["out"].getValue()
 
 if __name__ == "__main__":
 	unittest.main()

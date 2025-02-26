@@ -35,6 +35,7 @@
 ##########################################################################
 
 import ast
+import enum
 
 import IECore
 import imath
@@ -44,6 +45,8 @@ import GafferDispatch
 
 class PythonCommand( GafferDispatch.TaskNode ) :
 
+	FramesMode = enum.IntEnum( "FramesMode", [ "Single", "Sequence", "Batch" ], start = 0 )
+
 	def __init__( self, name = "PythonCommand" ) :
 
 		GafferDispatch.TaskNode.__init__( self, name )
@@ -51,9 +54,9 @@ class PythonCommand( GafferDispatch.TaskNode ) :
 		# Turn off automatic substitutions for the command, since it's a pain
 		# to have to manually escape things, and the context is available
 		# directly anyway.
-		self["command"] = Gaffer.StringPlug( substitutions = Gaffer.Context.Substitutions.NoSubstitutions )
+		self["command"] = Gaffer.StringPlug( substitutions = IECore.StringAlgo.Substitutions.NoSubstitutions )
 		self["variables"] = Gaffer.CompoundDataPlug()
-		self["sequence"] = Gaffer.BoolPlug()
+		self["framesMode"] = Gaffer.IntPlug( minValue = int( self.FramesMode.Single ), maxValue = int( self.FramesMode.Batch ) )
 
 	def hash( self, context ) :
 
@@ -78,37 +81,43 @@ class PythonCommand( GafferDispatch.TaskNode ) :
 
 		self["variables"].hash( h )
 
-		if self.requiresSequenceExecution() :
+		if self["framesMode"].getValue() != self.FramesMode.Single :
 			h.append( context.getFrame() )
 
 		return h
 
 	def execute( self ) :
 
-		executionDict = self.__executionDict()
+		executionDict = self._executionDict()
 		with executionDict["context"] :
 			exec( _codeObjectCache.get( self["command"].getValue() ), executionDict, executionDict )
 
 	def executeSequence( self, frames ) :
 
-		if not self.requiresSequenceExecution() :
-			## \todo It'd be nice if the dispatcher didn't call
-			# executeSequence() if requiresSequenceExecution() was False.
-			# At the same time we could look into properly supporting
-			# varying results for requiresSequenceExecution(), with sequences
-			# going into their own batch independent of non-sequence batches.
-			Gaffer.TaskNode.executeSequence( self, frames )
+		sequence = False
+		with Gaffer.Context( Gaffer.Context.current() ) as frameContext :
+			for frame in frames :
+				frameContext.setFrame( frame )
+				if self["framesMode"].getValue() != self.FramesMode.Single :
+					sequence = True
+					break
+
+		if not sequence :
+			# Calls `execute()`.
+			GafferDispatch.TaskNode.executeSequence( self, frames )
 			return
 
-		executionDict = self.__executionDict( frames )
+		executionDict = self._executionDict( frames )
 		with executionDict["context"] :
 			exec( self["command"].getValue(), executionDict, executionDict )
 
 	def requiresSequenceExecution( self ) :
 
-		return self["sequence"].getValue()
+		return self["framesMode"].getValue() == self.FramesMode.Sequence
 
-	def __executionDict( self, frames = None ) :
+	# Protected rather than private to allow access by PythonCommandUI.
+	# Not for general use.
+	def _executionDict( self, frames = None ) :
 
 		context = Gaffer.Context( Gaffer.Context.current() )
 
@@ -146,10 +155,25 @@ class _VariablesDict( dict ) :
 		self.__update()
 		return dict.keys( self )
 
+	def items( self ) :
+
+		self.__update()
+		return dict.items( self )
+
 	def __getitem__( self, key ) :
 
 		self.__update()
 		return dict.__getitem__( self, key )
+
+	def __repr__( self ) :
+
+		self.__update()
+		return dict.__repr__( self )
+
+	def __str__( self ) :
+
+		self.__update()
+		return dict.__str__( self )
 
 	def __update( self ) :
 		frame = self.__context.get( "frame", "NO FRAME" )
@@ -190,10 +214,10 @@ class _Parser( ast.NodeVisitor ) :
 		if node.value.id != "context" :
 			return
 
-		if not isinstance( node.slice, ast.Index ) or not isinstance( node.slice.value, ast.Str ) :
+		if not isinstance( node.slice, ast.Constant ) or not isinstance( node.slice.value, str ) :
 			return
 
-		self.contextReads.add( node.slice.value.s )
+		self.contextReads.add( node.slice.value )
 
 	def visit_Call( self, node ) :
 

@@ -37,6 +37,8 @@
 
 import unittest
 
+import imath
+
 import IECore
 
 import Gaffer
@@ -65,14 +67,14 @@ class TypedPlugTest( GafferTest.TestCase ) :
 		p2 = Gaffer.StringPlug( direction=Gaffer.Plug.Direction.In )
 
 		p2.setInput( p1 )
-		self.assert_( p2.getInput().isSame( p1 ) )
+		self.assertTrue( p2.getInput().isSame( p1 ) )
 		p2.setInput( None )
-		self.assert_( p2.getInput() is None )
+		self.assertIsNone( p2.getInput(), None )
 
 	def testAcceptsNoneInput( self ) :
 
 		p = Gaffer.StringPlug( "hello" )
-		self.failUnless( p.acceptsInput( None ) )
+		self.assertTrue( p.acceptsInput( None ) )
 
 	def testRunTimeTyped( self ) :
 
@@ -198,26 +200,95 @@ class TypedPlugTest( GafferTest.TestCase ) :
 
 	def testPrecomputedHash( self ) :
 
-		n = GafferTest.StringInOutNode()
-		n["in"].setValue( "hi" )
+		class MatrixMultiplyNode( Gaffer.ComputeNode ) :
 
-		self.assertEqual( n["out"].getValue(), "hi" )
+			def __init__( self, name = "MatrixMultiply" ) :
+
+				Gaffer.ComputeNode.__init__( self, name )
+
+				self["in1"] = Gaffer.M44fPlug()
+				self["in2"] = Gaffer.M44fPlug()
+				self["out"] = Gaffer.M44fPlug( direction = Gaffer.Plug.Direction.Out )
+
+				self.numComputeCalls = 0
+				self.numHashCalls = 0
+
+			def affects( self, input ) :
+
+				outputs = Gaffer.ComputeNode.affects( self, input )
+				if input.isSame( self["in1"] ) or input.isSame( self["in2"] ) :
+					outputs.append( self.getChild( "out" ) )
+
+				return outputs
+
+			def hash( self, output, context, h ) :
+
+				assert( output.isSame( self.getChild( "out" ) ) )
+
+				self["in1"].hash( h )
+				self["in2"].hash( h )
+
+				self.numHashCalls += 1
+
+			def compute( self, output, context ) :
+
+				assert( output.isSame( self.getChild( "out" ) ) )
+				output.setValue( self["in1"].getValue() * self["in2"].getValue() )
+
+				self.numComputeCalls += 1
+
+		IECore.registerRunTimeTyped( MatrixMultiplyNode )
+
+		n = MatrixMultiplyNode()
+
+		self.assertEqual( n["out"].getValue(), imath.M44f() )
 		self.assertEqual( n.numHashCalls, 1 )
 		self.assertEqual( n.numComputeCalls, 1 )
 
 		h = n["out"].hash()
-		numHashCalls = n.numHashCalls
-		# Accept either 1 or 2 - it would be reasonable for the ValuePlug
-		# to have either cached the hash or not, but that's not what we're
-		# testing here.
-		self.assertTrue( numHashCalls == 1 or numHashCalls == 2 )
+		self.assertEqual( n.numHashCalls, 1 )
 		self.assertEqual( n.numComputeCalls, 1 )
 
-		# What we care about is that calling getValue() with a precomputed hash
-		# definitely doesn't recompute the hash again.
-		self.assertEqual( n["out"].getValue( _precomputedHash = h ), "hi" )
-		self.assertEqual( n.numHashCalls, numHashCalls )
+		# Calling `getValue()` with a precomputed hash shouldn't recompute the
+		# hash again, even if it has been cleared from the cache.
+		Gaffer.ValuePlug.clearHashCache()
+		self.assertEqual( n["out"].getValue( _precomputedHash = h ), imath.M44f() )
+		self.assertEqual( n.numHashCalls, 1 )
 		self.assertEqual( n.numComputeCalls, 1 )
+
+	def testBoolPlugStringConnections( self ) :
+
+		n = GafferTest.AddNode()
+		n["op1"].setValue( 0 )
+		n["op2"].setValue( 2 )
+		self.assertEqual( n["sum"].getValue(), 2 )
+
+		s = Gaffer.StringPlug()
+		n["enabled"].setInput( s )
+		self.assertEqual( n["sum"].getValue(), 0 )
+
+		s.setValue( "notEmpty" )
+		self.assertEqual( n["sum"].getValue(), 2 )
+
+		s.setValue( "${test}" )
+		self.assertEqual( n["sum"].getValue(), 0 )
+
+		with Gaffer.Context() as c :
+
+			c["test"] = "notEmpty"
+			self.assertEqual( n["sum"].getValue(), 2 )
+
+			c["test"] = ""
+			self.assertEqual( n["sum"].getValue(), 0 )
+
+	def testValueType( self ) :
+
+		self.assertIs( Gaffer.BoolPlug.ValueType, bool )
+		self.assertIs( Gaffer.M33fPlug.ValueType, imath.M33f )
+		self.assertIs( Gaffer.M44fPlug.ValueType, imath.M44f )
+		self.assertIs( Gaffer.AtomicBox2fPlug.ValueType, imath.Box2f )
+		self.assertIs( Gaffer.AtomicBox2iPlug.ValueType, imath.Box2i )
+		self.assertIs( Gaffer.AtomicBox3fPlug.ValueType, imath.Box3f )
 
 if __name__ == "__main__":
 	unittest.main()

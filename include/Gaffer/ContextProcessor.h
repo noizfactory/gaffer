@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_CONTEXTPROCESSOR_H
-#define GAFFER_CONTEXTPROCESSOR_H
+#pragma once
 
 #include "Gaffer/ComputeNode.h"
 #include "Gaffer/Context.h"
@@ -46,14 +45,14 @@ namespace Gaffer
 /// The ContextProcessor provides a base class to simplify the creation of nodes
 /// which evaluate their inputs using a modified context to that provided for the output
 /// evaluation - time warps being one good example.
-class IECORE_EXPORT ContextProcessor : public ComputeNode
+class GAFFER_API ContextProcessor : public ComputeNode
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::ContextProcessor, ContextProcessorTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::ContextProcessor, ContextProcessorTypeId, ComputeNode );
 
-		ContextProcessor( const std::string &name=GraphComponent::defaultName<ContextProcessor>() );
+		explicit ContextProcessor( const std::string &name=GraphComponent::defaultName<ContextProcessor>() );
 		~ContextProcessor() override;
 
 		/// \undoable
@@ -88,7 +87,7 @@ class IECORE_EXPORT ContextProcessor : public ComputeNode
 		/// Must be implemented to return true if the input is used in `processContext()`.
 		virtual bool affectsContext( const Plug *input ) const = 0;
 		/// Must be implemented to modify context in place.
-		virtual void processContext( Context::EditableScope &context ) const = 0;
+		virtual void processContext( Context::EditableScope &context, IECore::ConstRefCountedPtr &storage ) const = 0;
 
 	private :
 
@@ -106,5 +105,3 @@ class IECORE_EXPORT ContextProcessor : public ComputeNode
 IE_CORE_DECLAREPTR( ContextProcessor );
 
 } // namespace Gaffer
-
-#endif // GAFFER_CONTEXTPROCESSOR_H

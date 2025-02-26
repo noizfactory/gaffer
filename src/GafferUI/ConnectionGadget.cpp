@@ -49,7 +49,7 @@ using namespace GafferUI;
 GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ConnectionGadget );
 
 ConnectionGadget::ConnectionGadget( GafferUI::NodulePtr srcNodule, GafferUI::NodulePtr dstNodule )
-	:	ConnectionCreator( defaultName<ConnectionGadget>() ), m_minimised( false )
+	:	ConnectionCreator( defaultName<ConnectionGadget>() ), m_active( false ), m_minimised( false )
 {
 	setNodules( srcNodule, dstNodule );
 }
@@ -123,7 +123,7 @@ void ConnectionGadget::setMinimised( bool minimised )
 		return;
 	}
 	m_minimised = minimised;
-	requestRender();
+	dirty( DirtyType::Render );
 }
 
 bool ConnectionGadget::getMinimised() const
@@ -200,4 +200,14 @@ ConnectionGadget::NamedCreatorMap &ConnectionGadget::namedCreators()
 {
 	static NamedCreatorMap *m = new NamedCreatorMap;
 	return *m;
+}
+
+void ConnectionGadget::updateFromContextTracker( const ContextTracker *contextTracker )
+{
+	const bool active = contextTracker->targetNode() ? contextTracker->isTracked( m_dstNodule->plug() ) : true;
+	if( m_active != active )
+	{
+		m_active = active;
+		dirty( DirtyType::Render );
+	}
 }

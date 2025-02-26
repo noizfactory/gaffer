@@ -66,17 +66,16 @@ namespace
 
 struct NoduleSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, NodeGadget *nodeGadget, Nodule *nodule )
+	void operator()( boost::python::object slot, NodeGadget *nodeGadget, Nodule *nodule )
 	{
 		try
 		{
 			slot( NodeGadgetPtr( nodeGadget ), NodulePtr( nodule ) );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -132,6 +131,18 @@ GadgetPtr getEdgeGadget( StandardNodeGadget &g, StandardNodeGadget::Edge edge )
 	return g.getEdgeGadget( edge );
 }
 
+void setBound( BackdropNodeGadget &g, const Imath::Box2f &b )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	g.setBound( b );
+}
+
+Imath::Box2f getBound( BackdropNodeGadget &g )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return g.getBound();
+}
+
 void frame( BackdropNodeGadget &b, object nodes )
 {
 	std::vector<Node *> n;
@@ -159,7 +170,7 @@ list framed( BackdropNodeGadget &b )
 
 void GafferUIModule::bindNodeGadget()
 {
-	typedef NodeGadgetWrapper<NodeGadget> Wrapper;
+	using Wrapper = NodeGadgetWrapper<NodeGadget>;
 
 	NodeGadgetClass<NodeGadget, Wrapper>()
 		.def( "node", (Gaffer::Node *(NodeGadget::*)())&NodeGadget::node, return_value_policy<CastToIntrusivePtr>() )
@@ -198,6 +209,8 @@ void GafferUIModule::bindNodeGadget()
 
 	NodeGadgetClass<BackdropNodeGadget>()
 		.def( init<Gaffer::NodePtr>() )
+		.def( "setBound", &setBound )
+		.def( "getBound", &getBound )
 		.def( "frame", &frame )
 		.def( "framed", &framed )
 	;

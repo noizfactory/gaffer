@@ -34,26 +34,27 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SHADERTWEAKS_H
-#define GAFFERSCENE_SHADERTWEAKS_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
-#include "GafferScene/TweakPlug.h"
+#include "GafferScene/AttributeProcessor.h"
 
 #include "Gaffer/StringPlug.h"
+#include "Gaffer/TweakPlug.h"
+
+#include "IECoreScene/ShaderNetwork.h"
 
 namespace GafferScene
 {
 
-class GAFFERSCENE_API ShaderTweaks : public SceneElementProcessor
+class GAFFERSCENE_API ShaderTweaks : public AttributeProcessor
 {
 
 	public :
 
-		ShaderTweaks( const std::string &name=defaultName<ShaderTweaks>() );
+		explicit ShaderTweaks( const std::string &name=defaultName<ShaderTweaks>() );
 		~ShaderTweaks() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ShaderTweaks, ShaderTweaksTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ShaderTweaks, ShaderTweaksTypeId, AttributeProcessor );
 
 		Gaffer::StringPlug *shaderPlug();
 		const Gaffer::StringPlug *shaderPlug() const;
@@ -61,23 +62,26 @@ class GAFFERSCENE_API ShaderTweaks : public SceneElementProcessor
 		Gaffer::BoolPlug *ignoreMissingPlug();
 		const Gaffer::BoolPlug *ignoreMissingPlug() const;
 
-		GafferScene::TweaksPlug *tweaksPlug();
-		const GafferScene::TweaksPlug *tweaksPlug() const;
+		Gaffer::TweaksPlug *tweaksPlug();
+		const Gaffer::TweaksPlug *tweaksPlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+		Gaffer::BoolPlug *localisePlug();
+		const Gaffer::BoolPlug *localisePlug() const;
 
 	protected :
 
-		bool processesAttributes() const override;
+		bool affectsProcessedAttributes( const Gaffer::Plug *input ) const override;
 		void hashProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstCompoundObjectPtr computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::ConstCompoundObjectPtr inputAttributes ) const override;
+		IECore::ConstCompoundObjectPtr computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, const IECore::CompoundObject *inputAttributes ) const override;
 
 		static size_t g_firstPlugIndex;
+
+	private :
+
+		bool applyTweaks( IECoreScene::ShaderNetwork *shaderNetwork, Gaffer::TweakPlug::MissingMode missingMode ) const;
 
 };
 
 IE_CORE_DECLAREPTR( ShaderTweaks )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SHADERTWEAKS_H

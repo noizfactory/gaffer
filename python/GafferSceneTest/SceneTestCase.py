@@ -44,18 +44,25 @@ import IECoreScene
 
 import Gaffer
 import GafferTest
+import GafferImageTest
 import GafferScene
 import GafferSceneTest
 
-class SceneTestCase( GafferTest.TestCase ) :
+class SceneTestCase( GafferImageTest.ImageTestCase ) :
 
 	def setUp( self ) :
 
-		GafferTest.TestCase.setUp( self )
+		GafferImageTest.ImageTestCase.setUp( self )
 
 		sanitiser = GafferSceneTest.ContextSanitiser()
 		sanitiser.__enter__()
 		self.addCleanup( sanitiser.__exit__, None, None, None )
+
+	def tearDown( self ) :
+
+		IECoreScene.SharedSceneInterfaces.clear()
+
+		GafferImageTest.ImageTestCase.tearDown( self )
 
 	def assertSceneValid( self, scenePlug, assertBuiltInSetsComplete=True ) :
 
@@ -68,7 +75,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 
 			o = scenePlug.object( scenePath, _copy = False )
 			if isinstance( o, IECoreScene.VisibleRenderable ) :
-				 if not IECore.BoxAlgo.contains( thisBound, o.bound() ) :
+				if not IECore.BoxAlgo.contains( thisBound, o.bound() ) :
 					self.fail( "Bound %s does not contain object %s at %s" % ( thisBound, o.bound(), scenePath ) )
 			if isinstance( o, IECoreScene.Primitive ) :
 				if "P" in o :
@@ -79,9 +86,10 @@ class SceneTestCase( GafferTest.TestCase ) :
 				if not o.arePrimitiveVariablesValid() :
 					self.fail( "Object %s has invalid primitive variables" % scenePath )
 
+			childNames = scenePlug.childNames( scenePath, _copy = False )
+			self.assertEqual( len( childNames ), len( set( childNames ) ) )
 
 			unionOfTransformedChildBounds = imath.Box3f()
-			childNames = scenePlug.childNames( scenePath, _copy = False )
 			for childName in childNames :
 
 				childPath = IECore.InternedStringVectorData( scenePath )
@@ -114,15 +122,15 @@ class SceneTestCase( GafferTest.TestCase ) :
 	def assertPathExists( self, scenePlug, path ) :
 
 		if isinstance( path, str ) :
-			path = path.strip( "/" ).split( "/" )
+			path = GafferScene.ScenePlug.stringToPath( path )
 
 		for i in range( 0, len( path ) ) :
 			self.assertTrue(
-				path[i] in scenePlug.childNames( "/" + "/".join( path[:i] ) ),
+				path[i] in scenePlug.childNames( path[:i] ),
 				"\"{childName}\" in {scene}.childNames( \"{location}\" )".format(
 					childName = path[i],
 					scene = scenePlug.relativeName( scenePlug.ancestor( Gaffer.ScriptNode ) ),
-					location =  "/" + "/".join( path[:i] )
+					location =  GafferScene.ScenePlug.pathToString( path[:i] )
 				)
 			)
 
@@ -155,18 +163,18 @@ class SceneTestCase( GafferTest.TestCase ) :
 				self.assertTrue(
 					coordinateSystemSet.value.match( scenePath ) & IECore.PathMatcher.Result.ExactMatch,
 					scenePath + " in __coordinateSystems set"
-				 )
+				)
 
 			attributes = scenePlug.attributes( scenePath, _copy = False )
 			if any( [ n == "light" or n.endswith( ":light" ) for n in attributes.keys() ] ) :
 				self.assertTrue(
 					lightSet.value.match( scenePath ) & IECore.PathMatcher.Result.ExactMatch,
 					scenePath + " in __lights set"
-				 )
+				)
 
 			childNames = scenePlug.childNames( scenePath, _copy = False )
 			for childName in childNames :
-				walkScene( os.path.join( scenePath, str( childName ) ) )
+				walkScene( scenePath.rstrip( "/" ) + "/" + str( childName ) )
 
 		walkScene( "/" )
 
@@ -177,7 +185,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 
 		assert( checks.issubset( self.allPathChecks ) )
 
-		for childPlugName in checks :
+		for childPlugName in sorted( checks ) :
 			value1 = getattr( scenePlug1, childPlugName )( scenePath1 )
 			value2 = getattr( scenePlug2, childPlugName )( scenePath2 )
 			self.assertEqual(
@@ -188,14 +196,21 @@ class SceneTestCase( GafferTest.TestCase ) :
 				)
 			)
 
-	def assertScenesEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToIgnore = (), checks = allSceneChecks ) :
+	def assertScenesEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToPrune = (), checks = allSceneChecks ) :
 
 		assert( checks.issubset( self.allSceneChecks ) )
 
 		def walkScene( scenePath1, scenePath2 ) :
 
-			if ( not pathsToIgnore ) or ( self.__pathToString( scenePath1 ) not in pathsToIgnore ) :
-				self.assertPathsEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, checks.intersection( self.allPathChecks ) )
+			if pathsToPrune and self.__pathToString( scenePath1 ) in pathsToPrune :
+				return
+
+			self.assertPathsEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, checks.intersection( self.allPathChecks ) )
+
+			# Sometimes we may not want to fail because of different orders of childNames, so we may not
+			# put "childNames" in `checks` - but we still need to visit the same locations regardless of
+			# which scene comes first, otherwise the rest of the checks don't make any sense
+			self.assertEqual( set( scenePlug1.childNames( scenePath1 ) ), set( scenePlug2.childNames( scenePath2 ) ) )
 
 			childNames = scenePlug1.childNames( scenePath1 )
 			for childName in childNames :
@@ -211,7 +226,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 		scenePath1 = IECore.InternedStringVectorData()
 		scenePath2 = IECore.InternedStringVectorData()
 		if scenePlug2PathPrefix :
-			scenePath2.extend( IECore.InternedStringVectorData( scenePlug2PathPrefix[1:].split( "/" ) ) )
+			scenePath2.extend( GafferScene.ScenePlug.stringToPath( scenePlug2PathPrefix ) )
 
 		walkScene( scenePath1, scenePath2 )
 
@@ -220,13 +235,20 @@ class SceneTestCase( GafferTest.TestCase ) :
 		if "sets" in checks :
 			self.assertEqual( scenePlug1.setNames(), scenePlug2.setNames() )
 			for setName in scenePlug1.setNames() :
-				self.assertEqual( scenePlug1.set( setName ), scenePlug2.set( setName ) )
+				set1 = scenePlug1.set( setName ).value
+				set2 = scenePlug2.set( setName ).value
+				for p in pathsToPrune :
+					set1.prune( p )
+					set2.prune( p )
+				if scenePlug2PathPrefix :
+					set2 = set2.subTree( scenePlug2PathPrefix )
+				self.assertEqual( set1, set2 )
 
 	def assertPathHashesEqual( self, scenePlug1, scenePath1, scenePlug2, scenePath2, checks = allPathChecks ) :
 
 		assert( checks.issubset( self.allPathChecks ) )
 
-		for childPlugName in checks :
+		for childPlugName in sorted( checks ) :
 			hash1 = getattr( scenePlug1, childPlugName + "Hash" )( scenePath1 )
 			hash2 = getattr( scenePlug2, childPlugName + "Hash" )( scenePath2 )
 			self.assertEqual(
@@ -241,7 +263,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 
 		assert( checks.issubset( self.allPathChecks ) )
 
-		for childPlugName in checks :
+		for childPlugName in sorted( checks ) :
 			hash1 = getattr( scenePlug1, childPlugName + "Hash" )( scenePath1 )
 			hash2 = getattr( scenePlug2, childPlugName + "Hash" )( scenePath2 )
 			self.assertNotEqual(
@@ -252,15 +274,16 @@ class SceneTestCase( GafferTest.TestCase ) :
 				)
 			)
 
-	def assertSceneHashesEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToIgnore = (), checks = allSceneChecks ) :
+	def assertSceneHashesEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToPrune = (), checks = allSceneChecks ) :
 
 		assert( checks.issubset( self.allSceneChecks ) )
 
 		def walkScene( scenePath1, scenePath2 ) :
 
-			if ( not pathsToIgnore ) or ( self.__pathToString( scenePath1 ) not in pathsToIgnore ) :
+			if pathsToPrune and self.__pathToString( scenePath1 ) in pathsToPrune :
+				return
 
-				self.assertPathHashesEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, checks.intersection( self.allPathChecks ) )
+			self.assertPathHashesEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, checks.intersection( self.allPathChecks ) )
 
 			childNames = scenePlug1.childNames( scenePath1 )
 			for childName in childNames :
@@ -276,7 +299,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 		scenePath1 = IECore.InternedStringVectorData()
 		scenePath2 = IECore.InternedStringVectorData()
 		if scenePlug2PathPrefix :
-			scenePath2.extend( IECore.InternedStringVectorData( scenePlug2PathPrefix[1:].split( "/" ) ) )
+			scenePath2.extend( GafferScene.ScenePlug.stringToPath( scenePlug2PathPrefix ) )
 
 		walkScene( scenePath1, scenePath2 )
 
@@ -287,19 +310,20 @@ class SceneTestCase( GafferTest.TestCase ) :
 			for setName in scenePlug1.setNames() :
 				self.assertEqual( scenePlug1.setHash( setName ), scenePlug2.setHash( setName ) )
 
-	def assertSceneHashesNotEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToIgnore = (), checks = allSceneChecks ) :
+	def assertSceneHashesNotEqual( self, scenePlug1, scenePlug2, scenePlug2PathPrefix = "", pathsToPrune = (), checks = allSceneChecks ) :
 
 		def walkScene( scenePath1, scenePath2 ) :
 
-			if ( not pathsToIgnore ) or ( self.__pathToString( scenePath1 ) not in pathsToIgnore ) :
+			if pathsToPrune and self.__pathToString( scenePath1 ) in pathsToPrune :
+				return
 
-				pathChecks = checks.intersection( self.allPathChecks )
-				if len( scenePath1 ) == 0 :
-					# Hashes will automatically be equal for these plugs at the root,
-					# because they are dealt with automatically in the SceneNode base class.
-					pathChecks -= { "attributes", "object", "transform" }
+			pathChecks = checks.intersection( self.allPathChecks )
+			if len( scenePath1 ) == 0 :
+				# Hashes will automatically be equal for these plugs at the root,
+				# because they are dealt with automatically in the SceneNode base class.
+				pathChecks -= { "attributes", "object", "transform" }
 
-				self.assertPathHashesNotEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, pathChecks )
+			self.assertPathHashesNotEqual( scenePlug1, scenePath1, scenePlug2, scenePath2, pathChecks )
 
 			childNames = scenePlug1.childNames( scenePath1 )
 			for childName in childNames :
@@ -315,7 +339,7 @@ class SceneTestCase( GafferTest.TestCase ) :
 		scenePath1 = IECore.InternedStringVectorData()
 		scenePath2 = IECore.InternedStringVectorData()
 		if scenePlug2PathPrefix :
-			scenePath2.extend( IECore.InternedStringVectorData( scenePlug2PathPrefix[1:].split( "/" ) ) )
+			scenePath2.extend( GafferScene.ScenePlug.stringToPath( scenePlug2PathPrefix ) )
 
 		walkScene( scenePath1, scenePath2 )
 
@@ -342,6 +366,20 @@ class SceneTestCase( GafferTest.TestCase ) :
 			for i in range( 0, 3 ) :
 				self.assertAlmostEqual( v1[i], v2[i], places )
 
+	def assertParallelGetValueComputesObjectOnce( self, scene, path ) :
+
+		with Gaffer.PerformanceMonitor() as pm :
+			with Gaffer.Context() as c :
+				c["scene:path"] = GafferScene.ScenePlug.stringToPath( path )
+				GafferTest.parallelGetValue( scene["object"], 100 )
+
+		if isinstance( scene.node(), GafferScene.ObjectProcessor ) or isinstance( scene.node(), GafferScene.MergeObjects ) :
+			self.assertEqual( pm.plugStatistics( scene.node()["__processedObject"] ).computeCount, 1 )
+		elif isinstance( scene.node(), GafferScene.ObjectSource ) :
+			self.assertEqual( pm.plugStatistics( scene.node()["__source"] ).computeCount, 1 )
+		else :
+			self.assertEqual( pm.plugStatistics( scene["object"] ).computeCount, 1 )
+
 	__uniqueInts = {}
 	@classmethod
 	def uniqueInt( cls, key ) :
@@ -358,13 +396,58 @@ class SceneTestCase( GafferTest.TestCase ) :
 
 	def __formatPaths( self, path1, path2 ) :
 
-		if not isinstance( path1, basestring ) :
+		if not isinstance( path1, str ) :
 			path1 = self.__pathToString( path1 )
 
-		if not isinstance( path2, basestring ) :
+		if not isinstance( path2, str ) :
 			path2 = self.__pathToString( path2 )
 
 		if path1 == path2 :
 			return "\"{0}\"".format( path1 )
 		else :
 			return "\"{0}\" and \"{1}\"".format( path1, path2 )
+
+	@staticmethod
+	def assertScenesRenderSame( plugA, plugB, expandProcedurals = False, ignoreLinks = False ):
+		# \todo - could be nice to have an option for using a Render node instead of a RenderController,
+		# which should have the same effect, but is a separate code path.
+
+		rendererA = GafferScene.Private.IECoreScenePreview.CapturingRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch )
+		controllerA = GafferScene.RenderController( plugA, Gaffer.Context.current(), rendererA )
+		controllerA.setMinimumExpansionDepth( 1024 )
+		controllerA.update()
+
+		rendererB = GafferScene.Private.IECoreScenePreview.CapturingRenderer( GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch )
+		controllerB = GafferScene.RenderController( plugB, Gaffer.Context.current(), rendererB )
+		controllerB.setMinimumExpansionDepth( 1024 )
+		controllerB.update()
+
+		GafferSceneTest.IECoreScenePreviewTest.CapturingRendererTest.assertRendersMatch( rendererA, rendererB, expandProcedurals = expandProcedurals, ignoreLinks = ignoreLinks )
+
+	## More useful than `assertEqual( networkA, networkB )`, because it provides
+	# information about what doesn't match specifically.
+	def assertShaderNetworksEqual( self, networkA, networkB, ignoreBlindData = False ) :
+
+		if not ignoreBlindData :
+			self.assertEqual( networkA.blindData(), networkB.blindData() )
+
+		self.assertEqual( networkA.shaders().keys(), networkB.shaders().keys() )
+		for handle in networkA.shaders().keys() :
+
+			shaderA = networkA.getShader( handle )
+			shaderB = networkB.getShader( handle )
+
+			self.assertEqual( shaderA.name, shaderB.name, handle )
+			self.assertEqual( shaderA.type, shaderB.type, handle )
+
+			if not ignoreBlindData :
+				self.assertEqual( shaderA.blindData(), shaderB.blindData(), handle )
+
+			self.assertEqual( shaderA.parameters.keys(), shaderB.parameters.keys(), handle )
+			for parameter in shaderA.parameters.keys() :
+				self.assertEqual( shaderA.parameters[parameter], shaderB.parameters[parameter], f"{handle}.{parameter}" )
+
+			self.assertEqual( networkA.inputConnections( handle ), networkB.inputConnections( handle ), handle )
+			self.assertEqual( networkA.outputConnections( handle ), networkB.outputConnections( handle ), handle )
+
+		self.assertEqual( networkA.getOutput(), networkB.getOutput() )

@@ -40,8 +40,6 @@
 #include "Gaffer/Context.h"
 #include "Gaffer/Monitor.h"
 
-#include "boost/make_unique.hpp"
-
 #include <mutex>
 #include <stack>
 
@@ -55,8 +53,12 @@ using UIThreadCallHandlers = std::stack<ParallelAlgo::UIThreadCallHandler>;
 std::unique_lock<std::mutex> lockUIThreadCallHandlers( UIThreadCallHandlers *&handlers )
 {
 	static std::mutex g_mutex;
-	static UIThreadCallHandlers g_handlers;
-	handlers = &g_handlers;
+	// Deliberately leaking `g_handlers` here as otherwise we get crashes
+	// when it contains handlers implemented in Python, because Python has
+	// already shut down before static destructors are run, and we can't
+	// destroy a Python object after Python has shut down.
+	static UIThreadCallHandlers *g_handlers = new UIThreadCallHandlers;
+	handlers = g_handlers;
 	return std::unique_lock<std::mutex>( g_mutex );
 }
 
@@ -65,15 +67,22 @@ std::unique_lock<std::mutex> lockUIThreadCallHandlers( UIThreadCallHandlers *&ha
 void ParallelAlgo::callOnUIThread( const UIThreadFunction &function )
 {
 	UIThreadCallHandlers *handlers = nullptr;
-	auto lock = lockUIThreadCallHandlers( handlers );
-	if( handlers->size() )
+	UIThreadCallHandler h;
+
 	{
-		handlers->top()( function );
+		auto lock = lockUIThreadCallHandlers( handlers );
+		if( handlers->size() )
+		{
+			h = handlers->top();
+		}
+		else
+		{
+			IECore::msg( IECore::Msg::Error, "ParallelAlgo::callOnUIThread", "No UIThreadCallHandler installed" );
+			return;
+		}
 	}
-	else
-	{
-		throw IECore::Exception( "No UIThreadCallHandler installed" );
-	}
+
+	h( function );
 }
 
 void ParallelAlgo::pushUIThreadCallHandler( const UIThreadCallHandler &handler )
@@ -97,19 +106,26 @@ void ParallelAlgo::popUIThreadCallHandler()
 	}
 }
 
+bool ParallelAlgo::canCallOnUIThread()
+{
+	UIThreadCallHandlers *handlers = nullptr;
+	auto lock = lockUIThreadCallHandlers( handlers );
+	return handlers->size();
+}
+
 GAFFER_API std::unique_ptr<BackgroundTask> ParallelAlgo::callOnBackgroundThread( const Plug *subject, BackgroundFunction function )
 {
 	ContextPtr backgroundContext = new Context( *Context::current() );
 	Monitor::MonitorSet backgroundMonitors = Monitor::current();
 
-	return boost::make_unique<BackgroundTask>(
+	return std::make_unique<BackgroundTask>(
 
 		subject,
 
 		[backgroundContext, backgroundMonitors, function] ( const IECore::Canceller &canceller ) {
 
-			ContextPtr c = new Context( *backgroundContext, canceller );
-			Context::Scope contextScope( c.get() );
+			Context::EditableScope contextScope( backgroundContext.get() );
+			contextScope.setCanceller( &canceller );
 			Monitor::Scope monitorScope( backgroundMonitors );
 
 			function();

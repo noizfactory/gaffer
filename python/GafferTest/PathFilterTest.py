@@ -37,6 +37,7 @@
 
 import unittest
 import glob
+import os
 
 import IECore
 
@@ -49,28 +50,28 @@ class PathFilterTest( GafferTest.TestCase ) :
 
 		GafferTest.TestCase.setUp( self )
 
-		open( self.temporaryDirectory() + "/a", "w" )
-		open( self.temporaryDirectory() + "/b.txt", "w" )
+		open( self.temporaryDirectory() / "a", "w", encoding = "utf-8" )
+		open( self.temporaryDirectory() / "b.txt", "w", encoding = "utf-8" )
 
 	def test( self ) :
 
 		# First, check that we have a mix of extensions in
 		# our test directory. Otherwise we can't test anything.
 
-		self.assertTrue( len( glob.glob( self.temporaryDirectory() + "/*" ) ) != len( glob.glob( self.temporaryDirectory() + "/*.txt" ) ) )
+		self.assertTrue( len( list( self.temporaryDirectory().glob( "*" ) ) ) != len( list( self.temporaryDirectory().glob( "*.txt" ) ) ) )
 
 		# Check that an unfiltered path can see all the files
 
 		path = Gaffer.FileSystemPath( self.temporaryDirectory() )
 		children = path.children()
-		self.assertEqual( len( children ), len( glob.glob( self.temporaryDirectory() + "/*" ) ) )
+		self.assertEqual( len( children ), len( list( self.temporaryDirectory().glob( "*" ) ) ) )
 
 		# Attach a filter, and check that the files are filtered
 		txtFilter = Gaffer.FileNamePathFilter( [ "*.txt" ] )
 		path.setFilter( txtFilter )
 
 		children = path.children()
-		self.assertEqual( len( children ), len( glob.glob( self.temporaryDirectory() + "/*.txt" ) ) )
+		self.assertEqual( len( children ), len( list( self.temporaryDirectory().glob( "*.txt" ) ) ) )
 
 		# Copy the path and check the filter is working on the copy
 		pathCopy = path.copy()
@@ -79,7 +80,7 @@ class PathFilterTest( GafferTest.TestCase ) :
 		# Detach the filter and check that behaviour has reverted
 		path.setFilter( None )
 		children = path.children()
-		self.assertEqual( len( children ), len( glob.glob( self.temporaryDirectory() + "/*" ) ) )
+		self.assertEqual( len( children ), len( list( self.temporaryDirectory().glob( "*" ) ) ) )
 
 	def testEnabledState( self ) :
 
@@ -89,15 +90,15 @@ class PathFilterTest( GafferTest.TestCase ) :
 		self.assertEqual( f.getEnabled(), True )
 
 		path.setFilter( f )
-		self.assertEqual( len( path.children() ), len( glob.glob( self.temporaryDirectory() + "/*.txt" ) ) )
+		self.assertEqual( len( path.children() ), len( list( self.temporaryDirectory().glob( "*.txt" ) ) ) )
 
 		f.setEnabled( False )
 		self.assertEqual( f.getEnabled(), False )
-		self.assertEqual( len( path.children() ), len( glob.glob( self.temporaryDirectory() + "/*" ) ) )
+		self.assertEqual( len( path.children() ), len( list( self.temporaryDirectory().glob( "*" ) ) ) )
 
 		f.setEnabled( True )
 		self.assertEqual( f.getEnabled(), True )
-		self.assertEqual( len( path.children() ), len( glob.glob( self.temporaryDirectory() + "/*.txt" ) ) )
+		self.assertEqual( len( path.children() ), len( list( self.temporaryDirectory().glob( "*.txt" ) ) ) )
 
 	def testChangedSignal( self ) :
 
@@ -107,10 +108,10 @@ class PathFilterTest( GafferTest.TestCase ) :
 
 		def f( pf ) :
 
-			self.failUnless( pf.isSame( pathFilter ) )
+			self.assertTrue( pf.isSame( pathFilter ) )
 			enabledStates.append( pf.getEnabled() )
 
-		c = pathFilter.changedSignal().connect( f )
+		pathFilter.changedSignal().connect( f )
 
 		pathFilter.setEnabled( False )
 		pathFilter.setEnabled( False )
@@ -128,7 +129,7 @@ class PathFilterTest( GafferTest.TestCase ) :
 		ud = IECore.CompoundData( { "a" : "a" } )
 		pathFilter = Gaffer.FileNamePathFilter( [ "*.gfr" ], userData = ud )
 		self.assertEqual( pathFilter.userData(), ud )
-		self.failIf( pathFilter.userData() is ud )
+		self.assertFalse( pathFilter.userData() is ud )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -34,13 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERVDB_MESHTOLEVELSET_H
-#define GAFFERVDB_MESHTOLEVELSET_H
+#pragma once
 
 #include "GafferVDB/Export.h"
 #include "GafferVDB/TypeIds.h"
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/MergeObjects.h"
 
 #include "Gaffer/NumericPlug.h"
 
@@ -52,15 +51,15 @@ class StringPlug;
 namespace GafferVDB
 {
 
-class GAFFERVDB_API MeshToLevelSet : public GafferScene::SceneElementProcessor
+class GAFFERVDB_API MeshToLevelSet : public GafferScene::MergeObjects
 {
 
 	public :
 
-		MeshToLevelSet( const std::string &name=defaultName<MeshToLevelSet>() );
+		explicit MeshToLevelSet( const std::string &name=defaultName<MeshToLevelSet>() );
 		~MeshToLevelSet() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferVDB::MeshToLevelSet, MeshToLevelSetTypeId, GafferScene::SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferVDB::MeshToLevelSet, MeshToLevelSetTypeId, GafferScene::MergeObjects );
 
 		Gaffer::StringPlug *gridPlug();
 		const Gaffer::StringPlug *gridPlug() const;
@@ -74,13 +73,15 @@ class GAFFERVDB_API MeshToLevelSet : public GafferScene::SceneElementProcessor
 		Gaffer::FloatPlug *interiorBandwidthPlug();
 		const Gaffer::FloatPlug *interiorBandwidthPlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
-
 	protected :
 
-		bool processesObject() const override;
-		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const override;
+		bool affectsMergedObject( const Gaffer::Plug *input ) const override;
+
+		void hashMergedObject(
+			const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h
+		) const override;
+
+		IECore::ConstObjectPtr computeMergedObject( const std::vector< std::pair< IECore::ConstObjectPtr, Imath::M44f > > &sources, const Gaffer::Context *context ) const override;
 
 	private :
 
@@ -91,5 +92,3 @@ class GAFFERVDB_API MeshToLevelSet : public GafferScene::SceneElementProcessor
 IE_CORE_DECLAREPTR( MeshToLevelSet )
 
 } // namespace GafferVDB
-
-#endif // GAFFERVDB_MESHTOLEVELSET_H

@@ -52,8 +52,9 @@
 
 #include "IECore/MessageHandler.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace IECoreScene;
@@ -61,7 +62,7 @@ using namespace Gaffer;
 using namespace GafferScene;
 using namespace GafferOSL;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( OSLObject );
+GAFFER_NODE_DEFINE_TYPE( OSLObject );
 
 size_t OSLObject::g_firstPlugIndex;
 
@@ -131,25 +132,10 @@ CompoundDataPtr prepareShadingPoints( const Primitive *primitive, const ShadingE
 	return shadingPoints;
 }
 
-/// Historically, we evaluated `OSLObject::shaderPlug()` in a context containing "scene:path",
-/// but for performance reasons we now want to evaluate it using `ScenePlug::GlobalScope`.
-/// The GAFFEROSL_OSLOBJECT_CONTEXTCOMPATIBILITY environment variable provides temporary
-/// backwards compatibility for anyone who may have taken advantage of "scene:path". But for
-/// all newly created nodes we use a userDefault to turn off compatibility at the node level.
-/// See further comments in ShaderAssignment.cpp, where we adopt the same strategy.
-bool initContextCompatibility()
-{
-	Gaffer::Metadata::registerValue( OSLObject::staticTypeId(), "__contextCompatibility", "userDefault", new BoolData( false ) );
-	const char *e = getenv( "GAFFEROSL_OSLOBJECT_CONTEXTCOMPATIBILITY" );
-	return e && !strcmp( e, "1" );
-}
-
-const bool g_contextCompatibilityEnabled = initContextCompatibility();
-
 } // namespace
 
 OSLObject::OSLObject( const std::string &name )
-	:	SceneElementProcessor( name, IECore::PathMatcher::NoMatch )
+	:	Deformer( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new GafferScene::ShaderPlug( "__shader", Plug::In, Plug::Default & ~Plug::Serialisable ) );
@@ -158,7 +144,6 @@ OSLObject::OSLObject( const std::string &name )
 	addChild( new BoolPlug( "useAttributes", Plug::In, false ) );
 	addChild( new ScenePlug( "__resampledIn", Plug::In, Plug::Default & ~Plug::Serialisable ) );
 	addChild( new StringPlug( "__resampleNames", Plug::Out ) );
-	addChild( new BoolPlug( "__contextCompatibility", Plug::In, true, Plug::Default & ~Plug::AcceptsInputs ) );
 	addChild( new Plug( "primitiveVariables", Plug::In, Plug::Default & ~Plug::AcceptsInputs ) );
 	addChild( new OSLCode( "__oslCode" ) );
 	shaderPlug()->setInput( oslCode()->outPlug() );
@@ -175,10 +160,6 @@ OSLObject::OSLObject( const std::string &name )
 	resample->filterPlug()->setInput( filterPlug() );
 
 	resampledInPlug()->setInput( resample->outPlug() );
-
-	// Pass-throughs for things we don't want to modify
-	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
 }
 
 OSLObject::~OSLObject()
@@ -245,119 +226,69 @@ const StringPlug *OSLObject::resampledNamesPlug() const
 	return getChild<StringPlug>( g_firstPlugIndex + 5 );
 }
 
-Gaffer::BoolPlug *OSLObject::contextCompatibilityPlug()
-{
-	return getChild<BoolPlug>( g_firstPlugIndex + 6 );
-}
-
-const Gaffer::BoolPlug *OSLObject::contextCompatibilityPlug() const
-{
-	return getChild<BoolPlug>( g_firstPlugIndex + 6 );
-}
-
 Gaffer::Plug *OSLObject::primitiveVariablesPlug()
 {
-	return getChild<Gaffer::Plug>( g_firstPlugIndex + 7 );
+	return getChild<Gaffer::Plug>( g_firstPlugIndex + 6 );
 }
 
 const Gaffer::Plug *OSLObject::primitiveVariablesPlug() const
 {
-	return getChild<Gaffer::Plug>( g_firstPlugIndex + 7 );
+	return getChild<Gaffer::Plug>( g_firstPlugIndex + 6 );
 }
 
 GafferOSL::OSLCode *OSLObject::oslCode()
 {
-	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 8 );
+	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 7 );
 }
 
 const GafferOSL::OSLCode *OSLObject::oslCode() const
 {
-	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 8 );
-}
-
-namespace
-{
-	// Copied from Switch::variesWithContext.  Should be shared somewhere central
-	bool requiresCompute( const Plug *plug )
-	{
-		plug = plug->source<Gaffer::Plug>();
-		return plug->direction() == Plug::Out && IECore::runTimeCast<const ComputeNode>( plug->node() );
-	}
+	return getChild<GafferOSL::OSLCode>( g_firstPlugIndex + 7 );
 }
 
 void OSLObject::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	bool transformTrigger = input == inPlug()->transformPlug() && (
-		requiresCompute( useTransformPlug() ) || useTransformPlug()->getValue()
-	);
-
-	bool attributeTrigger = input == inPlug()->attributesPlug() && (
-		requiresCompute( useAttributesPlug() ) || useAttributesPlug()->getValue()
-	);
+	Deformer::affects( input, outputs );
 
 	if(
 		input == shaderPlug() ||
-		input == interpolationPlug() ||
-		input == useTransformPlug() ||
-		input == useAttributesPlug() ||
-		input == resampledInPlug()->objectPlug() ||
-		input == contextCompatibilityPlug() ||
-		transformTrigger ||
-		attributeTrigger
-	)
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
-
-	if(
-		input == shaderPlug() ||
-		input == inPlug()->objectPlug() ||
-		input == contextCompatibilityPlug()
+		input == inPlug()->objectPlug()
 	)
 	{
 		outputs.push_back( resampledNamesPlug() );
 	}
-
-	if( input == outPlug()->objectPlug() )
-	{
-		outputs.push_back( outPlug()->boundPlug() );
-	}
 }
 
-bool OSLObject::processesBound() const
+bool OSLObject::affectsProcessedObject( const Gaffer::Plug *input ) const
 {
-	return runTimeCast<const OSLShader>( shaderPlug()->source()->node() );
-}
-
-void OSLObject::hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
-{
-	hashProcessedObject( path, context, h );
-}
-
-Imath::Box3f OSLObject::computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const
-{
-	ConstObjectPtr object = outPlug()->objectPlug()->getValue();
-	if( const Primitive *primitive = runTimeCast<const Primitive>( object.get() ) )
-	{
-		return primitive->bound();
-	}
-	return inputBound;
-}
-
-bool OSLObject::processesObject() const
-{
-	return runTimeCast<const OSLShader>( shaderPlug()->source()->node() );
+	return
+		Deformer::affectsProcessedObject( input ) ||
+		input == shaderPlug() ||
+		input == interpolationPlug() ||
+		input == useTransformPlug() ||
+		( input == inPlug()->transformPlug() && !useTransformPlug()->isSetToDefault() ) ||
+		input == useAttributesPlug() ||
+		( input == inPlug()->attributesPlug() && !useAttributesPlug()->isSetToDefault() ) ||
+		input == resampledInPlug()->objectPlug()
+	;
 }
 
 void OSLObject::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	ConstShadingEnginePtr shadingEngine = this->shadingEngine( context );
+	ConstCompoundObjectPtr gafferAttributes = nullptr;
+	if( useAttributesPlug()->getValue() )
+	{
+		gafferAttributes = inPlug()->fullAttributes( path );
+	}
+
+	ConstShadingEnginePtr shadingEngine = this->shadingEngine( context, gafferAttributes.get() );
 	if( !shadingEngine )
 	{
+		h = inPlug()->objectPlug()->hash();
 		return;
 	}
+
+	Deformer::hashProcessedObject( path, context, h );
 
 	shadingEngine->hash( h );
 	interpolationPlug()->hash( h );
@@ -367,23 +298,37 @@ void OSLObject::hashProcessedObject( const ScenePath &path, const Gaffer::Contex
 	{
 		h.append( inPlug()->fullTransformHash( path ) );
 	}
-	if( useAttributesPlug()->getValue() )
+
+	if( gafferAttributes )
 	{
-		h.append( inPlug()->fullAttributesHash( path ) );
+		for( const auto &[ name,  value ] : gafferAttributes->members() )
+		{
+			if( shadingEngine->needsAttribute( name ) )
+			{
+				h.append( name );
+				value->hash( h );
+			}
+		}
 	}
 }
 
 static const IECore::InternedString g_world("world");
 
-IECore::ConstObjectPtr OSLObject::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr OSLObject::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
-	const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject.get() );
+	const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject );
 	if( !inputPrimitive )
 	{
 		return inputObject;
 	}
 
-	ConstShadingEnginePtr shadingEngine = this->shadingEngine( context );
+	ConstCompoundObjectPtr gafferAttributes = nullptr;
+	if( useAttributesPlug()->getValue() )
+	{
+		gafferAttributes = inPlug()->fullAttributes( path );
+	}
+
+	ConstShadingEnginePtr shadingEngine = this->shadingEngine( context, gafferAttributes.get() );
 	if( !shadingEngine )
 	{
 		return inputObject;
@@ -391,11 +336,6 @@ IECore::ConstObjectPtr OSLObject::computeProcessedObject( const ScenePath &path,
 
 	PrimitiveVariable::Interpolation interpolation = static_cast<PrimitiveVariable::Interpolation>( interpolationPlug()->getValue() );
 
-	ConstCompoundObjectPtr gafferAttributes;
-	if( useAttributesPlug()->getValue() )
-	{
-		gafferAttributes = inPlug()->fullAttributes( path );
-	}
 
 	IECoreScene::ConstPrimitivePtr resampledObject = IECore::runTimeCast<const IECoreScene::Primitive>( resampledInPlug()->objectPlug()->getValue() );
 	CompoundDataPtr shadingPoints = prepareShadingPoints( resampledObject.get(), shadingEngine.get(), gafferAttributes.get() );
@@ -427,22 +367,49 @@ IECore::ConstObjectPtr OSLObject::computeProcessedObject( const ScenePath &path,
 	return outputPrimitive;
 }
 
+Gaffer::ValuePlug::CachePolicy OSLObject::processedObjectComputeCachePolicy() const
+{
+	return ValuePlug::CachePolicy::TaskCollaboration;
+}
+
+bool OSLObject::adjustBounds() const
+{
+	if( !Deformer::adjustBounds() )
+	{
+		return false;
+	}
+
+	// \todo - this is technically wrong, whether a deformation closure is output may depend
+	// on the substitutions.
+	//
+	// To solve this properly, we could do something like: ShadingEngine declares a special
+	// token STRING_PARAMETER_VALUE_UNKNOWN. Evaluating shade() on a ShadingEngine containing
+	// these tokens throws an exception, but calls to hasDeformation or needsAttribute
+	// would yield correct ( or at least conservative ) results, by using lockgeom=false.
+	//
+	// The getter for ShadingEngines inside OSLShader can then be modified to replace strings
+	// that require substitutions with this token when a special flag is passed somehow.
+	//
+	// Uses of the shadingEngine in OSLObject that don't use shade() and want global results
+	// without considering the specific location ( adjustBounds and resampledNamesPlug )
+	// would then need to pass this special flag.
+	//
+	// See conversation here https://github.com/GafferHQ/gaffer/pull/5039#discussion_r1063481066
+	// where this approach was proposed, and we decided not to implement it yet.
+
+	ConstShadingEnginePtr s = shadingEngine( Context::current(), nullptr );
+	return s && s->hasDeformation();
+}
+
 void OSLObject::hash( const ValuePlug *output, const Context *context, IECore::MurmurHash &h ) const
 {
-	SceneElementProcessor::hash( output, context, h );
+	Deformer::hash( output, context, h );
 
 	if( output == resampledNamesPlug() )
 	{
 		inPlug()->objectPlug()->hash( h );
-		if( g_contextCompatibilityEnabled && contextCompatibilityPlug()->getValue() )
-		{
-			h.append( shaderPlug()->attributesHash() );
-		}
-		else
-		{
-			ScenePlug::GlobalScope globalScope( context );
-			h.append( shaderPlug()->attributesHash() );
-		}
+		ScenePlug::GlobalScope globalScope( context );
+		h.append( shaderPlug()->attributesHash() );
 	}
 }
 
@@ -458,7 +425,8 @@ void OSLObject::compute( Gaffer::ValuePlug *output, const Gaffer::Context *conte
 			return;
 		}
 
-		ConstShadingEnginePtr shadingEngine = this->shadingEngine( context );
+		// \todo - using an null substitutions here is not fully accurate.  See comment in adjustBounds
+		ConstShadingEnginePtr shadingEngine = this->shadingEngine( context, nullptr );
 
 		std::string primitiveVariablesToResample;
 		for( PrimitiveVariableMap::const_iterator it = prim->variables.begin(); it != prim->variables.end(); ++it )
@@ -480,10 +448,10 @@ void OSLObject::compute( Gaffer::ValuePlug *output, const Gaffer::Context *conte
 		return;
 	}
 
-	SceneElementProcessor::compute( output, context );
+	Deformer::compute( output, context );
 }
 
-ConstShadingEnginePtr OSLObject::shadingEngine( const Gaffer::Context *context ) const
+ConstShadingEnginePtr OSLObject::shadingEngine( const Gaffer::Context *context, const CompoundObject *substitutions ) const
 {
 	auto shader = runTimeCast<const OSLShader>( shaderPlug()->source()->node() );
 	if( !shader )
@@ -491,15 +459,11 @@ ConstShadingEnginePtr OSLObject::shadingEngine( const Gaffer::Context *context )
 		return nullptr;
 	}
 
-	if( g_contextCompatibilityEnabled && contextCompatibilityPlug()->getValue() )
-	{
-		return shader->shadingEngine();
-	}
-	else
-	{
-		ScenePlug::GlobalScope globalScope( context );
-		return shader->shadingEngine();
-	}
+	ScenePlug::GlobalScope globalScope( context );
+
+	static ConstCompoundObjectPtr defaultSubstitutions = new CompoundObject();
+
+	return shader->shadingEngine( substitutions ? substitutions : defaultSubstitutions.get() );
 }
 
 void OSLObject::updatePrimitiveVariables()
@@ -519,7 +483,7 @@ void OSLObject::updatePrimitiveVariables()
 
 	std::string code = "closure color out = 0;\n";
 
-	for( NameValuePlugIterator inputPlug( primitiveVariablesPlug() ); !inputPlug.done(); ++inputPlug )
+	for( NameValuePlug::Iterator inputPlug( primitiveVariablesPlug() ); !inputPlug.done(); ++inputPlug )
 	{
 		std::string prefix = "";
 		BoolPlug* enabledPlug = (*inputPlug)->enabledPlug();
@@ -540,7 +504,7 @@ void OSLObject::updatePrimitiveVariables()
 			oslCode()->parametersPlug()->addChild( codeClosurePlug );
 			codeClosurePlug->setInput( valuePlug );
 
-			code += prefix + "out += " + codeClosurePlug->getName().string() + ";\n";
+			code += prefix + "out = out + " + codeClosurePlug->getName().string() + ";\n";
 			continue;
 		}
 
@@ -603,7 +567,7 @@ void OSLObject::updatePrimitiveVariables()
 			oslCode()->parametersPlug()->addChild( codeValuePlug );
 			codeValuePlug->setInput( valuePlug );
 
-			code += prefix + "out += " + outFunction + "( " + codeNamePlug->getName().string() + ", "
+			code += prefix + "out = out + " + outFunction + "( " + codeNamePlug->getName().string() + ", "
 				+ codeValuePlug->getName().string() + ");\n";
 			continue;
 		}

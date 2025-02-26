@@ -50,18 +50,20 @@ class NotificationMessageHandler( IECore.MessageHandler ) :
 	# window
 	__windows = set()
 
-	def __init__( self, windowTitle = "Notifications" ) :
+	# GafferUI.MessageWidget kwargs can be used here to control message presentation.
+	def __init__( self, windowTitle = "Notifications", **widgetKw ) :
 
 		IECore.MessageHandler.__init__( self )
 
 		self.__window = None
 		self.__windowTitle = windowTitle
+		self.__widgetKw = widgetKw
 
 	def handle( self, level, context, msg ) :
 
 		if self.__window is None :
-			self.__window = _Window( self.__windowTitle )
-			self.__window.closedSignal().connect( NotificationMessageHandler.__windowClosed, scoped = False )
+			self.__window = _Window( self.__windowTitle, self.__widgetKw )
+			self.__window.closedSignal().connect( NotificationMessageHandler.__windowClosed )
 			NotificationMessageHandler.__windows.add( self.__window )
 
 		self.__window.appendMessage( level, context, msg )
@@ -76,17 +78,18 @@ class NotificationMessageHandler( IECore.MessageHandler ) :
 	def __windowClosed( cls, window ) :
 
 		cls.__windows.remove( window )
+		GafferUI.WidgetAlgo.keepUntilIdle( window )
 
 class _Window( GafferUI.Window ) :
 
-	def __init__( self, title ) :
+	def __init__( self, title, widgetKw ) :
 
 		GafferUI.Window.__init__( self, title, borderWidth = 8 )
 
-		self.setChild( GafferUI.MessageWidget() )
+		self.setChild( GafferUI.MessageWidget( **widgetKw ) )
 
 		self.setResizeable( True )
 
 	def appendMessage( self, level, context, message ) :
 
-		self.getChild().appendMessage( level, context, message )
+		self.getChild().messageHandler().handle( level, context, message )

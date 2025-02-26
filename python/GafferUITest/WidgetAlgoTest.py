@@ -36,7 +36,9 @@
 
 import os
 import unittest
+import weakref
 import imath
+import math
 
 import IECore
 import IECoreImage
@@ -57,9 +59,9 @@ class WidgetAlgoTest( GafferUITest.TestCase ) :
 		w.setVisible( True )
 		self.waitForIdle( 1000 )
 
-		GafferUI.WidgetAlgo.grab( b, self.temporaryDirectory() + "/grab.png" )
+		GafferUI.WidgetAlgo.grab( b, str( self.temporaryDirectory() / "grab.png" ) )
 
-		i = IECore.Reader.create( self.temporaryDirectory() + "/grab.png" ).read()
+		i = IECore.Reader.create( str( self.temporaryDirectory() / "grab.png" ) ).read()
 
 		## \todo Should we have an official method for getting
 		# physical pixel size like this? Or should `grab()` downsize
@@ -71,6 +73,7 @@ class WidgetAlgoTest( GafferUITest.TestCase ) :
 			if windowHandle :
 				screen = windowHandle.screen()
 			expectedSize *= screen.devicePixelRatio()
+			expectedSize = imath.V2f( math.ceil( expectedSize.x ), math.ceil( expectedSize.y ) )
 
 		self.assertEqual( imath.V2f( i.displayWindow.size() ) + imath.V2f( 1 ), expectedSize )
 
@@ -84,13 +87,25 @@ class WidgetAlgoTest( GafferUITest.TestCase ) :
 
 		def grab() :
 
-			GafferUI.WidgetAlgo.grab( b, self.temporaryDirectory() + "/grab.png" )
+			GafferUI.WidgetAlgo.grab( b, str( self.temporaryDirectory() / "grab.png" ) )
 			GafferUI.EventLoop.mainEventLoop().stop()
 
 		GafferUI.EventLoop.addIdleCallback( grab )
 		GafferUI.EventLoop.mainEventLoop().start()
 
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/grab.png" ) )
+		self.assertTrue( ( self.temporaryDirectory() / "grab.png" ).exists() )
+
+	def testKeepUntilIdle( self ) :
+
+		widget = GafferUI.Label()
+		weakWidget = weakref.ref( widget )
+
+		GafferUI.WidgetAlgo.keepUntilIdle( widget )
+		del widget
+		self.assertIsNotNone( weakWidget() )
+
+		self.waitForIdle()
+		self.assertIsNone( weakWidget() )
 
 if __name__ == "__main__":
 	unittest.main()

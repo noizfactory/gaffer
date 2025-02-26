@@ -34,76 +34,14 @@
 #
 ##########################################################################
 
-import os
 import unittest
 
-import IECore
-import IECoreScene
-
-import Gaffer
-import GafferScene
 import GafferSceneTest
-import GafferDelight
 
-class DelightRenderTest( GafferSceneTest.SceneTestCase ) :
+class DelightRenderTest( GafferSceneTest.RenderTest ) :
 
-	def testSceneDescriptionMode( self ) :
-
-		plane = GafferScene.Plane()
-		render = GafferDelight.DelightRender()
-		render["in"].setInput( plane["out"] )
-		render["mode"].setValue( render.Mode.SceneDescriptionMode )
-		render["fileName"].setValue( os.path.join( self.temporaryDirectory(), "test.nsi" ) )
-
-		render["task"].execute()
-		self.assertTrue( os.path.exists( render["fileName"].getValue() ) )
-
-	def testRenderMode( self ) :
-
-		plane = GafferScene.Plane()
-
-		outputs = GafferScene.Outputs()
-		outputs.addOutput(
-			"beauty",
-			IECoreScene.Output(
-				self.temporaryDirectory() + "/test.exr",
-				"exr",
-				"rgba",
-				{}
-			)
-		)
-
-		render = GafferDelight.DelightRender()
-		render["in"].setInput( outputs["out"] )
-		render["mode"].setValue( render.Mode.RenderMode )
-
-		render["task"].execute()
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/test.exr" ) )
-
-	def testSceneTranslationOnly( self ) :
-
-		plane = GafferScene.Plane()
-
-		outputs = GafferScene.Outputs()
-		outputs.addOutput(
-			"beauty",
-			IECoreScene.Output(
-				self.temporaryDirectory() + "/test.exr",
-				"exr",
-				"rgba",
-				{}
-			)
-		)
-
-		render = GafferDelight.DelightRender()
-		render["in"].setInput( outputs["out"] )
-		render["mode"].setValue( render.Mode.RenderMode )
-
-		with Gaffer.Context() as context :
-			context["scene:render:sceneTranslationOnly"] = IECore.BoolData( True )
-			render["task"].execute()
-
-		self.assertFalse( os.path.exists( self.temporaryDirectory() + "/test.exr" ) )
+	renderer = "3Delight"
+	sceneDescriptionSuffix = ".nsi"
 
 if __name__ == "__main__":
 	unittest.main()

@@ -47,7 +47,7 @@ import GafferImageTest
 
 class DeleteChannelsTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def testDirtyPropagation( self ) :
 
@@ -156,8 +156,8 @@ class DeleteChannelsTest( GafferImageTest.ImageTestCase ) :
 		d["mode"].setValue( d.Mode.Keep )
 		d["channels"].setValue( "R" )
 
-		ri = r["out"].image()
-		di = d["out"].image()
+		ri = GafferImage.ImageAlgo.image( r["out"] )
+		di = GafferImage.ImageAlgo.image( d["out"] )
 
 		self.assertEqual( set( ri.keys() ), set( [ "R", "G", "B", "A" ] ) )
 		self.assertEqual( di.keys(), [ "R" ] )
@@ -181,7 +181,7 @@ class DeleteChannelsTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( i["out"]["dataWindow"].getValue(), d["out"]["dataWindow"].getValue() )
 		self.assertEqual( i["out"]["metadata"].getValue(), d["out"]["metadata"].getValue() )
 
-		context = Gaffer.Context()
+		context = Gaffer.Context( Gaffer.Context.current() )
 		context["image:tileOrigin"] = imath.V2i( 0 )
 		with context :
 			for c in [ "G", "B", "A" ] :

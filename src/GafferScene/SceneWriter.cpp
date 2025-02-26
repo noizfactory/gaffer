@@ -37,16 +37,15 @@
 #include "GafferScene/SceneWriter.h"
 
 #include "GafferScene/SceneAlgo.h"
+#include "GafferScene/SceneReader.h"
 
 #include "Gaffer/Context.h"
 #include "Gaffer/StringPlug.h"
 
 #include "IECoreScene/SceneInterface.h"
 
-#include "boost/filesystem.hpp"
-
-#include "tbb/concurrent_unordered_map.h"
-#include "tbb/mutex.h"
+#include <filesystem>
+#include <unordered_map>
 
 using namespace std;
 using namespace IECore;
@@ -57,101 +56,92 @@ using namespace GafferScene;
 namespace
 {
 
-struct LocationWriter
+struct LocationData
 {
-	LocationWriter(SceneInterfacePtr output, ConstCompoundDataPtr sets, float time, tbb::mutex& mutex) : m_output( output ), m_sets(sets), m_time( time ), m_mutex( mutex )
+	LocationData( const ScenePlug *scene, const ScenePlug::ScenePath &path, const CompoundData *setsForTags )
+		:	m_path( path ),
+			m_attributes( scene->attributesPlug()->getValue() ),
+			m_object( scene->objectPlug()->getValue() ),
+			m_bound( scene->boundPlug()->getValue() ),
+			m_transform( scene->transformPlug()->getValue() ),
+			m_childNames( scene->childNamesPlug()->getValue() )
 	{
-	}
-
-	/// first half of this function can be lock free reading data from ScenePlug
-	/// once all the data has been read then we take a global lock and write
-	/// into the SceneInterface
-	bool operator()( const ScenePlug *scene, const ScenePlug::ScenePath &scenePath )
-	{
-		ConstCompoundObjectPtr attributes = scene->attributesPlug()->getValue();
-
-		ConstCompoundObjectPtr globals;
-
-		ConstObjectPtr object = scene->objectPlug()->getValue();
-		Imath::Box3f bound = scene->boundPlug()->getValue();
-
-		IECore::M44dDataPtr transformData;
-
-		if( scenePath.empty() )
+		if( setsForTags )
 		{
-			globals = scene->globals();
-		}
-		else
-		{
-			Imath::M44f t = scene->transformPlug()->getValue();
-			transformData = new IECore::M44dData( Imath::M44d (
-				t[0][0], t[0][1], t[0][2], t[0][3],
-				t[1][0], t[1][1], t[1][2], t[1][3],
-				t[2][0], t[2][1], t[2][2], t[2][3],
-				t[3][0], t[3][1], t[3][2], t[3][3]
-			) );
-		}
+			const CompoundDataMap &setsMap = setsForTags->readable();
+			m_tags.reserve( setsMap.size() );
 
-		SceneInterface::NameList locationSets;
-		const CompoundDataMap &setsMap = m_sets->readable();
-		locationSets.reserve( setsMap.size() );
-
-		for( CompoundDataMap::const_iterator it = setsMap.begin(); it != setsMap.end(); ++it)
-		{
-			ConstPathMatcherDataPtr pathMatcher = IECore::runTimeCast<PathMatcherData>( it->second );
-
-			if( pathMatcher->readable().match( scenePath ) & IECore::PathMatcher::ExactMatch )
+			for( const auto &[name, data] : setsMap )
 			{
-				locationSets.push_back( it->first );
+				auto pathMatcher = static_cast<const PathMatcherData *>( data.get() );
+				if( pathMatcher->readable().match( path ) & IECore::PathMatcher::ExactMatch )
+				{
+					m_tags.push_back( name );
+				}
 			}
 		}
-
-		tbb::mutex::scoped_lock scopedLock( m_mutex );
-
-		if( !scenePath.empty() )
-		{
-			m_output = m_output->child( scenePath.back(), SceneInterface::CreateIfMissing );
-		}
-
-		for( CompoundObject::ObjectMap::const_iterator it = attributes->members().begin(), eIt = attributes->members().end(); it != eIt; it++ )
-		{
-			m_output->writeAttribute( it->first, it->second.get(), m_time );
-		}
-
-		if( globals && !globals->members().empty() )
-		{
-			m_output->writeAttribute( "gaffer:globals", globals.get(), m_time );
-		}
-
-		if( object->typeId() != IECore::NullObjectTypeId && scenePath.size() > 0 )
-		{
-			m_output->writeObject( object.get(), m_time );
-		}
-
-		m_output->writeBound( Imath::Box3d( Imath::V3f( bound.min ), Imath::V3f( bound.max ) ), m_time );
-
-		if( transformData )
-		{
-			m_output->writeTransform( transformData.get(), m_time );
-		}
-
-		if( !locationSets.empty() )
-		{
-			m_output->writeTags( locationSets );
-		}
-
-		return true;
 	}
 
-	SceneInterfacePtr m_output;
-	ConstCompoundDataPtr m_sets;
-	float m_time;
-	tbb::mutex &m_mutex;
+	void write( IECoreScene::SceneInterface *root, float time ) const
+	{
+		SceneInterfacePtr scene = root;
+		for( auto &p : m_path )
+		{
+			scene = scene->child( p, SceneInterface::CreateIfMissing );
+		}
+
+		if( m_object->typeId() != IECore::NullObjectTypeId && m_path.size() > 0 )
+		{
+			scene->writeObject( m_object.get(), time );
+		}
+
+		scene->writeBound( Imath::Box3d( Imath::V3f( m_bound.min ), Imath::V3f( m_bound.max ) ), time );
+
+		if( m_path.size() )
+		{
+			M44dDataPtr td = new IECore::M44dData( Imath::M44d (
+				m_transform[0][0], m_transform[0][1], m_transform[0][2], m_transform[0][3],
+				m_transform[1][0], m_transform[1][1], m_transform[1][2], m_transform[1][3],
+				m_transform[2][0], m_transform[2][1], m_transform[2][2], m_transform[2][3],
+				m_transform[3][0], m_transform[3][1], m_transform[3][2], m_transform[3][3]
+			) );
+			scene->writeTransform( td.get(), time );
+		}
+
+		for( const auto &[name, value] : m_attributes->members() )
+		{
+			scene->writeAttribute( name, value.get(), time );
+		}
+
+		if( !m_tags.empty() )
+		{
+			scene->writeTags( m_tags );
+		}
+
+		for( const auto &childName : m_childNames->readable() )
+		{
+			// `SceneAlgo::parallelGatherLocations()` may visit children in any
+			// order. Pre-create SceneInterface children here so that they are
+			// created in the correct order.
+			scene->child( childName, SceneInterface::CreateIfMissing );
+		}
+	}
+
+	private :
+
+		ScenePlug::ScenePath m_path;
+		ConstCompoundObjectPtr m_attributes;
+		ConstObjectPtr m_object;
+		Imath::Box3f m_bound;
+		Imath::M44f m_transform;
+		ConstInternedStringVectorDataPtr m_childNames;
+		SceneInterface::NameList m_tags;
+
 };
 
-}
+} // namespace
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SceneWriter );
+GAFFER_NODE_DEFINE_TYPE( SceneWriter );
 
 size_t SceneWriter::g_firstPlugIndex = 0;
 
@@ -201,7 +191,6 @@ const ScenePlug *SceneWriter::outPlug() const
 
 IECore::MurmurHash SceneWriter::hash( const Gaffer::Context *context ) const
 {
-	Context::Scope scope( context );
 	const ScenePlug *scenePlug = inPlug()->source<ScenePlug>();
 	if ( ( fileNamePlug()->getValue() == "" ) || ( scenePlug == inPlug() ) )
 	{
@@ -231,21 +220,57 @@ void SceneWriter::executeSequence( const std::vector<float> &frames ) const
 		throw IECore::Exception( "No input scene" );
 	}
 
-	const std::string fileName = fileNamePlug()->getValue();
-	createDirectories( fileName );
-	SceneInterfacePtr output = SceneInterface::create( fileName, IndexedIO::Write );
-	tbb::mutex mutex;
-	ContextPtr context = new Context( *Context::current() );
-	Context::Scope scopedContext( context.get() );
+	SceneInterfacePtr output;
+	Context::EditableScope scope( Context::current() );
 
-	for( std::vector<float>::const_iterator it = frames.begin(); it != frames.end(); ++it )
+	for( auto frame : frames )
 	{
-		context->setFrame( *it );
+		scope.setFrame( frame );
 
-		ConstCompoundDataPtr sets = SceneAlgo::sets( scene );
-		LocationWriter locationWriter( output, sets, context->getTime(), mutex );
+		ConstCompoundDataPtr sets;
+		bool useSetsAPI = true;
+		const std::string fileName = fileNamePlug()->getValue();
+		if( !output || output->fileName() != fileName )
+		{
+			createDirectories( fileName );
+			output = SceneInterface::create( fileName, IndexedIO::Write );
+			sets = SceneAlgo::sets( scene );
+			useSetsAPI = SceneReader::useSetsAPI( output.get() );
+		}
 
-		SceneAlgo::parallelProcessLocations( scene, locationWriter );
+		SceneAlgo::parallelGatherLocations(
+
+			scene,
+
+			// Collect LocationData from each location in parallel.
+
+			[&] ( const ScenePlug *scene, const ScenePlug::ScenePath &path ) {
+				return LocationData( scene, path, useSetsAPI ? nullptr : sets.get() );
+			},
+
+			// Write to output serially, because SceneInterfaces are not
+			// thread-safe for writing.
+
+			[&] ( const LocationData &locationData ) {
+				locationData.write( output.get(), scope.context()->getTime() );
+			}
+
+		);
+
+		if( useSetsAPI && sets )
+		{
+			for( const auto &[name, data] : sets->readable() )
+			{
+				output->writeSet( name, static_cast<const PathMatcherData *>( data.get() )->readable() );
+			}
+		}
+
+		ConstCompoundObjectPtr globals = scene->globals();
+		if( !globals->members().empty() )
+		{
+			output->writeAttribute( "gaffer:globals", globals.get(), scope.context()->getTime() );
+		}
+
 	}
 }
 
@@ -254,13 +279,12 @@ bool SceneWriter::requiresSequenceExecution() const
 	return true;
 }
 
-
 void SceneWriter::createDirectories( const std::string &fileName ) const
 {
-	boost::filesystem::path filePath( fileName );
-	boost::filesystem::path directory = filePath.parent_path();
+	const std::filesystem::path filePath( fileName );
+	const std::filesystem::path directory = filePath.parent_path();
 	if( !directory.empty() )
 	{
-		boost::filesystem::create_directories( directory );
+		std::filesystem::create_directories( directory );
 	}
 }

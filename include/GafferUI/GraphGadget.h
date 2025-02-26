@@ -35,13 +35,20 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_GRAPHGADGET_H
-#define GAFFERUI_GRAPHGADGET_H
+#pragma once
 
+#include "GafferUI/AnnotationsGadget.h"
 #include "GafferUI/ContainerGadget.h"
+#include "GafferUI/ContextTracker.h"
 
 #include "Gaffer/CompoundNumericPlug.h"
 #include "Gaffer/Plug.h"
+
+#include "Gaffer/BackgroundTask.h"
+
+#include "tbb/spin_mutex.h"
+
+#include <unordered_set>
 
 namespace Gaffer
 {
@@ -64,6 +71,7 @@ IE_CORE_FORWARDDECLARE( AuxiliaryConnectionsGadget );
 namespace GraphLayer
 {
 	constexpr Gadget::Layer Backdrops = Gadget::Layer::Back;
+	constexpr Gadget::Layer OverBackdrops = Gadget::Layer::BackMidBack;
 	constexpr Gadget::Layer Connections = Gadget::Layer::MidBack;
 	constexpr Gadget::Layer Nodes = Gadget::Layer::Main;
 	constexpr Gadget::Layer Highlighting = Gadget::Layer::MidFront;
@@ -79,7 +87,7 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		/// Creates a graph showing the children of root, optionally
 		/// filtered by the specified set. Nodes are only displayed if
 		/// they are both a child of root and a member of filter.
-		GraphGadget( Gaffer::NodePtr root, Gaffer::SetPtr filter = nullptr );
+		explicit GraphGadget( Gaffer::NodePtr root, Gaffer::SetPtr filter = nullptr );
 
 		~GraphGadget() override;
 
@@ -88,7 +96,7 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		Gaffer::Node *getRoot();
 		const Gaffer::Node *getRoot() const;
 		void setRoot( Gaffer::NodePtr root, Gaffer::SetPtr filter = nullptr );
-		typedef boost::signal<void ( GraphGadget *, Gaffer::Node * )> RootChangedSignal;
+		using RootChangedSignal = Gaffer::Signals::Signal<void ( GraphGadget *, Gaffer::Node * )>;
 		/// A signal emitted when the root has been changed - the signature
 		/// of the signal is ( graphGadget, previousRoot ).
 		RootChangedSignal &rootChangedSignal();
@@ -126,29 +134,33 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		AuxiliaryConnectionsGadget *auxiliaryConnectionsGadget();
 		const AuxiliaryConnectionsGadget *auxiliaryConnectionsGadget() const;
 
+		/// Returns the Gadget responsible for drawing annotations.
+		AnnotationsGadget *annotationsGadget();
+		const AnnotationsGadget *annotationsGadget() const;
+
 		/// Finds all the upstream NodeGadgets connected to the specified node
 		/// and appends them to the specified vector. Returns the new size of the vector.
 		/// \note Here "upstream" nodes are defined as nodes at the end of input
 		/// connections as shown in the graph - auxiliary connections and
 		/// invisible nodes are not considered at all.
-		size_t upstreamNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &upstreamNodeGadgets, size_t degreesOfSeparation = Imath::limits<size_t>::max() );
-		size_t upstreamNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &upstreamNodeGadgets, size_t degreesOfSeparation = Imath::limits<size_t>::max() ) const;
+		size_t upstreamNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &upstreamNodeGadgets, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() );
+		size_t upstreamNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &upstreamNodeGadgets, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() ) const;
 
 		/// Finds all the downstream NodeGadgets connected to the specified node
 		/// and appends them to the specified vector. Returns the new size of the vector.
 		/// \note Here "downstream" nodes are defined as nodes at the end of output
 		/// connections as shown in the graph - auxiliary connections and
 		/// invisible nodes are not considered at all.
-		size_t downstreamNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &downstreamNodeGadgets, size_t degreesOfSeparation = Imath::limits<size_t>::max() );
-		size_t downstreamNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &downstreamNodeGadgets, size_t degreesOfSeparation = Imath::limits<size_t>::max() ) const;
+		size_t downstreamNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &downstreamNodeGadgets, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() );
+		size_t downstreamNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &downstreamNodeGadgets, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() ) const;
 
 		/// Finds all the NodeGadgets connected to the specified node
 		/// and appends them to the specified vector. Returns the new size of the vector.
 		/// \note Here "connected" nodes are defined as nodes at the end of
 		/// connections as shown in the graph - auxiliary connections and
 		/// invisible nodes are not considered at all.
-		size_t connectedNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &connectedNodeGadgets, Gaffer::Plug::Direction direction = Gaffer::Plug::Invalid, size_t degreesOfSeparation = Imath::limits<size_t>::max() );
-		size_t connectedNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &connectedNodeGadgets, Gaffer::Plug::Direction direction = Gaffer::Plug::Invalid, size_t degreesOfSeparation = Imath::limits<size_t>::max() ) const;
+		size_t connectedNodeGadgets( const Gaffer::Node *node, std::vector<NodeGadget *> &connectedNodeGadgets, Gaffer::Plug::Direction direction = Gaffer::Plug::Invalid, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() );
+		size_t connectedNodeGadgets( const Gaffer::Node *node, std::vector<const NodeGadget *> &connectedNodeGadgets, Gaffer::Plug::Direction direction = Gaffer::Plug::Invalid, size_t degreesOfSeparation = std::numeric_limits<size_t>::max() ) const;
 
 		/// Finds all the NodeGadgets which haven't been given an explicit position
 		/// using setNodePosition().
@@ -189,7 +201,9 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
@@ -208,8 +222,6 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		void noduleRemoved( Nodule *nodule );
 		void nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore::InternedString key, Gaffer::Node *node );
 
-		bool keyPressed( GadgetPtr gadget, const KeyEvent &event );
-
 		bool buttonPress( GadgetPtr gadget, const ButtonEvent &event );
 		bool buttonRelease( GadgetPtr gadget, const ButtonEvent &event );
 
@@ -219,6 +231,7 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		bool dragEnd( GadgetPtr gadget, const DragDropEvent &event );
 		void calculateDragSnapOffsets( Gaffer::Set *nodes );
 		void offsetNodes( Gaffer::Set *nodes, const Imath::V2f &offset );
+		std::string dragMergeGroup() const;
 
 		void updateDragSelection( bool dragEnd, ModifiableEvent::Modifiers modifiers );
 
@@ -249,27 +262,27 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		Gaffer::NodePtr m_root;
 		Gaffer::ScriptNodePtr m_scriptNode;
 		RootChangedSignal m_rootChangedSignal;
-		boost::signals::scoped_connection m_rootChildAddedConnection;
-		boost::signals::scoped_connection m_rootChildRemovedConnection;
-		boost::signals::scoped_connection m_selectionMemberAddedConnection;
-		boost::signals::scoped_connection m_selectionMemberRemovedConnection;
+		Gaffer::Signals::ScopedConnection m_rootChildAddedConnection;
+		Gaffer::Signals::ScopedConnection m_rootChildRemovedConnection;
+		Gaffer::Signals::ScopedConnection m_selectionMemberAddedConnection;
+		Gaffer::Signals::ScopedConnection m_selectionMemberRemovedConnection;
 
 		Gaffer::SetPtr m_filter;
-		boost::signals::scoped_connection m_filterMemberAddedConnection;
-		boost::signals::scoped_connection m_filterMemberRemovedConnection;
+		Gaffer::Signals::ScopedConnection m_filterMemberAddedConnection;
+		Gaffer::Signals::ScopedConnection m_filterMemberRemovedConnection;
 
 		struct NodeGadgetEntry
 		{
 			NodeGadget *gadget;
-			boost::signals::scoped_connection inputChangedConnection;
-			boost::signals::scoped_connection plugSetConnection;
-			boost::signals::scoped_connection noduleAddedConnection;
-			boost::signals::scoped_connection noduleRemovedConnection;
+			Gaffer::Signals::ScopedConnection inputChangedConnection;
+			Gaffer::Signals::ScopedConnection plugSetConnection;
+			Gaffer::Signals::ScopedConnection noduleAddedConnection;
+			Gaffer::Signals::ScopedConnection noduleRemovedConnection;
 		};
-		typedef std::map<const Gaffer::Node *, NodeGadgetEntry> NodeGadgetMap;
+		using NodeGadgetMap = std::map<const Gaffer::Node *, NodeGadgetEntry>;
 		NodeGadgetMap m_nodeGadgets;
 
-		typedef std::map<const Nodule *, ConnectionGadget *> ConnectionGadgetMap;
+		using ConnectionGadgetMap = std::map<const Nodule *, ConnectionGadget *>;
 		ConnectionGadgetMap m_connectionGadgets;
 
 		enum DragMode
@@ -288,16 +301,17 @@ class GAFFERUI_API GraphGadget : public ContainerGadget
 		Nodule *m_dragReconnectDstNodule;
 		std::vector<float> m_dragSnapOffsets[2]; // offsets in x and y
 		std::vector<Imath::V2f> m_dragSnapPoints; // specific points that are also target for point snapping
+		int m_dragMergeGroupId;
 
 		GraphLayoutPtr m_layout;
+
+		void applyFocusContexts();
+
+		ContextTrackerPtr m_contextTracker;
+		Gaffer::Signals::ScopedConnection m_contextTrackerChangedConnection;
 
 };
 
 IE_CORE_DECLAREPTR( GraphGadget );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<GraphGadget> > GraphGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<GraphGadget> > RecursiveGraphGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_GRAPHGADGET_H

@@ -45,8 +45,8 @@ Gaffer.Metadata.registerNode(
 	"""
 	Builds a scene by bundling multiple input scenes together, each
 	under their own root location. Instead of using an array of inputs
-	like the Group node, a single input is used instead, and a context
-	variable is provided so that a different hierarchy can be generated
+	like the Group node, a single input is used instead, and a Context
+	Variable is provided so that a different hierarchy can be generated
 	under each root location. This is especially powerful for building
 	dynamic scenes where the number of inputs is not known prior to
 	building the node graph.
@@ -56,15 +56,17 @@ Gaffer.Metadata.registerNode(
 	`rootNames[0]`.
 	""",
 
+	"ui:spreadsheet:enabledRowNamesConnection", "rootNames",
+	"ui:spreadsheet:selectorContextVariablePlug", "rootNameVariable",
+
 	plugs = {
 
 		"rootNames" : [
 
 			"description",
 			"""
-			The names of the locations to create at the root of
-			the output scene. The input scene is copied underneath
-			each of these root locations.
+			The paths to the root locations to create in the output scene.
+			The input scene is copied underneath each of these root locations.
 
 			Often the rootNames will be driven by an expression that generates
 			a dynamic number of root locations, perhaps by querying an asset
@@ -77,8 +79,8 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The name of a context variable that is set to the current
-			root name when evaluating the input scene. This can be used
+			The name of a Context Variable that is set to the current
+			root location when evaluating the input scene. This can be used
 			in upstream expressions and string substitutions to generate
 			a different hierarchy under each root location.
 			""",
@@ -94,12 +96,27 @@ Gaffer.Metadata.registerNode(
 
 			The rootName variable may be used in expressions and string
 			substitutions for this plug, allowing different subtrees to be
-			collected for each root name in the output.
+			collected for each root location in the output.
 
 			> Tip :
 			> By specifying a leaf location as the root, it is possible to
 			> collect single objects from the input scene.
+			""",
+
+			"plugValueWidget:type", "GafferSceneUI.ScenePathPlugValueWidget",
+
+		],
+
+		"mergeGlobals" : [
+
+			"description",
 			"""
+			Controls how the output globals are generated from the collected
+			scenes. By default, the globals from the first scene alone
+			are passed through. When `mergeGlobals` is on, the globals from
+			all collected scenes are merged, with the last scene winning
+			in the case of multiple scenes specifying the same global.
+			""",
 
 		],
 

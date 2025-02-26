@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_NAMEGADGET_H
-#define GAFFERUI_NAMEGADGET_H
+#pragma once
 
 #include "GafferUI/TextGadget.h"
 
@@ -49,22 +48,17 @@ class GAFFERUI_API NameGadget : public TextGadget
 
 	public :
 
-		NameGadget( Gaffer::GraphComponentPtr object );
+		explicit NameGadget( Gaffer::GraphComponentPtr object );
 		~NameGadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::NameGadget, NameGadgetTypeId, TextGadget );
 
 	private :
 
-		void nameChanged( Gaffer::GraphComponentPtr object );
+		void graphComponentNameChanged( Gaffer::GraphComponentPtr object );
 
 };
 
 IE_CORE_DECLAREPTR( NameGadget );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<NameGadget> > NameGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<NameGadget> > RecursiveNameGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_NAMEGADGET_H

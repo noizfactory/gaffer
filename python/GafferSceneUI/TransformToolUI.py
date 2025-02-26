@@ -59,29 +59,15 @@ Gaffer.Metadata.registerNode(
 	"toolbarLayout:customWidget:SelectionWidget:widgetType", "GafferSceneUI.TransformToolUI._SelectionWidget",
 	"toolbarLayout:customWidget:SelectionWidget:section", "Bottom",
 
-	# So we don't obscure the corner gnomon
-	"toolbarLayout:customWidget:LeftSpacer:widgetType", "GafferSceneUI.TransformToolUI._LeftSpacer",
-	"toolbarLayout:customWidget:LeftSpacer:section", "Bottom",
-	"toolbarLayout:customWidget:LeftSpacer:index", 0,
+	"nodeToolbar:top:type", "GafferUI.StandardNodeToolbar.top",
+	"toolbarLayout:customWidget:TargetTipWidget:widgetType", "GafferSceneUI.TransformToolUI._TargetTipWidget",
+	"toolbarLayout:customWidget:TargetTipWidget:section", "Top",
 
-	# So our layout doesn't jump around too much when our selection widget changes size
-	"toolbarLayout:customWidget:RightSpacer:widgetType", "GafferSceneUI.TransformToolUI._RightSpacer",
-	"toolbarLayout:customWidget:RightSpacer:section", "Bottom",
-	"toolbarLayout:customWidget:RightSpacer:index", -1,
+	"toolbarLayout:customWidget:TopRightSpacer:widgetType", "GafferSceneUI.SelectionToolUI._RightSpacer",
+	"toolbarLayout:customWidget:TopRightSpacer:section", "Top",
+	"toolbarLayout:customWidget:TopRightSpacer:index", -1,
 
 )
-
-class _LeftSpacer( GafferUI.Spacer ) :
-
-	def __init__( self, imageView, **kw ) :
-
-		GafferUI.Spacer.__init__( self, size = imath.V2i( 40, 1 ), maximumSize = imath.V2i( 40, 1 ) )
-
-class _RightSpacer( GafferUI.Spacer ) :
-
-	def __init__( self, imageView, **kw ) :
-
-		GafferUI.Spacer.__init__( self, size = imath.V2i( 0, 0 ) )
 
 def _boldFormatter( graphComponents ) :
 
@@ -101,11 +87,35 @@ def _distance( ancestor, descendant ) :
 
 	return result
 
-class _SelectionWidget( GafferUI.Frame ) :
+class _TargetTipWidget( GafferUI.Frame ) :
 
 	def __init__( self, tool, **kw ) :
 
 		GafferUI.Frame.__init__( self, borderWidth = 4, **kw )
+
+		self.__tool = tool
+
+		tool.plugSetSignal().connect( Gaffer.WeakMethod( self.__plugSet ) )
+
+		with self :
+			with GafferUI.Frame( borderWidth = 0 ) as self.__innerFrame :
+				self.__tipLabel = GafferUI.Label( "" )
+
+		self.__plugSet()
+
+	def __plugSet( self, *unused ) :
+
+		label = Gaffer.Metadata.value( self.__tool, "ui:transformTool:toolTip" ) or ""
+		self.__tipLabel.setText( label )
+
+		if not label :
+			self.__innerFrame.setVisible( False )
+
+class _SelectionWidget( GafferUI.Frame ) :
+
+	def __init__( self, tool, **kw ) :
+
+		GafferUI.Frame.__init__( self, borderWidth = 1, **kw )
 
 		self.__tool = tool
 
@@ -116,21 +126,21 @@ class _SelectionWidget( GafferUI.Frame ) :
 					GafferUI.Image( "infoSmall.png" )
 					GafferUI.Spacer( size = imath.V2i( 4 ), maximumSize = imath.V2i( 4 ) )
 					self.__infoLabel = GafferUI.Label( "" )
-					self.__nameLabel = GafferUI.NameLabel( graphComponent = None, numComponents = sys.maxint )
+					self.__nameLabel = GafferUI.NameLabel( graphComponent = None, numComponents = sys.maxsize )
 					self.__nameLabel.setFormatter( _boldFormatter )
-					self.__nameLabel.buttonDoubleClickSignal().connect( Gaffer.WeakMethod( self.__buttonDoubleClick ), scoped = False )
+					self.__nameLabel.buttonDoubleClickSignal().connect( Gaffer.WeakMethod( self.__buttonDoubleClick ) )
 
 				with GafferUI.ListContainer( orientation = GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) as self.__warningRow :
 					GafferUI.Image( "warningSmall.png" )
 					self.__warningLabel = GafferUI.Label( "" )
 
-		self.__tool.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__update, fallbackResult = None ), scoped = False )
+		self.__tool.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__update, fallbackResult = None ) )
 
 		self.__update()
 
-	def context( self ) :
+	def scriptNode( self ) : # For LazyMethod's `deferUntilPlaybackStops`
 
-		return self.ancestor( GafferUI.NodeToolbar ).getContext()
+		return self.__tool.ancestor( GafferUI.View ).scriptNode()
 
 	def getToolTip( self ) :
 
@@ -139,15 +149,15 @@ class _SelectionWidget( GafferUI.Frame ) :
 			return toolTip
 
 		toolSelection = self.__tool.selection()
-		if not toolSelection :
+		if not toolSelection or not self.__tool.selectionEditable() :
 			return ""
 
 		result = ""
-		script = toolSelection[0].transformPlug.ancestor( Gaffer.ScriptNode )
+		script = toolSelection[0].editTarget().ancestor( Gaffer.ScriptNode )
 		for s in toolSelection :
 			if result :
 				result += "\n"
-			result += "- Transforming {0} using {1}".format( s.path, s.transformPlug.relativeName( script ) )
+			result += "- Transforming {0} using {1}".format( s.path(), s.editTarget().relativeName( script ) )
 
 		return result
 
@@ -161,52 +171,56 @@ class _SelectionWidget( GafferUI.Frame ) :
 			return
 
 		toolSelection = self.__tool.selection()
-		selectedPaths = GafferSceneUI.ContextAlgo.getSelectedPaths( self.context() )
 
 		if len( toolSelection ) :
 
-			self.__infoRow.setVisible( True )
-			if len( toolSelection ) == 1 :
+			# Get unique edit targets and warnings
+
+			editTargets = { s.editTarget() for s in toolSelection if s.editable() }
+			warnings = { s.warning() for s in toolSelection if s.warning() }
+			if not warnings and not self.__tool.selectionEditable() :
+				warnings = { "Selection not editable" }
+
+			# Update info row to show what we're editing
+
+			if not self.__tool.selectionEditable() :
+				self.__infoRow.setVisible( False )
+			elif len( editTargets ) == 1 :
+				self.__infoRow.setVisible( True )
 				self.__infoLabel.setText( "Editing " )
+				editTarget = next( iter( editTargets ) )
 				numComponents = _distance(
-					toolSelection[0].transformPlug.commonAncestor( toolSelection[0].scene ),
-					toolSelection[0].transformPlug,
+					editTarget.commonAncestor( toolSelection[0].scene() ),
+					editTarget,
 				)
-				if toolSelection[0].scene.node().isAncestorOf( toolSelection[0].transformPlug ) :
+				if toolSelection[0].scene().node().isAncestorOf( editTarget ) :
 					numComponents += 1
 				self.__nameLabel.setNumComponents( numComponents )
-				self.__nameLabel.setGraphComponent( toolSelection[0].transformPlug )
+				self.__nameLabel.setGraphComponent( editTarget )
 			else :
-				self.__infoLabel.setText( "Editing {0} transforms".format( len( toolSelection ) ) )
+				self.__infoRow.setVisible( True )
+				self.__infoLabel.setText( "Editing {0} transforms".format( len( editTargets ) ) )
 				self.__nameLabel.setGraphComponent( None )
 
-			editingAncestor = any(
-				not ( selectedPaths.match( s.path ) & IECore.PathMatcher.Result.ExactMatch )
-				for s in toolSelection
-			)
-			if editingAncestor :
-				self.__warningLabel.setText( "( Parent location )" )
+			# Update warning row
+
+			if warnings :
+				if len( warnings ) == 1 :
+					self.__warningLabel.setText( next( iter( warnings ) ) )
+					self.__warningLabel.setToolTip( "" )
+				else :
+					self.__warningLabel.setText( "{} warnings".format( len( warnings ) ) )
+					self.__warningLabel.setToolTip( "\n".join( "- " + w for w in warnings ) )
 				self.__warningRow.setVisible( True )
 			else :
 				self.__warningRow.setVisible( False )
 
 		else :
 
-			validSelectedPaths = IECore.PathMatcher()
-			with self.context() :
-				GafferScene.SceneAlgo.matchingPaths(
-					selectedPaths, self.__tool.view()["in"], validSelectedPaths
-				)
-
-			if validSelectedPaths.isEmpty() :
-				self.__infoRow.setVisible( True )
-				self.__warningRow.setVisible( False )
-				self.__infoLabel.setText( "Select something to transform" )
-				self.__nameLabel.setGraphComponent( None )
-			else:
-				self.__infoRow.setVisible( False )
-				self.__warningRow.setVisible( True )
-				self.__warningLabel.setText( "Transform not editable - create a Transform node" )
+			self.__infoRow.setVisible( True )
+			self.__warningRow.setVisible( False )
+			self.__infoLabel.setText( "Select something to transform" )
+			self.__nameLabel.setGraphComponent( None )
 
 	def __buttonDoubleClick( self, widget, event ) :
 

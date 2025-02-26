@@ -48,7 +48,7 @@ using namespace IECore;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SubTree );
+GAFFER_NODE_DEFINE_TYPE( SubTree );
 
 size_t SubTree::g_firstPlugIndex = 0;
 
@@ -58,6 +58,11 @@ SubTree::SubTree( const std::string &name )
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new StringPlug( "root", Plug::In, "" ) );
 	addChild( new BoolPlug( "includeRoot", Plug::In, false ) );
+	addChild( new BoolPlug( "inheritTransform", Plug::In, false ) );
+	addChild( new BoolPlug( "inheritAttributes", Plug::In, false ) );
+	addChild( new BoolPlug( "inheritSetMembership", Plug::In, false ) );
+
+	outPlug()->childBoundsPlug()->setFlags( Plug::AcceptsDependencyCycles, true );
 
 	// Fast pass-throughs for things we don't modify.
 	outPlug()->globalsPlug()->setInput( inPlug()->globalsPlug() );
@@ -88,24 +93,88 @@ const Gaffer::BoolPlug *SubTree::includeRootPlug() const
 	return getChild<BoolPlug>( g_firstPlugIndex + 1 );
 }
 
+Gaffer::BoolPlug *SubTree::inheritTransformPlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 2 );
+}
+
+const Gaffer::BoolPlug *SubTree::inheritTransformPlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 2 );
+}
+
+Gaffer::BoolPlug *SubTree::inheritAttributesPlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
+const Gaffer::BoolPlug *SubTree::inheritAttributesPlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
+Gaffer::BoolPlug *SubTree::inheritSetMembershipPlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 4 );
+}
+
+const Gaffer::BoolPlug *SubTree::inheritSetMembershipPlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 4 );
+}
+
 void SubTree::affects( const Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	SceneProcessor::affects( input, outputs );
 
-	if( input->parent<ScenePlug>() == inPlug() )
-	{
-		outputs.push_back( outPlug()->getChild<ValuePlug>( input->getName() ) );
-	}
-	else if( input == rootPlug() || input == includeRootPlug() )
+	const bool affectsSourcePath = input == rootPlug() || input == includeRootPlug() || input == inPlug()->existsPlug();
+
+	if(
+		affectsSourcePath ||
+		input == inPlug()->boundPlug() ||
+		input == outPlug()->childBoundsPlug()
+	)
 	{
 		outputs.push_back( outPlug()->boundPlug() );
-		outputs.push_back( outPlug()->transformPlug() );
-		outputs.push_back( outPlug()->attributesPlug() );
-		outputs.push_back( outPlug()->objectPlug() );
-		outputs.push_back( outPlug()->childNamesPlug() );
-		outputs.push_back( outPlug()->setPlug() );
 	}
 
+	if(
+		affectsSourcePath ||
+		input == inPlug()->transformPlug() ||
+		input == inheritTransformPlug()
+	)
+	{
+		outputs.push_back( outPlug()->transformPlug() );
+	}
+
+	if(
+		affectsSourcePath ||
+		input == inPlug()->attributesPlug() ||
+		input == inheritAttributesPlug()
+	)
+	{
+		outputs.push_back( outPlug()->attributesPlug() );
+	}
+
+	if( affectsSourcePath || input == inPlug()->objectPlug() )
+	{
+		outputs.push_back( outPlug()->objectPlug() );
+	}
+
+	if( affectsSourcePath || input == inPlug()->childNamesPlug() )
+	{
+		outputs.push_back( outPlug()->childNamesPlug() );
+	}
+
+	if(
+		input == inPlug()->setPlug() ||
+		input == rootPlug() ||
+		input == includeRootPlug() ||
+		input == inheritSetMembershipPlug()
+	)
+	{
+		outputs.push_back( outPlug()->setPlug() );
+	}
 }
 
 void SubTree::hashBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
@@ -118,7 +187,7 @@ void SubTree::hashBound( const ScenePath &path, const Gaffer::Context *context, 
 			h = inPlug()->boundHash( source );
 			break;
 		case CreateRoot :
-			h = hashOfTransformedChildBounds( path, parent );
+			h = parent->childBoundsPlug()->hash();
 			break;
 		case EmptyRoot :
 			SceneProcessor::hashBound( path, context, parent, h );
@@ -135,7 +204,7 @@ Imath::Box3f SubTree::computeBound( const ScenePath &path, const Gaffer::Context
 		case Default :
 			return inPlug()->bound( source );
 		case CreateRoot :
-			return unionOfTransformedChildBounds( path, parent );
+			return parent->childBoundsPlug()->getValue();
 		default : // EmptyRoot
 			return Imath::Box3f();
 	}
@@ -146,7 +215,14 @@ void SubTree::hashTransform( const ScenePath &path, const Gaffer::Context *conte
 	SourceMode sourceMode = Default;
 	ScenePath source = sourcePath( path, sourceMode );
 	assert( sourceMode == Default ); // SceneNode::hash() shouldn't call this for the root path
-	h = inPlug()->transformHash( source );
+	if( path.size() == 1 && inheritTransformPlug()->getValue() )
+	{
+		h = inPlug()->fullTransformHash( source );
+	}
+	else
+	{
+		h = inPlug()->transformHash( source );
+	}
 }
 
 Imath::M44f SubTree::computeTransform( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
@@ -154,7 +230,14 @@ Imath::M44f SubTree::computeTransform( const ScenePath &path, const Gaffer::Cont
 	SourceMode sourceMode = Default;
 	const ScenePath source = sourcePath( path, sourceMode );
 	assert( sourceMode == Default ); // SceneNode::compute() shouldn't call this for the root path
-	return inPlug()->transform( source );
+	if( path.size() == 1 && inheritTransformPlug()->getValue() )
+	{
+		return inPlug()->fullTransform( source );
+	}
+	else
+	{
+		return inPlug()->transform( source );
+	}
 }
 
 void SubTree::hashAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
@@ -162,7 +245,14 @@ void SubTree::hashAttributes( const ScenePath &path, const Gaffer::Context *cont
 	SourceMode sourceMode = Default;
 	ScenePath source = sourcePath( path, sourceMode );
 	assert( sourceMode == Default ); // SceneNode::hash() shouldn't call this for the root path
-	h = inPlug()->attributesHash( source );
+	if( path.size() == 1 && inheritAttributesPlug()->getValue() )
+	{
+		h = inPlug()->fullAttributesHash( source );
+	}
+	else
+	{
+		h = inPlug()->attributesHash( source );
+	}
 }
 
 IECore::ConstCompoundObjectPtr SubTree::computeAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
@@ -170,7 +260,14 @@ IECore::ConstCompoundObjectPtr SubTree::computeAttributes( const ScenePath &path
 	SourceMode sourceMode = Default;
 	const ScenePath source = sourcePath( path, sourceMode );
 	assert( sourceMode == Default ); // SceneNode::compute() shouldn't call this for the root path
-	return inPlug()->attributes( source );
+	if( path.size() == 1 && inheritAttributesPlug()->getValue() )
+	{
+		return inPlug()->fullAttributes( source );
+	}
+	else
+	{
+		return inPlug()->attributes( source );
+	}
 }
 
 void SubTree::hashObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
@@ -232,6 +329,8 @@ void SubTree::hashSet( const IECore::InternedString &setName, const Gaffer::Cont
 	inPlug()->setPlug()->hash( h );
 	rootPlug()->hash( h );
 	includeRootPlug()->hash( h );
+	inheritSetMembershipPlug()->hash( h );
+	h.append( outPlug()->childNamesHash( {} ) );
 }
 
 IECore::ConstPathMatcherDataPtr SubTree::computeSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent ) const
@@ -246,14 +345,50 @@ IECore::ConstPathMatcherDataPtr SubTree::computeSet( const IECore::InternedStrin
 	ScenePlug::ScenePath root;
 	ScenePlug::stringToPath( rootPlug()->getValue(), root );
 
+	const bool includeRoot = includeRootPlug()->getValue();
 	ScenePlug::ScenePath prefix;
-	if( includeRootPlug()->getValue() && root.size() )
+	if( includeRoot && root.size() )
 	{
 		prefix.push_back( root.back() );
 	}
 
 	PathMatcherDataPtr outputSetData = new PathMatcherData;
-	outputSetData->writable().addPaths( inputSet.subTree( root ), prefix );
+	PathMatcher subTree = inputSet.subTree( root );
+	if( !prefix.size() )
+	{
+		// Avoid putting `/` in the output set. This would be vexing because the
+		// root location isn't visible in the HierarchyView and nodes don't
+		// operate on it. It would also be impossible to Group multiple inputs
+		// with mixed root memberships, because the root membership has to be
+		// transferred onto the single `/group` location.
+		/// \todo Should this be enforced more centrally in SceneNode, in the same
+		/// way that the no-transform-at-root and no-attributes-at-root rules are?
+		subTree.removePath( ScenePath() );
+	}
+	outputSetData->writable().addPaths( subTree, prefix );
+
+	if( inheritSetMembershipPlug()->getValue() && root.size() )
+	{
+		const unsigned match = inputSet.match( root );
+		if( match & ( PathMatcher::AncestorMatch | PathMatcher::ExactMatch ) )
+		{
+			if( includeRoot )
+			{
+				outputSetData->writable().addPath( prefix );
+			}
+			else
+			{
+				ConstInternedStringVectorDataPtr rootChildNames = outPlug()->childNames( {} );
+				ScenePlug::ScenePath path( 1 );
+				for( auto &rootChildName : rootChildNames->readable() )
+				{
+					path.back() = rootChildName;
+					outputSetData->writable().addPath( path );
+				}
+			}
+		}
+	}
+
 	return outputSetData;
 }
 
@@ -287,7 +422,7 @@ SceneNode::ScenePath SubTree::sourcePath( const ScenePath &outputPath, SourceMod
 		// mode so that we output an empty scene. This guarantees that we will never
 		// request an invalid source location from our input, provided that we are not
 		// asked for an invalid output location.
-		if( !SceneAlgo::exists( inPlug(), result ) )
+		if( !inPlug()->exists( result ) )
 		{
 			sourceMode = EmptyRoot;
 		}

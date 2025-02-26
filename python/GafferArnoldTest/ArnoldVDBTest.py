@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import imath
 
 import IECore
@@ -58,7 +58,7 @@ class ArnoldVDBTest( GafferSceneTest.SceneTestCase ) :
 
 		# If we enter a valid vdb filename, then we should get something
 		# with the right bounds, and the right parameters in the procedural.
-		v["fileName"].setValue( os.path.join( os.path.dirname( __file__ ), "volumes", "sphere.vdb" ) )
+		v["fileName"].setValue( pathlib.Path( __file__ ).parent / "volumes" / "sphere.vdb" )
 		self.assertEqual( v["out"].bound( "/volume" ), imath.Box3f( imath.V3f( -1.1, 1.1, -1.1 ), imath.V3f( 1.1, 2.9, 1.1 ) ) )
 
 		procedural = v["out"].object( "/volume" )
@@ -70,19 +70,19 @@ class ArnoldVDBTest( GafferSceneTest.SceneTestCase ) :
 
 		# Invalid grid names should create errors.
 		v["grids"].setValue( "notAGrid" )
-		with self.assertRaisesRegexp( Gaffer.ProcessException, "has no grid named \"notAGrid\"" ) as caught :
+		with self.assertRaisesRegex( Gaffer.ProcessException, "has no grid named \"notAGrid\"" ) as caught :
 			v["out"].bound( "/volume" )
 
 		# As should invalid file names.
 		v["grids"].setValue( "density" )
 		v["fileName"].setValue( "notAFile.vdb" )
-		with self.assertRaisesRegexp( Gaffer.ProcessException, "No such file or directory" ) :
+		with self.assertRaisesRegex( Gaffer.ProcessException, "No such file or directory" ) :
 			v["out"].bound( "/volume" )
 
 	def testStepSize( self ) :
 
 		v = GafferArnold.ArnoldVDB()
-		v["fileName"].setValue( os.path.join( os.path.dirname( __file__ ), "volumes", "sphere.vdb" ) )
+		v["fileName"].setValue( pathlib.Path( __file__ ).parent / "volumes" / "sphere.vdb" )
 
 		self.assertEqual( v["stepSize"].getValue(), 0 )
 		self.assertEqual( v["stepScale"].getValue(), 1 )

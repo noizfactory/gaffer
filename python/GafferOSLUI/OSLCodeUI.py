@@ -44,7 +44,8 @@ import Gaffer
 import GafferUI
 import GafferOSL
 
-import _CodeMenu
+from . import _CodeMenu
+from . import _CodeWidget
 
 Gaffer.Metadata.registerNode(
 
@@ -106,7 +107,11 @@ Gaffer.Metadata.registerNode(
 
 		"parameters.*" : [
 
-			"labelPlugValueWidget:renameable", True,
+			"renameable", True,
+			"deletable", True,
+			# Since the names are used directly as variable names in the code,
+			# it's best to avoid any fancy label formatting for them.
+			"label", lambda plug : plug.getName(),
 
 		],
 
@@ -130,7 +135,9 @@ Gaffer.Metadata.registerNode(
 
 		"out.*" : [
 
-			"labelPlugValueWidget:renameable", True,
+			"renameable", True,
+			"deletable", True,
+			"label", lambda plug : plug.getName(),
 
 		],
 
@@ -144,7 +151,6 @@ Gaffer.Metadata.registerNode(
 
 			"nodule:type", "",
 			"plugValueWidget:type", "GafferOSLUI.OSLCodeUI._CodePlugValueWidget",
-			"multiLineStringPlugValueWidget:role", "code",
 			"layout:label", "",
 			"layout:section", "Settings.Code",
 
@@ -170,7 +176,7 @@ class _ParametersFooter( GafferUI.PlugValueWidget ) :
 
 				GafferUI.Spacer( imath.V2i( GafferUI.PlugWidget.labelWidth(), 1 ) )
 
-				menuButton = GafferUI.MenuButton(
+				self.__menuButton = GafferUI.MenuButton(
 					image = "plus.png",
 					hasFrame = False,
 					menu = GafferUI.Menu(
@@ -179,13 +185,12 @@ class _ParametersFooter( GafferUI.PlugValueWidget ) :
 					),
 					toolTip = "Add " + ( "Input" if plug.direction() == plug.Direction.In else "Output" ),
 				)
-				menuButton.setEnabled( not Gaffer.MetadataAlgo.readOnly( plug ) )
 
 				GafferUI.Spacer( imath.V2i( 1 ), imath.V2i( 999999, 1 ), parenting = { "expand" : True } )
 
-	def _updateFromPlug( self ) :
+	def _updateFromEditable( self ) :
 
-		self.setEnabled( self._editable() )
+		self.__menuButton.setEnabled( self._editable() )
 
 	def __menuDefinition( self ) :
 
@@ -250,15 +255,45 @@ class _ParametersFooter( GafferUI.PlugValueWidget ) :
 # _CodePlugValueWidget
 ##########################################################################
 
-class _CodePlugValueWidget( GafferUI.MultiLineStringPlugValueWidget ) :
+class _CodePlugValueWidget( GafferUI.PlugValueWidget ) :
 
 	def __init__( self, plug, **kw ) :
 
-		GafferUI.MultiLineStringPlugValueWidget.__init__( self, plug, **kw )
+		self.__codeWidget = GafferUI.CodeWidget( lineNumbersVisible=True )
 
-		self.textWidget().setRole( GafferUI.MultiLineTextWidget.Role.Code )
+		GafferUI.PlugValueWidget.__init__( self, self.__codeWidget, plug, **kw )
 
-		self.textWidget().dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ), scoped = False )
+		self.__codeWidget.setHighlighter( _CodeWidget._Highlighter() )
+		self.__codeWidget.setCommentPrefix( "//" )
+
+		self._addPopupMenu( self.__codeWidget )
+
+		self.__codeWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ) )
+		self.__codeWidget.dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ) )
+
+	def codeWidget( self ) :
+
+		return self.__codeWidget
+
+	def _updateFromValues( self, values, exception ) :
+
+		if len( values ) :
+			self.__codeWidget.setText( values[0] )
+
+		self.__codeWidget.setErrored( exception is not None )
+
+	def _updateFromEditable( self ) :
+
+		self.__codeWidget.setEditable( self._editable() )
+
+	def __setPlugValue( self, *unused ) :
+
+		if not self._editable() :
+			return
+
+		text = self.__codeWidget.getText()
+		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+			self.getPlug().setValue( text )
 
 	def __dropText( self, widget, dragData ) :
 
@@ -286,8 +321,8 @@ class _ErrorWidget( GafferUI.Widget ) :
 		self.__messageWidget = GafferUI.MessageWidget()
 		GafferUI.Widget.__init__( self, self.__messageWidget, **kw )
 
-		node.errorSignal().connect( Gaffer.WeakMethod( self.__error ), scoped = False )
-		node.shaderCompiledSignal().connect( Gaffer.WeakMethod( self.__shaderCompiled ), scoped = False )
+		node.errorSignal().connect( Gaffer.WeakMethod( self.__error ) )
+		node.shaderCompiledSignal().connect( Gaffer.WeakMethod( self.__shaderCompiled ) )
 
 		self.__messageWidget.setVisible( False )
 
@@ -305,19 +340,6 @@ class _ErrorWidget( GafferUI.Widget ) :
 # Plug menu
 ##########################################################################
 
-## \todo This functionality is duplicated in several places (NodeUI,
-#  BoxUI, CompoundDataPlugValueWidget). It would be better if we could
-#  just control it in one place with a "plugValueWidget:removeable"
-#  metadata value. This main reason we can't do that right now is that
-#  we'd want to register the metadata with "parameters.*", but that would
-#  match "parameters.vector.x" as well as "parameters.vector". This is
-#  a general problem we have with the metadata matching - we should make
-#  '.' unmatchable by '*'.
-def __deletePlug( plug ) :
-
-	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
-		plug.parent().removeChild( plug )
-
 def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 
 	plug = plugValueWidget.getPlug()
@@ -325,18 +347,7 @@ def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 	if not isinstance( node, GafferOSL.OSLCode ) :
 		return
 
-	if plug.parent() in ( node["parameters"], node["out"] ) :
-
-		menuDefinition.append( "/DeleteDivider", { "divider" : True } )
-		menuDefinition.append(
-			"/Delete",
-			{
-				"command" : functools.partial( __deletePlug, plug ),
-				"active" : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug )
-			}
-		)
-
-	elif plug.isSame( node["code"] ) :
+	if plug.isSame( node["code"] ) :
 
 		if len( menuDefinition.items() ) :
 			menuDefinition.prepend( "/InsertDivider", { "divider" : True } )
@@ -346,13 +357,13 @@ def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 			{
 				"subMenu" : functools.partial(
 					_CodeMenu.commonFunctionMenu,
-					command = plugValueWidget.textWidget().insertText,
-					activator = lambda : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ),
+					command = plugValueWidget.codeWidget().insertText,
+					activator = lambda : not Gaffer.MetadataAlgo.readOnly( plug ),
 				),
 			},
 		)
 
-GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu, scoped = False )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
 
 ##########################################################################
 # NodeEditor tool menu
@@ -384,8 +395,8 @@ def __exportOSLShader( nodeEditor, node ) :
 		path += ".osl"
 
 	with GafferUI.ErrorDialogue.ErrorHandler( title = "Error Exporting Shader", parentWindow = nodeEditor.ancestor( GafferUI.Window ) ) :
-		with open( path, "w" ) as f :
-			with nodeEditor.getContext() :
+		with open( path, "w", encoding = "utf-8" ) as f :
+			with nodeEditor.context() :
 				f.write( node.source( os.path.splitext( os.path.basename( path ) )[0] ) )
 
-GafferUI.NodeEditor.toolMenuSignal().connect( __toolMenu, scoped = False )
+GafferUI.NodeEditor.toolMenuSignal().connect( __toolMenu )

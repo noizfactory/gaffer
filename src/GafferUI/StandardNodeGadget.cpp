@@ -48,28 +48,319 @@
 #include "GafferUI/SpacerGadget.h"
 #include "GafferUI/StandardNodule.h"
 #include "GafferUI/Style.h"
+#include "GafferUI/ViewportGadget.h"
 
+#include "Gaffer/ComputeNode.h"
 #include "Gaffer/DependencyNode.h"
 #include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/ParallelAlgo.h"
+#include "Gaffer/PlugAlgo.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/StandardSet.h"
 #include "Gaffer/TypedObjectPlug.h"
 
-#include "IECoreGL/Selector.h"
-
 #include "IECore/MessageHandler.h"
 
-#include "OpenEXR/ImathBoxAlgo.h"
+#include "Imath/ImathBoxAlgo.h"
+
+// Don't include Qt macros that stomp over common names like "signals"
+#define QT_NO_KEYWORDS
+#include "QtCore/QTimer"
 
 #include "boost/algorithm/string/predicate.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace Gaffer;
 using namespace GafferUI;
+
+namespace {
+
+const float g_borderWidth = 0.5f;
+const float g_maxFocusWidth = 2.0f;
+
+const IECoreGL::Texture *focusIconTexture( bool focus, bool hover )
+{
+	static IECoreGL::ConstTexturePtr focusIconTextures[4] = {};
+
+	if( !focusIconTextures[0] )
+	{
+		focusIconTextures[0] = ImageGadget::loadTexture( "focusOff.png" );
+		focusIconTextures[1] = ImageGadget::loadTexture( "focusOn.png" );
+		focusIconTextures[2] = ImageGadget::loadTexture( "focusOffHover.png" );
+		focusIconTextures[3] = ImageGadget::loadTexture( "focusOnHover.png" );
+	}
+	return focusIconTextures[focus + 2 * hover].get();
+}
+
+//////////////////////////////////////////////////////////////////////////
+// FocusGadget
+//////////////////////////////////////////////////////////////////////////
+
+class FocusGadget : public Gadget
+{
+	public :
+
+		FocusGadget( StandardNodeGadget* parent )
+			:	m_oval( false ),
+				m_mouseOver( false )
+		{
+			buttonPressSignal().connect( boost::bind( &FocusGadget::buttonPressed, this, ::_1,  ::_2 ) );
+			buttonReleaseSignal().connect( boost::bind( &FocusGadget::buttonRelease, this, ::_1,  ::_2 ) );
+			enterSignal().connect( boost::bind( &FocusGadget::mouseEntered, this, ::_1,  ::_2 ) );
+			leaveSignal().connect( boost::bind( &FocusGadget::mouseLeft, this, ::_1,  ::_2 ) );
+			buttonDoubleClickSignal().connect( boost::bind( &FocusGadget::buttonDoubleClick, this, ::_1,  ::_2 ) );
+			parent->enterSignal().connect( boost::bind( &FocusGadget::nodeMouseEntered, this, ::_1,  ::_2 ) );
+			parent->leaveSignal().connect( boost::bind( &FocusGadget::nodeMouseLeft, this, ::_1,  ::_2 ) );
+
+			// FocusGadget always stays attached to its parent StandardNodeGadget, this must never change,
+			// since we later assume that parent() is a StandardNodeGadget
+			parent->addChild( this );
+		}
+
+		~FocusGadget() override
+		{
+			// Make sure we don't leave around a dangling raw pointer after we destruct
+			if( g_pendingHoveredFocus == this )
+			{
+				g_pendingHoveredFocus = nullptr;
+			}
+		}
+
+		void setOval( bool oval )
+		{
+			m_oval = oval;
+			dirty( DirtyType::Render );
+		}
+
+		bool getOval() const
+		{
+			return m_oval;
+		}
+
+		Imath::Box3f bound() const override
+		{
+			return Box3f();
+		}
+
+	protected :
+
+		void toggleFocus()
+		{
+			StandardNodeGadget* parentNodeGadget = static_cast<StandardNodeGadget*>( parent() );
+			if( ScriptNode *script = parentNodeGadget->node()->ancestor<ScriptNode>() )
+			{
+				if( script->getFocus() != parentNodeGadget->node() )
+				{
+					script->setFocus( parentNodeGadget->node() );
+				}
+				else
+				{
+					// Unfocus if we click the icon on the focussed node
+					script->setFocus( nullptr );
+				}
+			}
+		}
+
+		bool buttonPressed( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			return true;
+		}
+
+		bool buttonRelease( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			if( m_mouseOver && event.button == ButtonEvent::Left )
+			{
+				toggleFocus();
+			}
+
+			return true;
+		}
+
+		bool mouseEntered( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			m_mouseOver = true;
+			dirty( DirtyType::Render );
+			return false;
+		}
+
+		bool mouseLeft( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			m_mouseOver = false;
+			dirty( DirtyType::Render );
+			return false;
+		}
+
+		bool buttonDoubleClick( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			if( event.buttons==ButtonEvent::Left )
+			{
+				// A user might rapidly click on the focus to toggle on and off - it's more consistent if
+				// all clicks are treated the same, even if they come fast enough to be classified as a "double click"
+				toggleFocus();
+			}
+
+			return true;
+		}
+
+		bool nodeMouseEntered( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			static QTimer focusGadgetTimer;
+			static QMetaObject::Connection focusGadgetTimerCallback = focusGadgetTimer.callOnTimeout(
+				[]{
+					if( g_pendingHoveredFocus )
+					{
+						StandardNodeGadget* parentNodeGadget = static_cast<StandardNodeGadget*>( g_pendingHoveredFocus->parent() );
+						if( !parentNodeGadget )
+						{
+							IECore::msg( IECore::Msg::Error, "FocusGadget::nodeMouseEntered", "Focus gadget hover timer triggered on unparented FocusGadget" );
+							return;
+						}
+						g_hoveredFocus = g_pendingHoveredFocus;
+						g_hoveredFocusNodePosition = parentNodeGadget->getTransform();
+						g_pendingHoveredFocus->dirty( DirtyType::Render );
+					}
+				}
+			);
+			focusGadgetTimer.stop();
+			focusGadgetTimer.setSingleShot( true );
+			g_pendingHoveredFocus = this;
+			focusGadgetTimer.start( 500 );
+			return false;
+		}
+
+		bool nodeMouseLeft( GadgetPtr gadget, const ButtonEvent &event )
+		{
+			g_pendingHoveredFocus = nullptr;
+			if( g_hoveredFocus )
+			{
+				g_hoveredFocus = nullptr;
+				dirty( DirtyType::Render );
+			}
+			return false;
+		}
+
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override
+		{
+			Gadget::renderLayer( layer, style, reason );
+
+			const StandardNodeGadget* parentNodeGadget = static_cast<const StandardNodeGadget*>( parent() );
+
+			if( this == g_hoveredFocus && parentNodeGadget->getTransform() != g_hoveredFocusNodePosition )
+			{
+				// If we have moved, then we are being dragged, and we don't treat ourselves as hovered
+				// when the node is being dragged
+				g_hoveredFocus = nullptr;
+			}
+
+			bool focussed = parentNodeGadget->node()->ancestor<ScriptNode>()->getFocus() == parentNodeGadget->node();
+			if( this == g_hoveredFocus || m_mouseOver || focussed || ( reason == RenderReason::Select) )
+			{
+				Box3f b = parentNodeGadget->bound();
+
+				float borderWidth = parentNodeGadget->focusBorderWidth();
+
+				float nodeBorder = g_borderWidth;
+				float radius = sqrtf( 2.0f ) * ( borderWidth + nodeBorder ) - nodeBorder;
+
+				V2f size = V2f( radius );
+
+				V2f center;
+
+				if( m_oval )
+				{
+					const V3f s = b.size();
+					float nodeRadius = 0.5f * std::min( s.x, s.y );
+
+					float offset = (1.0f/sqrtf(2.0f)) * ( nodeRadius + radius ) - nodeRadius;
+
+					center = V2f( b.max.x + offset, b.max.y + offset);
+				}
+				else
+				{
+					center = V2f( b.max.x + borderWidth, b.max.y + borderWidth );
+
+				}
+
+				if( !isSelectionRender( reason ) )
+				{
+					style->renderImage( Box2f( center - size, center + size ), focusIconTexture( focussed, m_mouseOver) );
+				}
+				else
+				{
+					if( reason == RenderReason::DragSelect )
+					{
+						// Not a target for dragging
+						return;
+					}
+
+					// Render a circle for selection, instead of an icon which is treated as square by
+					// the selection code
+					style->renderFrame( Box2f( center, center ), size.x );
+				}
+			}
+		}
+
+		unsigned layerMask() const override
+		{
+			return (int)GraphLayer::Highlighting;
+		}
+
+		Imath::Box3f renderBound() const override
+		{
+			// There should be a simple heuristic that would give a max bound, but it's actually bit
+			// tricky to find one, so the quickest approach is just to duplicate the logic from renderLayer
+			float nodeBorder = g_borderWidth;
+			float maxRadius = sqrtf( 2.0f ) * ( g_maxFocusWidth + nodeBorder ) - nodeBorder;
+			V3f center;
+			const StandardNodeGadget* parentNodeGadget = static_cast<const StandardNodeGadget*>( parent() );
+			Box3f b = parentNodeGadget->bound();
+			if( m_oval )
+			{
+				const V3f s = b.size();
+				float nodeRadius = 0.5f * std::min( s.x, s.y );
+
+				float offset = (1.0f/sqrtf(2.0f)) * ( nodeRadius + maxRadius ) - nodeRadius;
+
+				center = V3f( b.max.x + offset, b.max.y + offset, 0.0f );
+			}
+			else
+			{
+				center = V3f( b.max.x + g_maxFocusWidth, b.max.y + g_maxFocusWidth, 0.0f );
+
+			}
+
+			return Box3f( center - V3f( maxRadius ), center + V3f( maxRadius ) );
+		}
+
+	private :
+
+		bool m_oval;
+		bool m_mouseOver;
+
+		bool buttonPress( GadgetPtr gadget, const ButtonEvent &event );
+
+		// A focus gadget that the cursor is currently over, but we aren't going to show it as hovered
+		// until a time duration has elapsed.  Must be cleared if the FocusGadget it points to is destructed
+		static FocusGadget *g_pendingHoveredFocus;
+
+		// This pointer is never dereferenced, only compared to, so we don't need to worry about cleaning it up
+		static FocusGadget *g_hoveredFocus;
+
+		// The position of the node the hoveredFocus is attached to - if this node is moved, that means we are
+		// dragging the node currently, and we will no longer treat it as hovered.
+		static M44f g_hoveredFocusNodePosition;
+
+};
+
+FocusGadget *FocusGadget::g_pendingHoveredFocus = nullptr;
+FocusGadget *FocusGadget::g_hoveredFocus = nullptr;
+M44f FocusGadget::g_hoveredFocusNodePosition;
+
+} // namespace
 
 //////////////////////////////////////////////////////////////////////////
 // ErrorGadget implementation
@@ -91,6 +382,10 @@ class StandardNodeGadget::ErrorGadget : public Gadget
 		{
 			PlugEntry &entry = m_errors[plug];
 			entry.error = error;
+			if( auto tracker = ContextTracker::acquireForFocus( plug.get() ) )
+			{
+				entry.trackedContext = tracker->context( plug.get() )->hash();
+			}
 			if( !entry.parentChangedConnection.connected() )
 			{
 				entry.parentChangedConnection = plug->parentChangedSignal().connect( boost::bind( &ErrorGadget::plugParentChanged, this, ::_1 ) );
@@ -101,6 +396,27 @@ class StandardNodeGadget::ErrorGadget : public Gadget
 		void removeError( const Plug *plug )
 		{
 			m_errors.erase( plug );
+			m_image->setVisible( m_errors.size() );
+		}
+
+		void removeStaleErrors( const ContextTracker *tracker )
+		{
+			// We call `removeError()` whenever a plug is dirtied, but that can
+			// still leave errors lingering if the original error was a problem
+			// of _context_ rather than plug values. So when the tracked context
+			// changes, we remove any errors which occurred within a different
+			// tracked context.
+			for( auto it = m_errors.begin(); it != m_errors.end(); )
+			{
+				if( it->second.trackedContext != tracker->context( it->first.get() )->hash() )
+				{
+					it = m_errors.erase( it );
+				}
+				else
+				{
+					++it;
+				}
+			}
 			m_image->setVisible( m_errors.size() );
 		}
 
@@ -143,10 +459,11 @@ class StandardNodeGadget::ErrorGadget : public Gadget
 		struct PlugEntry
 		{
 			std::string error;
-			boost::signals::scoped_connection parentChangedConnection;
+			IECore::MurmurHash trackedContext;
+			Signals::ScopedConnection parentChangedConnection;
 		};
 
-		typedef std::map<ConstPlugPtr, PlugEntry> PlugErrors;
+		using PlugErrors = std::map<ConstPlugPtr, PlugEntry>;
 		PlugErrors m_errors;
 
 };
@@ -200,6 +517,39 @@ void connect( const DragDropEvent &event, ConnectionCreator *destination )
 	}
 }
 
+bool hasStaticValue( const Gaffer::BoolPlug *plug )
+{
+	if( !PlugAlgo::dependsOnCompute( plug ) )
+	{
+		return true;
+	}
+
+	// Plug depends on a compute, but maybe we can determine
+	// that the compute itself is disabled, and will output
+	// a default value for the plug.
+
+	auto source = plug->source<ValuePlug>();
+	if( source == plug || source->direction() != Plug::Out )
+	{
+		return false;
+	}
+
+	auto sourceNode = IECore::runTimeCast<const DependencyNode>( source->node() );
+	if( !sourceNode )
+	{
+		return false;
+	}
+
+	auto sourceEnabledPlug = sourceNode->enabledPlug();
+	if( !sourceEnabledPlug || !hasStaticValue( sourceEnabledPlug ) || sourceEnabledPlug->getValue() )
+	{
+		return false;
+	}
+
+	// Node will just output a default value for the plug.
+	return !sourceNode->correspondingInput( source );
+}
+
 } // namespace
 
 //////////////////////////////////////////////////////////////////////////
@@ -210,83 +560,41 @@ GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( StandardNodeGadget );
 
 NodeGadget::NodeGadgetTypeDescription<StandardNodeGadget> StandardNodeGadget::g_nodeGadgetTypeDescription( Gaffer::Node::staticTypeId() );
 
-static const float g_borderWidth = 0.5f;
+static const float g_defaultMinWidth = 10.0f;
 static IECore::InternedString g_minWidthKey( "nodeGadget:minWidth"  );
 static IECore::InternedString g_paddingKey( "nodeGadget:padding"  );
 static IECore::InternedString g_colorKey( "nodeGadget:color" );
 static IECore::InternedString g_shapeKey( "nodeGadget:shape" );
+static IECore::InternedString g_focusGadgetVisibleKey( "nodeGadget:focusGadgetVisible" );
+static IECore::InternedString g_inputNoduleLabelsVisibleKey( "nodeGadget:inputNoduleLabelsVisible" );
+static IECore::InternedString g_outputNoduleLabelsVisibleKey( "nodeGadget:outputNoduleLabelsVisible" );
 static IECore::InternedString g_iconKey( "icon" );
 static IECore::InternedString g_iconScaleKey( "iconScale" );
 static IECore::InternedString g_errorGadgetName( "__error" );
 
 StandardNodeGadget::StandardNodeGadget( Gaffer::NodePtr node )
+	: StandardNodeGadget( node, false )
+{
+}
+
+
+// \todo - Needing an auxiliary argument here isn't great - it's overly tight binding with AuxiliaryNodeGadget,
+// and it should be possible to make NodeGadget's independent of StandardNodeGadget.  The right solution is
+// probably to move more functionality for dealing with Focus and such into NodeGadget, so that other Gadgets
+// can optionally use it without needing to inherit from StandardNodeGadget
+StandardNodeGadget::StandardNodeGadget( Gaffer::NodePtr node, bool auxiliary  )
 	:	NodeGadget( node ),
-		m_nodeEnabled( true ),
+		m_strikeThroughState( StrikeThroughState::Invisible ),
 		m_labelsVisibleOnHover( true ),
 		m_dragDestination( nullptr ),
 		m_userColor( 0 ),
-		m_oval( false )
+		m_oval( false ),
+		m_auxiliary( auxiliary ),
+		m_focusGadget( new FocusGadget( this ) )
 {
 
 	// build our ui structure
 	////////////////////////////////////////////////////////
-
-	float minWidth = 10.0f;
-	if( IECore::ConstFloatDataPtr d = Metadata::value<IECore::FloatData>( node.get(), g_minWidthKey ) )
-	{
-		minWidth = d->readable();
-	}
-
-	// four containers for nodules - one each for the top, bottom, left and right.
-	// these contain spacers at either end to prevent nodules being placed in
-	// the corners of the node gadget, and also to guarantee a minimim width for the
-	// vertical containers and a minimum height for the horizontal ones.
-
-	LinearContainerPtr topNoduleContainer = new LinearContainer( "topNoduleContainer", LinearContainer::X );
-	topNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
-	topNoduleContainer->addChild( new NoduleLayout( node, "top" ) );
-	topNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
-
-	LinearContainerPtr bottomNoduleContainer = new LinearContainer( "bottomNoduleContainer", LinearContainer::X );
-	bottomNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
-	bottomNoduleContainer->addChild( new NoduleLayout( node, "bottom" ) );
-	bottomNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
-
-	LinearContainerPtr leftNoduleContainer = new LinearContainer( "leftNoduleContainer", LinearContainer::Y, LinearContainer::Centre, 0.0f, LinearContainer::Decreasing );
-	leftNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
-	leftNoduleContainer->addChild( new NoduleLayout( node, "left" ) );
-	leftNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
-
-	LinearContainerPtr rightNoduleContainer = new LinearContainer( "rightNoduleContainer", LinearContainer::Y, LinearContainer::Centre, 0.0f, LinearContainer::Decreasing );
-	rightNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
-	rightNoduleContainer->addChild( new NoduleLayout( node, "right" ) );
-	rightNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
-
-	// column - this is our outermost structuring container
-
-	LinearContainerPtr column = new LinearContainer(
-		"column",
-		LinearContainer::Y,
-		LinearContainer::Centre,
-		0.0f,
-		LinearContainer::Decreasing
-	);
-
-	column->addChild( topNoduleContainer );
-
-	LinearContainerPtr row = new LinearContainer(
-		"row",
-		LinearContainer::X,
-		LinearContainer::Centre,
-		0.0f
-	);
-
-	column->addChild( row );
-
-	// central row - this holds our main contents, with the
-	// nodule containers surrounding it.
-
-	row->addChild( leftNoduleContainer );
 
 	LinearContainerPtr contentsColumn = new LinearContainer(
 		"contentsColumn",
@@ -295,7 +603,6 @@ StandardNodeGadget::StandardNodeGadget( Gaffer::NodePtr node )
 		0.0f,
 		LinearContainer::Decreasing
 	);
-	row->addChild( contentsColumn );
 
 	LinearContainerPtr contentsRow = new LinearContainer(
 		"paddingRow",
@@ -312,14 +619,77 @@ StandardNodeGadget::StandardNodeGadget( Gaffer::NodePtr node )
 	contentsContainer->setName( "contentsContainer" );
 	contentsRow->addChild( contentsContainer );
 
-	contentsColumn->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( minWidth, 0, 0 ) ) ) );
+	contentsColumn->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( g_defaultMinWidth, 0, 0 ) ) ) );
 	contentsColumn->addChild( contentsRow );
-	contentsColumn->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( minWidth, 0, 0 ) ) ) );
+	contentsColumn->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( g_defaultMinWidth, 0, 0 ) ) ) );
 
-	row->addChild( rightNoduleContainer );
-	column->addChild( bottomNoduleContainer );
 
-	addChild( column );
+	if( auxiliary )
+	{
+		addChild( contentsColumn );
+	}
+	else
+	{
+		// four containers for nodules - one each for the top, bottom, left and right.
+		// these contain spacers at either end to prevent nodules being placed in
+		// the corners of the node gadget, and also to guarantee a minimim width for the
+		// vertical containers and a minimum height for the horizontal ones.
+
+		LinearContainerPtr topNoduleContainer = new LinearContainer( "topNoduleContainer", LinearContainer::X );
+		LinearContainerPtr bottomNoduleContainer = new LinearContainer( "bottomNoduleContainer", LinearContainer::X );
+		LinearContainerPtr leftNoduleContainer = new LinearContainer( "leftNoduleContainer", LinearContainer::Y, LinearContainer::Centre, 0.0f, LinearContainer::Decreasing );
+		LinearContainerPtr rightNoduleContainer = new LinearContainer( "rightNoduleContainer", LinearContainer::Y, LinearContainer::Centre, 0.0f, LinearContainer::Decreasing );
+
+		topNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
+		topNoduleContainer->addChild( new NoduleLayout( node, "top" ) );
+		topNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
+
+		bottomNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
+		bottomNoduleContainer->addChild( new NoduleLayout( node, "bottom" ) );
+		bottomNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 2, 1, 0 ) ) ) );
+
+		leftNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
+		leftNoduleContainer->addChild( new NoduleLayout( node, "left" ) );
+		leftNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
+
+		rightNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
+		rightNoduleContainer->addChild( new NoduleLayout( node, "right" ) );
+		rightNoduleContainer->addChild( new SpacerGadget( Box3f( V3f( 0 ), V3f( 1, 0.2, 0 ) ) ) );
+
+		// column - this is our outermost structuring container
+
+		LinearContainerPtr column = new LinearContainer(
+			"column",
+			LinearContainer::Y,
+			LinearContainer::Centre,
+			0.0f,
+			LinearContainer::Decreasing
+		);
+
+		column->addChild( topNoduleContainer );
+
+		LinearContainerPtr row = new LinearContainer(
+			"row",
+			LinearContainer::X,
+			LinearContainer::Centre,
+			0.0f
+		);
+
+		column->addChild( row );
+
+		// central row - this holds our main contents, with the
+		// nodule containers surrounding it.
+
+		row->addChild( leftNoduleContainer );
+
+
+		row->addChild( contentsColumn );
+		row->addChild( rightNoduleContainer );
+		column->addChild( bottomNoduleContainer );
+
+		addChild( column );
+	}
+
 	setContents( new NameGadget( node ) );
 
 	// connect to the signals we need in order to operate
@@ -332,24 +702,30 @@ StandardNodeGadget::StandardNodeGadget( Gaffer::NodePtr node )
 	dragMoveSignal().connect( boost::bind( &StandardNodeGadget::dragMove, this, ::_1, ::_2 ) );
 	dragLeaveSignal().connect( boost::bind( &StandardNodeGadget::dragLeave, this, ::_1, ::_2 ) );
 	dropSignal().connect( boost::bind( &StandardNodeGadget::drop, this, ::_1, ::_2 ) );
+	noduleAddedSignal().connect( boost::bind( &StandardNodeGadget::noduleAdded, this, ::_2 ) );
 
 	for( int e = FirstEdge; e <= LastEdge; e++ )
 	{
 		NoduleLayout *l = noduleLayout( (Edge)e );
-		l->enterSignal().connect( boost::bind( &StandardNodeGadget::enter, this, ::_1 ) );
-		l->leaveSignal().connect( boost::bind( &StandardNodeGadget::leave, this, ::_1 ) );
+		if( l )
+		{
+			l->enterSignal().connect( boost::bind( &StandardNodeGadget::enter, this, ::_1 ) );
+			l->leaveSignal().connect( boost::bind( &StandardNodeGadget::leave, this, ::_1 ) );
+		}
 	}
 
-	Metadata::nodeValueChangedSignal().connect( boost::bind( &StandardNodeGadget::nodeMetadataChanged, this, ::_1, ::_2, ::_3 ) );
+	Metadata::nodeValueChangedSignal( node.get() ).connect( boost::bind( &StandardNodeGadget::nodeMetadataChanged, this, ::_2 ) );
 
 	// do our first update
 	////////////////////////////////////////////////////////
 
 	updateUserColor();
+	updateMinWidth();
 	updatePadding();
-	updateNodeEnabled();
 	updateIcon();
 	updateShape();
+	updateFocusGadgetVisibility();
+	applyNoduleLabelVisibilityMetadata();
 }
 
 StandardNodeGadget::~StandardNodeGadget()
@@ -358,7 +734,7 @@ StandardNodeGadget::~StandardNodeGadget()
 
 Imath::Box3f StandardNodeGadget::bound() const
 {
-	Box3f b = getChild<Gadget>( 0 )->bound();
+	Box3f b = getChild<Gadget>( 1 )->bound();
 
 	// cheat a little - shave a bit off to make it possible to
 	// select the node by having the drag region cover only the
@@ -369,16 +745,16 @@ Imath::Box3f StandardNodeGadget::bound() const
 	return b;
 }
 
-void StandardNodeGadget::doRenderLayer( Layer layer, const Style *style ) const
+void StandardNodeGadget::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
-	NodeGadget::doRenderLayer( layer, style );
+	NodeGadget::renderLayer( layer, style, reason );
 
 	switch( layer )
 	{
 		case GraphLayer::Nodes :
 		{
 			// decide what state we're rendering in
-			Style::State state = getHighlighted() ? Style::HighlightedState : Style::NormalState;
+			Style::State state = getHighlighted() ? Style::HighlightedState : ( m_active ? Style::NormalState : Style::DisabledState );
 
 			// draw our background frame
 			const Box3f b = bound();
@@ -393,21 +769,63 @@ void StandardNodeGadget::doRenderLayer( Layer layer, const Style *style ) const
 				Box2f( V2f( b.min.x, b.min.y ) + V2f( borderWidth ), V2f( b.max.x, b.max.y ) - V2f( borderWidth ) ),
 				borderWidth,
 				state,
-				m_userColor.get_ptr()
+				userColor()
 			);
 
 			break;
 		}
-		case GraphLayer::Overlay :
+		case GraphLayer::Highlighting :
 		{
 			const Box3f b = bound();
 
-			if( !m_nodeEnabled && !IECoreGL::Selector::currentSelector() )
+			if( m_strikeThroughState != StrikeThroughState::Invisible && !isSelectionRender( reason ) )
 			{
 				/// \todo Replace renderLine() with a specific method (renderNodeStrikeThrough?) on the Style class
 				/// so that styles can do customised drawing based on knowledge of what is being drawn.
-				style->renderLine( IECore::LineSegment3f( V3f( b.min.x, b.min.y, 0 ), V3f( b.max.x, b.max.y, 0 ) ) );
+				Imath::Color4f c;
+				if( m_strikeThroughState == StrikeThroughState::Static )
+				{
+					c = m_active ? Color4f( 0.1f, 0.1f, 0.1f, 1.0f ) : Color4f( 0.2f, 0.2f, 0.2f, 1.0f );
+				}
+				else
+				{
+					c = Color4f( 240 / 255.0, 220 / 255.0, 40 / 255.0, 1.0f );
+				}
+
+				style->renderLine(
+					IECore::LineSegment3f( V3f( b.min.x, b.min.y, 0 ), V3f( b.max.x, b.max.y, 0 ) ),
+					0.5f, &c
+				);
 			}
+			break;
+		}
+		case GraphLayer::OverBackdrops :
+		{
+			if( isSelectionRender( reason ) )
+			{
+				break; // Focus highlight not selectable
+			}
+			if( node()->ancestor<ScriptNode>()->getFocus() != node() )
+			{
+				break;
+			}
+
+			Box3f b = bound();
+			float borderWidth = 0;
+
+			if( m_oval )
+			{
+				const V3f s = b.size();
+				borderWidth = std::min( s.x, s.y ) / 2.0f;
+				b.min += V3f( borderWidth );
+				b.max -= V3f( borderWidth );
+			}
+
+			style->renderNodeFocusRegion(
+				Box2f( V2f( b.min.x, b.min.y ), V2f( b.max.x, b.max.y ) ),
+				borderWidth + focusBorderWidth()
+			);
+
 			break;
 		}
 		default :
@@ -415,14 +833,68 @@ void StandardNodeGadget::doRenderLayer( Layer layer, const Style *style ) const
 	}
 }
 
-bool StandardNodeGadget::hasLayer( Layer layer ) const
+float StandardNodeGadget::focusBorderWidth() const
 {
-	return layer != GraphLayer::Backdrops;
+	return 0.8;
+}
+
+void StandardNodeGadget::setHighlighted( bool highlighted )
+{
+	NodeGadget::setHighlighted( highlighted );
+	updateTextDimming();
+}
+
+void StandardNodeGadget::updateFromContextTracker( const ContextTracker *contextTracker )
+{
+	NodeGadget::updateFromContextTracker( contextTracker );
+	updateTextDimming();
+	if( contextTracker->isTracked( node() ) )
+	{
+		if( auto dependencyNode = IECore::runTimeCast<DependencyNode>( node() ) )
+		{
+			m_nodeEnabledInContextTracker = contextTracker->isEnabled( dependencyNode );
+		}
+		else
+		{
+			m_nodeEnabledInContextTracker = true;
+		}
+	}
+	else
+	{
+		m_nodeEnabledInContextTracker = std::nullopt;
+	}
+	updateStrikeThroughState();
+	if( auto g = errorGadget( /* createIfMissing = */ false ) )
+	{
+		g->removeStaleErrors( contextTracker );
+	}
+}
+
+void StandardNodeGadget::updateTextDimming()
+{
+	if( auto text = IECore::runTimeCast<TextGadget>( getContents() ) )
+	{
+		text->setDimmed( !( m_active || getHighlighted() ) );
+	}
+}
+
+unsigned StandardNodeGadget::layerMask() const
+{
+	return GraphLayer::Nodes | GraphLayer::Highlighting | GraphLayer::OverBackdrops;
+}
+
+Imath::Box3f StandardNodeGadget::renderBound() const
+{
+	Box3f b = bound();
+	return Box3f(
+		b.min - V3f( g_maxFocusWidth, g_maxFocusWidth, 0.f ),
+		b.max + V3f( g_maxFocusWidth, g_maxFocusWidth, 0.f )
+	);
 }
 
 const Imath::Color3f *StandardNodeGadget::userColor() const
 {
-	return m_userColor.get_ptr();
+	return m_userColor ? &m_userColor.value() : nullptr;
 }
 
 Nodule *StandardNodeGadget::nodule( const Gaffer::Plug *plug )
@@ -430,9 +902,12 @@ Nodule *StandardNodeGadget::nodule( const Gaffer::Plug *plug )
 	for( int e = FirstEdge; e <= LastEdge; e++ )
 	{
 		NoduleLayout *l = noduleLayout( (Edge)e );
-		if( Nodule *n = l->nodule( plug ) )
+		if( l )
 		{
-			return n;
+			if( Nodule *n = l->nodule( plug ) )
+			{
+				return n;
+			}
 		}
 	}
 	return nullptr;
@@ -446,6 +921,11 @@ const Nodule *StandardNodeGadget::nodule( const Gaffer::Plug *plug ) const
 
 Imath::V3f StandardNodeGadget::connectionTangent( const ConnectionCreator *creator ) const
 {
+	if( m_auxiliary )
+	{
+		return V3f( 0, 0, 0 );
+	}
+
 	if( noduleContainer( LeftEdge )->isAncestorOf( creator ) )
 	{
 		return V3f( -1, 0, 0 );
@@ -466,7 +946,12 @@ Imath::V3f StandardNodeGadget::connectionTangent( const ConnectionCreator *creat
 
 LinearContainer *StandardNodeGadget::noduleContainer( Edge edge )
 {
-	Gadget *column = getChild<Gadget>( 0 );
+	if( m_auxiliary )
+	{
+		return nullptr;
+	}
+
+	Gadget *column = getChild<Gadget>( 1 );
 
 	if( edge == TopEdge )
 	{
@@ -495,21 +980,37 @@ const LinearContainer *StandardNodeGadget::noduleContainer( Edge edge ) const
 
 NoduleLayout *StandardNodeGadget::noduleLayout( Edge edge )
 {
-	return noduleContainer( edge )->getChild<NoduleLayout>( 1 );
+	return m_auxiliary ? nullptr : noduleContainer( edge )->getChild<NoduleLayout>( 1 );
 }
 
 const NoduleLayout *StandardNodeGadget::noduleLayout( Edge edge ) const
 {
-	return noduleContainer( edge )->getChild<NoduleLayout>( 1 );
+	return m_auxiliary ? nullptr : noduleContainer( edge )->getChild<NoduleLayout>( 1 );
+}
+
+LinearContainer *StandardNodeGadget::contentsColumn()
+{
+	if( m_auxiliary )
+	{
+		return getChild<LinearContainer>( 1 );
+	}
+	else
+	{
+		return getChild<Gadget>( 1 ) // column
+			->getChild<Gadget>( 1 ) // row
+			->getChild<LinearContainer>( 1 )
+		;
+	}
+}
+
+const LinearContainer *StandardNodeGadget::contentsColumn() const
+{
+	return const_cast<StandardNodeGadget *>( this )->contentsColumn();
 }
 
 LinearContainer *StandardNodeGadget::paddingRow()
 {
-	return getChild<Gadget>( 0 ) // column
-		->getChild<Gadget>( 1 ) // row
-		->getChild<Gadget>( 1 ) // contentsColumn
-		->getChild<LinearContainer>( 1 )
-	;
+	return contentsColumn()->getChild<LinearContainer>( 1 );
 }
 
 const LinearContainer *StandardNodeGadget::paddingRow() const
@@ -554,6 +1055,11 @@ const Gadget *StandardNodeGadget::getContents() const
 
 void StandardNodeGadget::setEdgeGadget( Edge edge, GadgetPtr gadget )
 {
+	if( m_auxiliary )
+	{
+		return;
+	}
+
 	GadgetPtr previous = getEdgeGadget( edge );
 	if( previous == gadget )
 	{
@@ -582,6 +1088,11 @@ void StandardNodeGadget::setEdgeGadget( Edge edge, GadgetPtr gadget )
 
 Gadget *StandardNodeGadget::getEdgeGadget( Edge edge )
 {
+	if( m_auxiliary )
+	{
+		return nullptr;
+	}
+
 	LinearContainer *c = noduleContainer( edge );
 	const size_t s = c->children().size();
 	if( s != 4 )
@@ -594,6 +1105,11 @@ Gadget *StandardNodeGadget::getEdgeGadget( Edge edge )
 
 const Gadget *StandardNodeGadget::getEdgeGadget( Edge edge ) const
 {
+	if( m_auxiliary )
+	{
+		return nullptr;
+	}
+
 	const LinearContainer *c = noduleContainer( edge );
 	return c->getChild<Gadget>( c->children().size() - 1 );
 }
@@ -610,7 +1126,7 @@ bool StandardNodeGadget::getLabelsVisibleOnHover() const
 
 void StandardNodeGadget::plugDirtied( const Gaffer::Plug *plug )
 {
-	updateNodeEnabled( plug );
+	updateStrikeThroughState( plug );
 	if( ErrorGadget *e = errorGadget( /* createIfMissing = */ false ) )
 	{
 		e->removeError( plug );
@@ -621,7 +1137,7 @@ void StandardNodeGadget::enter( Gadget *gadget )
 {
 	if( m_labelsVisibleOnHover )
 	{
-		for( RecursiveStandardNoduleIterator it( gadget  ); !it.done(); ++it )
+		for( StandardNodule::RecursiveIterator it( gadget  ); !it.done(); ++it )
 		{
 			(*it)->setLabelVisible( true );
 		}
@@ -632,10 +1148,7 @@ void StandardNodeGadget::leave( Gadget *gadget )
 {
 	if( m_labelsVisibleOnHover )
 	{
-		for( RecursiveStandardNoduleIterator it( gadget  ); !it.done(); ++it )
-		{
-			(*it)->setLabelVisible( false );
-		}
+		applyNoduleLabelVisibilityMetadata();
 	}
 }
 
@@ -646,7 +1159,7 @@ bool StandardNodeGadget::dragEnter( GadgetPtr gadget, const DragDropEvent &event
 	{
 		// Display the labels for all the compatible nodules so the
 		// user can see their options.
-		for( RecursiveStandardNoduleIterator it( this ); !it.done(); ++it )
+		for( StandardNodule::RecursiveIterator it( this ); !it.done(); ++it )
 		{
 			(*it)->setLabelVisible( canConnect( event, it->get() ) );
 		}
@@ -690,10 +1203,7 @@ bool StandardNodeGadget::dragLeave( GadgetPtr gadget, const DragDropEvent &event
 	if( m_dragDestination != event.destinationGadget )
 	{
 		m_dragDestination->setHighlighted( false );
-		for( RecursiveStandardNoduleIterator it( this ); !it.done(); ++it )
-		{
-			(*it)->setLabelVisible( false );
-		}
+		applyNoduleLabelVisibilityMetadata();
 	}
 	m_dragDestination = nullptr;
 
@@ -710,12 +1220,23 @@ bool StandardNodeGadget::drop( GadgetPtr gadget, const DragDropEvent &event )
 	connect( event, m_dragDestination );
 
 	m_dragDestination->setHighlighted( false );
-	for( RecursiveStandardNoduleIterator it( this ); !it.done(); ++it )
-	{
-		(*it)->setLabelVisible( false );
-	}
+	applyNoduleLabelVisibilityMetadata();
+
 	m_dragDestination = nullptr;
 	return true;
+}
+
+void StandardNodeGadget::noduleAdded( Nodule *nodule )
+{
+	if( auto standardNodule = IECore::runTimeCast<StandardNodule>( nodule ) )
+	{
+		IECore::ConstBoolDataPtr d = standardNodule->plug()->direction() == Plug::Direction::In ?
+			Gaffer::Metadata::value<IECore::BoolData>( node(), g_inputNoduleLabelsVisibleKey ) :
+			Gaffer::Metadata::value<IECore::BoolData>( node(), g_outputNoduleLabelsVisibleKey )
+		;
+
+		standardNodule->setLabelVisible( d ? d->readable() : false );
+	}
 }
 
 ConnectionCreator *StandardNodeGadget::closestDragDestination( const DragDropEvent &event ) const
@@ -727,9 +1248,9 @@ ConnectionCreator *StandardNodeGadget::closestDragDestination( const DragDropEve
 	}
 
 	ConnectionCreator *result = nullptr;
-	float maxDist = Imath::limits<float>::max();
+	float maxDist = std::numeric_limits<float>::max();
 
-	for( RecursiveConnectionCreatorIterator it( this ); !it.done(); it++ )
+	for( ConnectionCreator::RecursiveIterator it( this ); !it.done(); it++ )
 	{
 		if( !(*it)->getVisible() )
 		{
@@ -759,24 +1280,18 @@ ConnectionCreator *StandardNodeGadget::closestDragDestination( const DragDropEve
 	return result;
 }
 
-void StandardNodeGadget::nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore::InternedString key, const Gaffer::Node *node )
+void StandardNodeGadget::nodeMetadataChanged( IECore::InternedString key )
 {
-	if( node && node != this->node() )
-	{
-		return;
-	}
-
-	if( !this->node()->isInstanceOf( nodeTypeId ) )
-	{
-		return;
-	}
-
 	if( key == g_colorKey )
 	{
 		if( updateUserColor() )
 		{
- 			requestRender();
+			dirty( DirtyType::Render );
 		}
+	}
+	else if( key == g_minWidthKey )
+	{
+		updateMinWidth();
 	}
 	else if( key == g_paddingKey )
 	{
@@ -790,14 +1305,22 @@ void StandardNodeGadget::nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore:
 	{
 		if( updateShape() )
 		{
-			requestRender();
+			dirty( DirtyType::Render );
 		}
+	}
+	else if( key == g_focusGadgetVisibleKey )
+	{
+		updateFocusGadgetVisibility();
+	}
+	else if( key == g_inputNoduleLabelsVisibleKey || key == g_outputNoduleLabelsVisibleKey )
+	{
+		applyNoduleLabelVisibilityMetadata();
 	}
 }
 
 bool StandardNodeGadget::updateUserColor()
 {
-	boost::optional<Color3f> c;
+	std::optional<Color3f> c;
 	if( IECore::ConstColor3fDataPtr d = Metadata::value<IECore::Color3fData>( node(), g_colorKey ) )
 	{
 		c = d->readable();
@@ -812,6 +1335,20 @@ bool StandardNodeGadget::updateUserColor()
 	return true;
 }
 
+void StandardNodeGadget::updateMinWidth()
+{
+	float minWidth = g_defaultMinWidth;
+	if( IECore::ConstFloatDataPtr d = Metadata::value<IECore::FloatData>( node(), g_minWidthKey ) )
+	{
+		minWidth = d->readable();
+	}
+
+	Gadget *contentsColumn = this->contentsColumn();
+	const Box3f size( V3f( 0 ), V3f( minWidth, 0, 0 ) );
+	contentsColumn->getChild<SpacerGadget>( 0 )->setSize( size );
+	contentsColumn->getChild<SpacerGadget>( 2 )->setSize( size );
+}
+
 void StandardNodeGadget::updatePadding()
 {
 	float padding = 1.0f;
@@ -823,18 +1360,12 @@ void StandardNodeGadget::updatePadding()
 	paddingRow()->setPadding( Box3f( V3f( -padding ), V3f( padding ) ) );
 }
 
-void StandardNodeGadget::updateNodeEnabled( const Gaffer::Plug *dirtiedPlug )
+void StandardNodeGadget::updateStrikeThroughState( const Gaffer::Plug *dirtiedPlug )
 {
-	DependencyNode *dependencyNode = IECore::runTimeCast<DependencyNode>( node() );
-	if( !dependencyNode )
+	const BoolPlug *enabledPlug = nullptr;
+	if( auto dependencyNode = IECore::runTimeCast<DependencyNode>( node() ) )
 	{
-		return;
-	}
-
-	const Gaffer::BoolPlug *enabledPlug = dependencyNode->enabledPlug();
-	if( !enabledPlug )
-	{
-		return;
+		enabledPlug = dependencyNode->enabledPlug();
 	}
 
 	if( dirtiedPlug && dirtiedPlug != enabledPlug )
@@ -842,25 +1373,48 @@ void StandardNodeGadget::updateNodeEnabled( const Gaffer::Plug *dirtiedPlug )
 		return;
 	}
 
-	bool enabled = true;
-	try
+	StrikeThroughState strikeThroughState = StrikeThroughState::Invisible;
+	if( enabledPlug )
 	{
-		enabled = enabledPlug->getValue();
-	}
-	catch( const std::exception &e )
-	{
-		// The error will be reported via Node::errorSignal() anyway.
-		return;
+		if( hasStaticValue( enabledPlug ) )
+		{
+			// We can evaluate the `enabledPlug` value directly without
+			// triggering a compute and blocking the UI while it completes.
+			// This gives us the fastest update.
+			if( !enabledPlug->getValue() )
+			{
+				strikeThroughState = StrikeThroughState::Static;
+			}
+		}
+		else if( m_nodeEnabledInContextTracker ) // Node is tracked
+		{
+			// ContextTracker has computed the enabled state for us in
+			// a background task.
+			if( dirtiedPlug )
+			{
+				// Wait for async ContextTracker update, to avoid showing
+				// a stale value in the meantime.
+				return;
+			}
+			if( !*m_nodeEnabledInContextTracker )
+			{
+				strikeThroughState = StrikeThroughState::Dynamic;
+			}
+		}
+		else
+		{
+			// State depends on a compute, and ContextTracker isn't tracking
+			// this node. We don't want to hang the UI launching the compute,
+			// and because the node isn't tracked, we don't even know what
+			// context to perform it in anyway.
+		}
 	}
 
-
-	if( enabled == m_nodeEnabled )
+	if( strikeThroughState != m_strikeThroughState )
 	{
-		return;
+		m_strikeThroughState = strikeThroughState;
+		dirty( DirtyType::Render );
 	}
-
-	m_nodeEnabled = enabled;
-	requestRender();
 }
 
 void StandardNodeGadget::updateIcon()
@@ -896,16 +1450,53 @@ void StandardNodeGadget::updateIcon()
 bool StandardNodeGadget::updateShape()
 {
 	bool oval = false;
-	if( IECore::ConstStringDataPtr s = Metadata::value<IECore::StringData>( node(), g_shapeKey ) )
+	if( m_auxiliary )
 	{
-		oval = s->readable() == "oval";
+		oval = true;
 	}
+	else
+	{
+		if( IECore::ConstStringDataPtr s = Metadata::value<IECore::StringData>( node(), g_shapeKey ) )
+		{
+			oval = s->readable() == "oval";
+		}
+	}
+
 	if( oval == m_oval )
 	{
 		return false;
 	}
 	m_oval = oval;
+	static_cast<FocusGadget *>( m_focusGadget.get() )->setOval( oval );
 	return true;
+}
+
+void StandardNodeGadget::updateFocusGadgetVisibility()
+{
+	auto d = Metadata::value<IECore::BoolData>( node(), g_focusGadgetVisibleKey );
+	m_focusGadget->setVisible( !d || d->readable() );
+}
+
+void StandardNodeGadget::applyNoduleLabelVisibilityMetadata()
+{
+	bool inputVisible = false;
+	if( IECore::ConstBoolDataPtr d = Gaffer::Metadata::value<IECore::BoolData>( node(), g_inputNoduleLabelsVisibleKey ) )
+	{
+		inputVisible = d->readable();
+	}
+
+	bool outputVisible = false;
+	if( IECore::ConstBoolDataPtr d = Gaffer::Metadata::value<IECore::BoolData>( node(), g_outputNoduleLabelsVisibleKey ) )
+	{
+		outputVisible = d->readable();
+	}
+
+	for( StandardNodule::RecursiveIterator it( this ); !it.done(); ++it )
+	{
+		(*it)->setLabelVisible(
+			(*it)->plug()->direction() == Plug::Direction::In ? inputVisible : outputVisible
+		);
+	}
 }
 
 StandardNodeGadget::ErrorGadget *StandardNodeGadget::errorGadget( bool createIfMissing )

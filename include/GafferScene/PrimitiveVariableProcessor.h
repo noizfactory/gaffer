@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_PRIMITIVEVARIABLEPROCESSOR_H
-#define GAFFERSCENE_PRIMITIVEVARIABLEPROCESSOR_H
+#pragma once
 
 #include "GafferScene/SceneElementProcessor.h"
 
@@ -59,10 +58,10 @@ class GAFFERSCENE_API PrimitiveVariableProcessor : public SceneElementProcessor
 
 	public :
 
-		PrimitiveVariableProcessor( const std::string &name=defaultName<PrimitiveVariableProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
+		explicit PrimitiveVariableProcessor( const std::string &name=defaultName<PrimitiveVariableProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
 		~PrimitiveVariableProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::PrimitiveVariableProcessor, PrimitiveVariableProcessorTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::PrimitiveVariableProcessor, PrimitiveVariableProcessorTypeId, SceneElementProcessor );
 
 		Gaffer::StringPlug *namesPlug();
 		const Gaffer::StringPlug *namesPlug() const;
@@ -92,5 +91,3 @@ class GAFFERSCENE_API PrimitiveVariableProcessor : public SceneElementProcessor
 IE_CORE_DECLAREPTR( PrimitiveVariableProcessor )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_PRIMITIVEVARIABLEPROCESSOR_H

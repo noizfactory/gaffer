@@ -42,8 +42,9 @@
 #include "IECore/MessageHandler.h"
 #include "IECore/SimpleTypedData.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace Gaffer;
 
 static IECore::InternedString g_namePropertyName( "name" );
@@ -104,7 +105,7 @@ bool MatchPatternPathFilter::getInverted() const
 	return m_inverted;
 }
 
-void MatchPatternPathFilter::doFilter( std::vector<PathPtr> &paths ) const
+void MatchPatternPathFilter::doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 	paths.erase(
 		std::remove_if(

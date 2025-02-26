@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERDISPATCH_TASKNODE_H
-#define GAFFERDISPATCH_TASKNODE_H
+#pragma once
 
 #include "GafferDispatch/Export.h"
 #include "GafferDispatch/TypeIds.h"
@@ -85,24 +84,29 @@ class GAFFERDISPATCH_API TaskNode : public Gaffer::DependencyNode
 		/// the context in which it should be executed. See TaskPlug
 		/// for the main public interface for the execution of
 		/// individual tasks.
-		class Task
+		class GAFFERDISPATCH_API Task
 		{
 			public :
 
-				/// Constructs a task representing a call to
-				/// `plug->execute()` in the specified context.
-				/// A copy of the context is stored.
+				/// Constructs a task representing a call to `plug->execute()`
+				/// in the specified context.
+				///
+				/// > Caution : The context is referenced directly rather than
+				/// > being copied, and must not be modified after being passed
+				/// > to the Task.
 				Task( ConstTaskPlugPtr plug, const Gaffer::Context *context );
-				Task( const Task &t );
+				Task( const Task &t ) = default;
+				Task( Task &&t ) = default;
+				~Task() = default;
+				Task & operator = ( const Task &rhs ) = default;
+				Task & operator = ( Task &&rhs ) = default;
+
 				/// Returns the TaskPlug component of the task.
 				const TaskPlug *plug() const;
 				/// Returns the Context component of the task.
 				const Gaffer::Context *context() const;
 
 				bool operator == ( const Task &rhs ) const;
-
-				/// \deprecated
-				Task( TaskNodePtr n, const Gaffer::Context *c );
 
 			private :
 
@@ -111,17 +115,17 @@ class GAFFERDISPATCH_API TaskNode : public Gaffer::DependencyNode
 
 		};
 
-		typedef std::vector<Task> Tasks;
+		using Tasks = std::vector<Task>;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferDispatch::TaskNode, TaskNodeTypeId, Gaffer::DependencyNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferDispatch::TaskNode, TaskNodeTypeId, Gaffer::DependencyNode );
 
-		TaskNode( const std::string &name=defaultName<TaskNode>() );
+		explicit TaskNode( const std::string &name=defaultName<TaskNode>() );
 		~TaskNode() override;
 
 		/// Plug type used to represent tasks within the
 		/// node graph. This provides the primary public
 		/// interface for querying and executing tasks.
-		class TaskPlug : public Gaffer::Plug
+		class GAFFERDISPATCH_API TaskPlug : public Gaffer::Plug
 		{
 
 			public :
@@ -159,8 +163,6 @@ class GAFFERDISPATCH_API TaskNode : public Gaffer::DependencyNode
 				void postTasks( Tasks &tasks ) const;
 
 		};
-
-		typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, TaskPlug> > TaskPlugIterator;
 
 		/// Input plugs to which upstream tasks may be connected to cause them
 		/// to be executed before this node.
@@ -233,6 +235,6 @@ class GAFFERDISPATCH_API TaskNode : public Gaffer::DependencyNode
 
 };
 
-} // namespace GafferDispatch
+GAFFERDISPATCH_API void intrusive_ptr_add_ref( TaskNode *node );
 
-#endif // GAFFERDISPATCH_TASKNODE_H
+} // namespace GafferDispatch

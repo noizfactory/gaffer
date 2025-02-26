@@ -36,6 +36,8 @@
 
 #include "GafferImage/DisplayTransform.h"
 
+#include "GafferImage/OpenColorIOAlgo.h"
+
 #include "Gaffer/StringPlug.h"
 
 using namespace std;
@@ -43,7 +45,7 @@ using namespace IECore;
 using namespace Gaffer;
 using namespace GafferImage;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( DisplayTransform );
+GAFFER_NODE_DEFINE_TYPE( DisplayTransform );
 
 size_t DisplayTransform::g_firstPlugIndex = 0;
 
@@ -98,35 +100,40 @@ bool DisplayTransform::affectsTransform( const Gaffer::Plug *input ) const
 void DisplayTransform::hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
 	std::string colorSpace = inputColorSpacePlug()->getValue();
-	std::string display = displayPlug()->getValue();
-	std::string view = viewPlug()->getValue();
-
-	if( colorSpace.empty() || display.empty() || view.empty() )
+	if( colorSpace.empty() )
 	{
-		h = MurmurHash();
-		return;
+		colorSpace = OpenColorIOAlgo::getWorkingSpace( context );
 	}
-
 	h.append( colorSpace );
-	h.append( display );
-	h.append( view );
+
+	displayPlug()->hash( h );
+	viewPlug()->hash( h );
 }
 
-OpenColorIO::ConstTransformRcPtr DisplayTransform::transform() const
+OCIO_NAMESPACE::ConstTransformRcPtr DisplayTransform::transform() const
 {
 	std::string colorSpace = inputColorSpacePlug()->getValue();
 	std::string display = displayPlug()->getValue();
 	std::string view = viewPlug()->getValue();
 
-	// no need to run the processor if we don't
-	// have valid inputs
-	if( colorSpace.empty() || display.empty() || view.empty() )
+	OCIO_NAMESPACE::ConstConfigRcPtr config = OpenColorIOAlgo::currentConfig();
+	if( display.empty() )
 	{
-		return OpenColorIO::DisplayTransformRcPtr();
+		display = config->getDefaultDisplay();
 	}
 
-	OpenColorIO::DisplayTransformRcPtr result = OpenColorIO::DisplayTransform::Create();
-	result->setInputColorSpaceName( colorSpace.c_str() );
+	if( view.empty() )
+	{
+		view = config->getDefaultView( display.c_str() );
+	}
+
+	if( colorSpace.empty() )
+	{
+		colorSpace = OpenColorIOAlgo::getWorkingSpace( Context::current() );
+	}
+
+	OCIO_NAMESPACE::DisplayViewTransformRcPtr result = OCIO_NAMESPACE::DisplayViewTransform::Create();
+	result->setSrc( colorSpace.c_str() );
 	result->setDisplay( display.c_str() );
 	result->setView( view.c_str() );
 

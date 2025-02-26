@@ -85,7 +85,7 @@ class DispatcherWrapper : public NodeWrapper<Dispatcher>
 				{
 					f( boost::const_pointer_cast<Dispatcher::TaskBatch>( ConstTaskBatchPtr( batch ) ) );
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
@@ -96,7 +96,7 @@ class DispatcherWrapper : public NodeWrapper<Dispatcher>
 			}
 		}
 
-		FrameListPtr frameRange( const ScriptNode *script, const Context *context ) const override
+		FrameListPtr frameRange() const override
 		{
 			ScopedGILLock gilLock;
 
@@ -105,20 +105,16 @@ class DispatcherWrapper : public NodeWrapper<Dispatcher>
 			{
 				try
 				{
-					object obj = f(
-						ScriptNodePtr( const_cast<ScriptNode *>( script ) ),
-						ContextPtr( const_cast<Context *>( context ) )
-					);
-
+					object obj = f();
 					return extract<FrameListPtr>( obj );
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
 
-			return Dispatcher::frameRange( script, context );
+			return Dispatcher::frameRange();
 		}
 
 		//////////////////////////////////////////////////////////////////////////
@@ -126,7 +122,7 @@ class DispatcherWrapper : public NodeWrapper<Dispatcher>
 		// functions because TaskBatch is a protected member of Dispatcher.
 		//////////////////////////////////////////////////////////////////////////
 
-		typedef Dispatcher::TaskBatch TaskBatch;
+		using TaskBatch = Dispatcher::TaskBatch;
 
 		static void taskBatchExecute( const Dispatcher::TaskBatch &batch )
 		{
@@ -210,12 +206,10 @@ struct DispatcherHelper
 			DispatcherPtr result = extract<DispatcherPtr>( m_fn() );
 			return result;
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-
-		return nullptr;
 	}
 
 	void operator()( Plug *parentPlug )
@@ -227,7 +221,7 @@ struct DispatcherHelper
 			{
 				m_setupFn( PlugPtr( parentPlug ) );
 			}
-			catch( const boost::python::error_already_set &e )
+			catch( const boost::python::error_already_set & )
 			{
 				ExceptionAlgo::translatePythonException();
 			}
@@ -241,26 +235,18 @@ struct DispatcherHelper
 
 };
 
-void dispatch( Dispatcher &dispatcher, object pythonNodes )
+IECore::FrameListPtr frameRange( Dispatcher &n )
 {
-	std::vector<NodePtr> nodes;
-	boost::python::container_utils::extend_container( nodes, pythonNodes );
-	IECorePython::ScopedGILRelease gilRelease;
-	dispatcher.dispatch( nodes );
+	return n.Dispatcher::frameRange();
 }
 
-IECore::FrameListPtr frameRange( Dispatcher &n, const ScriptNode &script, const Context &context )
-{
-	return n.Dispatcher::frameRange( &script, &context );
-}
-
-static void registerDispatcher( std::string type, object creator, object setupPlugsFn )
+void registerDispatcher( std::string type, object creator, object setupPlugsFn )
 {
 	DispatcherHelper helper( creator, setupPlugsFn );
 	Dispatcher::registerDispatcher( type, helper, helper );
 }
 
-static tuple registeredDispatchersWrapper()
+tuple registeredDispatchersWrapper()
 {
 	std::vector<std::string> types;
 	Dispatcher::registeredDispatchers( types );
@@ -272,32 +258,16 @@ static tuple registeredDispatchersWrapper()
 	return boost::python::tuple( result );
 }
 
-static list createMatching( std::string pattern )
-{
-	std::vector<DispatcherPtr> dispatchers = Dispatcher::createMatching( pattern );
-	list result;
-	for( auto &d : dispatchers )
-	{
-		result.append( d );
-	}
-	return result;
-}
-
 struct PreDispatchSlotCaller
 {
-	bool operator()( boost::python::object slot, const Dispatcher *d, const std::vector<TaskNodePtr> &nodes )
+	bool operator()( boost::python::object slot, const Dispatcher *d )
 	{
 		try
 		{
-			list nodeList;
-			for( std::vector<TaskNodePtr>::const_iterator nIt = nodes.begin(); nIt != nodes.end(); nIt++ )
-			{
-				nodeList.append( *nIt );
-			}
 			DispatcherPtr dd = const_cast<Dispatcher*>(d);
-			return slot( dd, nodeList );
+			return slot( dd );
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
@@ -307,45 +277,33 @@ struct PreDispatchSlotCaller
 
 struct DispatchSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, const Dispatcher *d, const std::vector<TaskNodePtr> &nodes )
+	void operator()( boost::python::object slot, const Dispatcher *d )
 	{
 		try
 		{
-			list nodeList;
-			for( std::vector<TaskNodePtr>::const_iterator nIt = nodes.begin(); nIt != nodes.end(); nIt++ )
-			{
-				nodeList.append( *nIt );
-			}
 			DispatcherPtr dd = const_cast<Dispatcher*>(d);
-			slot( dd, nodeList );
+			slot( dd );
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
 struct PostDispatchSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, const Dispatcher *d, const std::vector<TaskNodePtr> &nodes, bool success )
+	void operator()( boost::python::object slot, const Dispatcher *d, bool success )
 	{
 		try
 		{
-			list nodeList;
-			for( std::vector<TaskNodePtr>::const_iterator nIt = nodes.begin(); nIt != nodes.end(); nIt++ )
-			{
-				nodeList.append( *nIt );
-			}
 			DispatcherPtr dd = const_cast<Dispatcher*>(d);
-			slot( dd, nodeList, success );
+			slot( dd, success );
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -354,11 +312,9 @@ struct PostDispatchSlotCaller
 void GafferDispatchModule::bindDispatcher()
 {
 	scope s = NodeClass<Dispatcher, DispatcherWrapper>()
-		.def( "dispatch", &dispatch )
 		.def( "jobDirectory", &Dispatcher::jobDirectory )
 		.def( "frameRange", &frameRange )
 		.def( "create", &Dispatcher::create ).staticmethod( "create" )
-		.def( "createMatching", &createMatching, ( arg( "matchPattern" ) ) ).staticmethod( "createMatching" )
 		.def( "getDefaultDispatcherType", &Dispatcher::getDefaultDispatcherType, return_value_policy<copy_const_reference>() ).staticmethod( "getDefaultDispatcherType" )
 		.def( "setDefaultDispatcherType", &Dispatcher::setDefaultDispatcherType ).staticmethod( "setDefaultDispatcherType" )
 		.def( "registerDispatcher", &registerDispatcher, ( arg( "dispatcherType" ), arg( "creator" ), arg( "setupPlugsFn" ) = 0 ) ).staticmethod( "registerDispatcher" )

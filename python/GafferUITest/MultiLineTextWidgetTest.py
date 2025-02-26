@@ -49,11 +49,11 @@ class MultiLineTextWidgetTest( GafferUITest.TestCase ) :
 		w = GafferUI.MultiLineTextWidget()
 		r = weakref.ref( w )
 
-		self.failUnless( r() is w )
+		self.assertTrue( r() is w )
 
 		del w
 
-		self.failUnless( r() is None )
+		self.assertTrue( r() is None )
 
 	def testEditable( self ) :
 
@@ -82,7 +82,7 @@ class MultiLineTextWidgetTest( GafferUITest.TestCase ) :
 		w = GafferUI.MultiLineTextWidget()
 		self.assertEqual( w.getWrapMode(), w.WrapMode.WordOrCharacter )
 
-		for wm in w.WrapMode.values() :
+		for wm in w.WrapMode :
 			w.setWrapMode( wm )
 			self.assertEqual( w.getWrapMode(), wm )
 
@@ -153,6 +153,35 @@ class MultiLineTextWidgetTest( GafferUITest.TestCase ) :
 
 		w = GafferUI.MultiLineTextWidget( role = w.Role.Code)
 		self.assertEqual( w.getRole(), w.Role.Code )
+
+	def testSelection( self ) :
+
+		w = GafferUI.MultiLineTextWidget()
+		self.assertEqual( w.getSelection(), ( 0, 0 ) )
+		self.assertEqual( w.selectedText(), "" )
+
+		w.setText( "abc\ndef\nghi" )
+		self.assertEqual( w.getSelection(), ( 0, 0 ) )
+		self.assertEqual( w.selectedText(), "" )
+
+		w.setSelection( 1, 5 )
+		self.assertEqual( w.getSelection(), ( 1, 5 ) )
+		self.assertEqual( w.selectedText(), "bc\nd" )
+
+		w.setSelection( -1, None )
+		self.assertEqual( w.getSelection(), ( 10, 11 ) )
+		self.assertEqual( w.selectedText(), "i" )
+
+	def testPlaceholderTest( self ) :
+
+		w = GafferUI.MultiLineTextWidget()
+		self.assertEqual( w.getPlaceholderText(), "" )
+
+		w.setPlaceholderText( "test" )
+		self.assertEqual( w.getPlaceholderText(), "test" )
+
+		w = GafferUI.MultiLineTextWidget( placeholderText = "test" )
+		self.assertEqual( w.getPlaceholderText(), "test" )
 
 if __name__ == "__main__":
 	unittest.main()

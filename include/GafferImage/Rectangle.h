@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_RECTANGLE_H
-#define GAFFERIMAGE_RECTANGLE_H
+#pragma once
 
 #include "GafferImage/Shape.h"
 
@@ -56,10 +55,10 @@ class GAFFERIMAGE_API Rectangle : public Shape
 
 	public :
 
-		Rectangle( const std::string &name=defaultName<Rectangle>() );
+		explicit Rectangle( const std::string &name=defaultName<Rectangle>() );
 		~Rectangle() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Rectangle, RectangleTypeId, Shape );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Rectangle, RectangleTypeId, Shape );
 
 		Gaffer::Box2fPlug *areaPlug();
 		const Gaffer::Box2fPlug *areaPlug() const;
@@ -92,5 +91,3 @@ class GAFFERIMAGE_API Rectangle : public Shape
 IE_CORE_DECLAREPTR( Rectangle )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_RECTANGLE_H

@@ -38,6 +38,7 @@
 
 #include "PlugAlgoBinding.h"
 
+#include "Gaffer/Context.h"
 #include "Gaffer/Plug.h"
 #include "Gaffer/PlugAlgo.h"
 #include "Gaffer/ValuePlug.h"
@@ -57,16 +58,75 @@ void replacePlug( GraphComponent &parent, Plug &plug )
 	PlugAlgo::replacePlug( &parent, &plug );
 }
 
+object findDestinationWrapper( Plug *plug, object predicate )
+{
+	return PlugAlgo::findDestination(
+		plug,
+		[&predicate] ( Plug *plug ) {
+			object o = predicate( PlugPtr( plug ) );
+			return o;
+		}
+	);
+}
+
+object findSourceWrapper( Plug *plug, object predicate )
+{
+	return PlugAlgo::findSource(
+		plug,
+		[&predicate] ( Plug *plug ) {
+			object o = predicate( PlugPtr( plug ) );
+			return o;
+		}
+	);
+}
+
+object contextSensitiveSourceWrapper( const Plug *plug )
+{
+	const Plug *sourcePlug;
+	ConstContextPtr sourceContext;
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		std::tie( sourcePlug, sourceContext ) = PlugAlgo::contextSensitiveSource( plug );
+	}
+	return boost::python::make_tuple(
+		PlugPtr( const_cast<Plug *>( sourcePlug ) ),
+		ContextPtr( new Context( *sourceContext ) )
+	);
+}
+
 ValuePlugPtr createPlugFromData( const std::string &name, Plug::Direction direction, unsigned flags, const IECore::Data *value )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	return PlugAlgo::createPlugFromData( name, direction, flags, value );
 }
 
-IECore::DataPtr extractDataFromPlug( const ValuePlug *plug )
+IECore::DataPtr getValueAsData( const ValuePlug &plug )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	return PlugAlgo::extractDataFromPlug( plug );
+	return PlugAlgo::getValueAsData( &plug );
+}
+
+IECore::DataPtr extractDataFromPlug( const ValuePlug &plug )
+{
+	return getValueAsData( plug );
+}
+
+bool setLeafValueFromData( const ValuePlug *plug, ValuePlug *leafPlug, const IECore::Data *value )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return PlugAlgo::setValueFromData( plug, leafPlug, value );
+}
+
+bool setValueFromData( ValuePlug *plug, const IECore::Data *value )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return PlugAlgo::setValueFromData( plug, value );
+}
+
+bool canSetValueFromData( const ValuePlug *plug, const IECore::Data *value )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return PlugAlgo::canSetValueFromData( plug, value );
 }
 
 PlugPtr promote( Plug &plug, Plug *parent, const IECore::StringAlgo::MatchPattern &excludeMetadata )
@@ -87,8 +147,6 @@ void unpromote( Plug &plug )
 	PlugAlgo::unpromote( &plug );
 }
 
-
-
 } // namespace
 
 void GafferModule::bindPlugAlgo()
@@ -98,8 +156,17 @@ void GafferModule::bindPlugAlgo()
 	scope moduleScope( module );
 
 	def( "replacePlug", &replacePlug, ( arg( "parent" ), arg( "plug" ) ) );
+	def( "dependsOnCompute", &PlugAlgo::dependsOnCompute );
+	def( "findDestination", &findDestinationWrapper );
+	def( "findSource", &findSourceWrapper );
+	def( "contextSensitiveSource", &contextSensitiveSourceWrapper );
+
 	def( "createPlugFromData", &createPlugFromData );
 	def( "extractDataFromPlug", &extractDataFromPlug );
+	def( "getValueAsData", &getValueAsData );
+	def( "setValueFromData", &setLeafValueFromData );
+	def( "setValueFromData", &setValueFromData );
+	def( "canSetValueFromData", &canSetValueFromData, ( arg( "plug" ), arg( "value" ) = object() ) );
 
 	def( "canPromote", &PlugAlgo::canPromote, ( arg( "plug" ), arg( "parent" ) = object() ) );
 	def( "promote", &promote, ( arg( "plug" ), arg( "parent" ) = object(), arg( "excludeMetadata" ) = "layout:*" ) );

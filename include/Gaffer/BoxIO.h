@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_BOXIO_H
-#define GAFFER_BOXIO_H
+#pragma once
 
 #include "Gaffer/Node.h"
 #include "Gaffer/Plug.h"
@@ -81,7 +80,7 @@ class GAFFER_API BoxIO : public Node
 
 		~BoxIO() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::BoxIO, BoxIOTypeId, Node );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::BoxIO, BoxIOTypeId, Node );
 
 		StringPlug *namePlug();
 		const StringPlug *namePlug() const;
@@ -142,7 +141,7 @@ class GAFFER_API BoxIO : public Node
 
 	protected :
 
-		BoxIO( Plug::Direction direction, const std::string &name=defaultName<BoxIO>() );
+		explicit BoxIO( Plug::Direction direction, const std::string &name=defaultName<BoxIO>() );
 
 		Gaffer::Plug *inPlugInternal();
 		const Gaffer::Plug *inPlugInternal() const;
@@ -171,8 +170,9 @@ class GAFFER_API BoxIO : public Node
 
 		Plug::Direction m_direction;
 
-		boost::signals::scoped_connection m_promotedPlugNameChangedConnection;
-		boost::signals::scoped_connection m_promotedPlugParentChangedConnection;
+		Signals::ScopedConnection m_promotedPlugNameChangedConnection;
+		Signals::ScopedConnection m_promotedPlugParentChangedConnection;
+		Signals::ScopedConnection m_boxPlugInputChangedConnection;
 
 		void setupPassThrough();
 		void setupBoxEnabledPlug();
@@ -188,11 +188,6 @@ class GAFFER_API BoxIO : public Node
 
 IE_CORE_DECLAREPTR( BoxIO )
 
-typedef FilteredChildIterator<TypePredicate<BoxIO> > BoxIOIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<BoxIO> > RecursiveBoxIOIterator;
-
 } // namespace Gaffer
 
 #include "Gaffer/BoxIO.inl"
-
-#endif // GAFFER_BOXIO_H

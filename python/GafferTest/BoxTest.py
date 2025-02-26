@@ -36,7 +36,7 @@
 
 import unittest
 import imath
-import os
+import pathlib
 
 import IECore
 
@@ -57,7 +57,7 @@ class BoxTest( GafferTest.TestCase ) :
 		s2 = Gaffer.ScriptNode()
 		s2.execute( s.serialise() )
 
-		self.assert_( s2["b"]["n2"]["op1"].getInput().isSame( s2["b"]["n1"]["sum"] ) )
+		self.assertTrue( s2["b"]["n2"]["op1"].getInput().isSame( s2["b"]["n1"]["sum"] ) )
 
 	def testCreate( self ) :
 
@@ -575,12 +575,12 @@ class BoxTest( GafferTest.TestCase ) :
 		b = Gaffer.Box.create( s, Gaffer.StandardSet( [ s["r"] ] ) )
 		p = b.promotePlug( b["r"]["floatRange"] )
 
-		cs = GafferTest.CapturingSlot( Gaffer.Metadata.plugValueChangedSignal() )
+		cs = GafferTest.CapturingSlot( Gaffer.Metadata.plugValueChangedSignal( b ) )
 
 		Gaffer.Metadata.registerValue( p, "description", "hello" )
 
 		self.assertEqual( len( cs ), 1 )
-		self.assertEqual( cs[0], ( Gaffer.Box.staticTypeId(), p.relativeName( b ), "description", p ) )
+		self.assertEqual( cs[0], ( p, "description", Gaffer.Metadata.ValueChangedReason.InstanceRegistration ) )
 
 	def testNodeMetadata( self ) :
 
@@ -609,16 +609,16 @@ class BoxTest( GafferTest.TestCase ) :
 		b = Gaffer.Box.create( s, Gaffer.StandardSet( [ s["r"] ] ) )
 		p = b.promotePlug( b["r"]["floatRange"] )
 
-		ncs = GafferTest.CapturingSlot( Gaffer.Metadata.nodeValueChangedSignal() )
-		pcs = GafferTest.CapturingSlot( Gaffer.Metadata.plugValueChangedSignal() )
+		ncs = GafferTest.CapturingSlot( Gaffer.Metadata.nodeValueChangedSignal( b ) )
+		pcs = GafferTest.CapturingSlot( Gaffer.Metadata.plugValueChangedSignal( b ) )
 
 		Gaffer.Metadata.registerValue( b, "description", "t" )
 		Gaffer.Metadata.registerValue( p, "description", "tt" )
 
 		self.assertEqual( len( ncs ), 1 )
 		self.assertEqual( len( pcs ), 1 )
-		self.assertEqual( ncs[0], ( Gaffer.Box.staticTypeId(), "description", b ) )
-		self.assertEqual( pcs[0], ( Gaffer.Box.staticTypeId(), p.relativeName( b ), "description", p ) )
+		self.assertEqual( ncs[0], ( b, "description", Gaffer.Metadata.ValueChangedReason.InstanceRegistration ) )
+		self.assertEqual( pcs[0], ( p, "description", Gaffer.Metadata.ValueChangedReason.InstanceRegistration ) )
 
 		Gaffer.Metadata.registerValue( b, "description", "t" )
 		Gaffer.Metadata.registerValue( p, "description", "tt" )
@@ -631,8 +631,8 @@ class BoxTest( GafferTest.TestCase ) :
 
 		self.assertEqual( len( ncs ), 2 )
 		self.assertEqual( len( pcs ), 2 )
-		self.assertEqual( ncs[1], ( Gaffer.Box.staticTypeId(), "description", b ) )
-		self.assertEqual( pcs[1], ( Gaffer.Box.staticTypeId(), p.relativeName( b ), "description", p ) )
+		self.assertEqual( ncs[1], ( b, "description", Gaffer.Metadata.ValueChangedReason.InstanceRegistration ) )
+		self.assertEqual( pcs[1], ( p, "description", Gaffer.Metadata.ValueChangedReason.InstanceRegistration ) )
 
 	def testMetadataUndo( self ) :
 
@@ -1048,13 +1048,13 @@ class BoxTest( GafferTest.TestCase ) :
 
 		try :
 			box = Gaffer.Box.create( scriptNode, setOfNodesToBox )
-		except RuntimeError, e :
+		except RuntimeError as e :
 			self.assertTrue( False, msg = "boxing should not raise an exception here" )
 
 	def testPassThroughCreatedInVersion0_52( self ) :
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/boxPassThroughVersion-0.52.0.0.gfr" )
+		s["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "boxPassThroughVersion-0.52.0.0.gfr" )
 		s.load()
 
 		def assertPassThrough( script ) :
@@ -1082,7 +1082,7 @@ class BoxTest( GafferTest.TestCase ) :
 	def testAddPassThroughToBoxFromVersion0_52( self ) :
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/boxVersion-0.52.0.0.gfr" )
+		s["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "boxVersion-0.52.0.0.gfr" )
 		s.load()
 
 		# The original Box had no pass-through behaviour defined,
@@ -1118,6 +1118,25 @@ class BoxTest( GafferTest.TestCase ) :
 		s2.execute( s.serialise() )
 
 		assertPassThrough( s2 )
+
+	def testComputeNodeCastDoesntRequirePython( self ) :
+
+		class CastChecker( Gaffer.Box ) :
+
+			def __init__( self, name = "CastChecker" ) :
+
+				Gaffer.Box.__init__( self, name )
+				self["out"] = Gaffer.IntPlug( direction = Gaffer.Plug.Direction.Out )
+
+			def isInstanceOf( self, typeId ) :
+
+				raise Exception( "Cast to ComputeNode should not require Python" )
+
+		# The call to `dependsOnCompute()` will internally cast to `ComputeNode`
+		# in C++. We don't want that to require entry into Python because it is
+		# far too costly and the answer can be determined on the C++ side anyway.
+		node = CastChecker()
+		self.assertFalse( Gaffer.PlugAlgo.dependsOnCompute( node["out"] ) )
 
 if __name__ == "__main__":
 	unittest.main()

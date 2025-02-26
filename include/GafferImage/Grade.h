@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_GRADE_H
-#define GAFFERIMAGE_GRADE_H
+#pragma once
 
 #include "GafferImage/ChannelDataProcessor.h"
 
@@ -55,15 +54,11 @@ class GAFFERIMAGE_API Grade : public ChannelDataProcessor
 
 	public :
 
-		Grade( const std::string &name=defaultName<Grade>() );
+		explicit Grade( const std::string &name=defaultName<Grade>() );
 		~Grade() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Grade, GradeTypeId, ChannelDataProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Grade, GradeTypeId, ChannelDataProcessor );
 
-        //! @name Plug Accessors
-        /// Returns a pointer to the node's plugs.
-        //////////////////////////////////////////////////////////////
-        //@{
 		Gaffer::Color4fPlug *blackPointPlug();
 		const Gaffer::Color4fPlug *blackPointPlug() const;
 		Gaffer::Color4fPlug *whitePointPlug();
@@ -82,7 +77,6 @@ class GAFFERIMAGE_API Grade : public ChannelDataProcessor
 		const Gaffer::BoolPlug *blackClampPlug() const;
 		Gaffer::BoolPlug *whiteClampPlug();
 		const Gaffer::BoolPlug *whiteClampPlug() const;
-        //@}
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -104,5 +98,3 @@ class GAFFERIMAGE_API Grade : public ChannelDataProcessor
 IE_CORE_DECLAREPTR( Grade );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_GRADE_H

@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_OBJECTPARAMETERHANDLER_H
-#define GAFFERCORTEX_OBJECTPARAMETERHANDLER_H
+#pragma once
 
 #include "GafferCortex/ParameterHandler.h"
 
@@ -57,7 +56,7 @@ class GAFFERCORTEX_API ObjectParameterHandler : public ParameterHandler
 
 		IE_CORE_DECLAREMEMBERPTR( ObjectParameterHandler );
 
-		ObjectParameterHandler( IECore::ObjectParameter::Ptr parameter );
+		explicit ObjectParameterHandler( IECore::ObjectParameter::Ptr parameter );
 		~ObjectParameterHandler() override;
 
 		IECore::Parameter *parameter() override;
@@ -79,5 +78,3 @@ class GAFFERCORTEX_API ObjectParameterHandler : public ParameterHandler
 };
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_OBJECTPARAMETERHANDLER_H

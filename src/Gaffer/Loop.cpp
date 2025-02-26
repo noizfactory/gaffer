@@ -39,12 +39,12 @@
 #include "Gaffer/ContextAlgo.h"
 #include "Gaffer/MetadataAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 namespace Gaffer
 {
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Loop );
+GAFFER_NODE_DEFINE_TYPE( Loop );
 
 Loop::Loop( const std::string &name )
 	:	ComputeNode( name ), m_inPlugIndex( 0 ), m_outPlugIndex( 0 ), m_firstPlugIndex( 0 )
@@ -52,7 +52,7 @@ Loop::Loop( const std::string &name )
 	// Connect to `childAddedSignal()` so we can set ourselves up later when the
 	// appropriate plugs are added manually.
 	/// \todo Remove this and do all the work in `setup()`.
-	childAddedSignal().connect( boost::bind( &Loop::childAdded, this ) );
+	m_childAddedConnection = childAddedSignal().connect( boost::bind( &Loop::childAdded, this ) );
 }
 
 Loop::~Loop()
@@ -160,6 +160,29 @@ const Gaffer::Plug *Loop::correspondingInput( const Gaffer::Plug *output ) const
 	return output == outPlug() ? inPlug() : nullptr;
 }
 
+std::pair<const ValuePlug *, ContextPtr> Loop::previousIteration( const ValuePlug *output ) const
+{
+	int index = -1;
+	IECore::InternedString indexVariable;
+	if( const ValuePlug *plug = sourcePlug( output, Context::current(), index, indexVariable ) )
+	{
+		ContextPtr context = new Context( *Context::current() );
+
+		if( index >= 0 )
+		{
+			context->set( indexVariable, index );
+		}
+		else
+		{
+			context->remove( indexVariable );
+		}
+
+		return { plug, context };
+	}
+
+	return { nullptr, nullptr };
+}
+
 void Loop::affects( const Plug *input, DependencyNode::AffectedPlugsContainer &outputs ) const
 {
 	ComputeNode::affects( input, outputs );
@@ -197,7 +220,7 @@ void Loop::hash( const ValuePlug *output, const Context *context, IECore::Murmur
 		Context::EditableScope tmpContext( context );
 		if( index >= 0 )
 		{
-			tmpContext.set<int>( indexVariable, index );
+			tmpContext.set( indexVariable, &index );
 		}
 		else
 		{
@@ -219,7 +242,7 @@ void Loop::compute( ValuePlug *output, const Context *context ) const
 		Context::EditableScope tmpContext( context );
 		if( index >= 0 )
 		{
-			tmpContext.set<int>( indexVariable, index );
+			tmpContext.set( indexVariable, &index );
 		}
 		else
 		{
@@ -246,7 +269,7 @@ bool Loop::setupPlugs()
 		return false;
 	}
 
-	childAddedSignal().disconnect( boost::bind( &Loop::childAdded, this ) );
+	m_childAddedConnection.disconnect();
 
 	m_inPlugIndex = std::find( children().begin(), children().end(), in ) - children().begin();
 	m_outPlugIndex = std::find( children().begin(), children().end(), out ) - children().begin();
@@ -287,7 +310,7 @@ bool Loop::setupPlugs()
 	// hash()/compute() because each iteration changes the context and we bottom
 	// out after the specified number of iterations.
 	previousPlug()->setFlags( Plug::AcceptsDependencyCycles, true );
-	for( Gaffer::RecursivePlugIterator it( previousPlug() ); !it.done(); ++it )
+	for( Gaffer::Plug::RecursiveIterator it( previousPlug() ); !it.done(); ++it )
 	{
 		(*it)->setFlags( Plug::AcceptsDependencyCycles, true );
 	}
@@ -299,7 +322,7 @@ void Loop::addAffectedPlug( const ValuePlug *output, DependencyNode::AffectedPlu
 {
 	if( output->children().size() )
 	{
-		for( RecursiveOutputPlugIterator it( output ); !it.done(); ++it )
+		for( Plug::RecursiveOutputIterator it( output ); !it.done(); ++it )
 		{
 			if( !(*it)->children().size() )
 			{
@@ -354,7 +377,7 @@ const ValuePlug *Loop::sourcePlug( const ValuePlug *output, const Context *conte
 	if( ancestor == previousPlug() )
 	{
 		const int index = context->get<int>( indexVariable, 0 );
-		if( index >= 1 && enabledPlug()->getValue() )
+		if( index >= 1 && !indexVariable.string().empty() && enabledPlug()->getValue() )
 		{
 			sourceLoopIndex = index - 1;
 			return descendantPlug( nextPlug(), relativeName );
@@ -367,7 +390,7 @@ const ValuePlug *Loop::sourcePlug( const ValuePlug *output, const Context *conte
 	else if( ancestor == outPlug() )
 	{
 		const int iterations = iterationsPlug()->getValue();
-		if( iterations > 0 && enabledPlug()->getValue() )
+		if( iterations > 0 && !indexVariable.string().empty() && enabledPlug()->getValue() )
 		{
 			sourceLoopIndex = iterations - 1;
 			return descendantPlug( nextPlug(), relativeName );

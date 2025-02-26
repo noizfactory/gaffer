@@ -60,7 +60,7 @@ def exportNodeReference( directory, modules = [], modulePath = "" ) :
 			if not m.endswith( "Test" ) and not m.endswith( "UI" ) :
 				modules.append( module )
 
-	index = open( "%s/index.md" % directory, "w" )
+	index = open( "%s/index.md" % directory, "w", encoding = "utf-8" )
 	index.write( "<!-- !NO_SCROLLSPY -->\n\n" )
 	index.write( __heading( "Node Reference" ) )
 
@@ -85,25 +85,30 @@ def exportNodeReference( directory, modules = [], modulePath = "" ) :
 				# another module by one of the compatibility config files.
 				continue
 
+			if name != node.typeName().rpartition( ":" )[2] :
+				# Skip nodes that look like they're aliases of other nodes
+				# injected by a compatibility config file.
+				continue
+
 			__makeDirs( directory + "/" + module.__name__ )
-			with open( "%s/%s/%s.md" % ( directory, module.__name__, name ), "w" ) as f :
+			with open( "%s/%s/%s.md" % ( directory, module.__name__, name ), "w", encoding = "utf-8" ) as f :
 				f.write( __nodeDocumentation( node ) )
 				moduleIndex += "\n{}{}.md".format( " " * 4, name )
 
 		if moduleIndex :
 
-			with open( "%s/%s/index.md" % ( directory, module.__name__ ), "w" ) as f :
+			with open( "%s/%s/index.md" % ( directory, module.__name__ ), "w", encoding = "utf-8" ) as f :
 				f.write( "<!-- !NO_SCROLLSPY -->\n\n" )
 				f.write( __heading( module.__name__ ) )
-				f.write( __tocString( ).format( moduleIndex ) )
+				f.write( __tocString().format( moduleIndex ) )
 
 			tocIndex += "\n{}{}/index.md".format( " " * 4, module.__name__ )
 
-	index.write( __tocString( ).format( tocIndex ) )
+	index.write( __tocString().format( tocIndex ) )
 
 def exportLicenseReference( directory, about ) :
 
-	with open( directory + "/index.md", "w" ) as index :
+	with open( directory + "/index.md", "w", encoding = "utf-8" ) as index :
 
 		index.write( __heading( "License" ) )
 		index.write( "```none\n" + __fileContents( about.license() ) + "\n```\n\n" )
@@ -140,7 +145,7 @@ def exportCommandLineReference( directory, appPath = "$GAFFER_ROOT/apps", ignore
 
 	__makeDirs( directory )
 
-	index = open( "%s/index.md" % directory, "w" )
+	index = open( "%s/index.md" % directory, "w", encoding = "utf-8" )
 	index.write( "<!-- !NO_SCROLLSPY -->\n\n" )
 	index.write( __heading( "Command Line Reference" ) )
 
@@ -158,7 +163,7 @@ def exportCommandLineReference( directory, appPath = "$GAFFER_ROOT/apps", ignore
 		gaffer appName -arg value -arg value ...
 		```
 
-		If the `appName` is not specified it defaults to `"gui"`, and
+		If the `appName` is not specified it defaults to `gui`, and
 		the familiar main interface is loaded. This shortcut also allows
 		a file to load to be specified :
 
@@ -189,11 +194,11 @@ def exportCommandLineReference( directory, appPath = "$GAFFER_ROOT/apps", ignore
 			continue
 
 		tocIndex += "\n{}{}.md".format( " " * 4, appName )
-		with open( "%s.md" % appName, "w" ) as f :
+		with open( "%s.md" % appName, "w", encoding = "utf-8" ) as f :
 
 			f.write( __appDocumentation( classLoader.load( appName )() ) )
 
-	index.write( __tocString( ).format( tocIndex ) )
+	index.write( __tocString().format( tocIndex ) )
 
 def markdownToHTML( markdown ) :
 
@@ -201,7 +206,22 @@ def markdownToHTML( markdown ) :
 	if cmark is None :
 		return markdown
 
-	return cmark.cmark_markdown_to_html( markdown, len( markdown ), 0 )
+	parser = cmark.cmark_parser_new( cmark.CMARK_OPT_DEFAULT )
+	for extension in [ "table", "strikethrough" ] :
+		cmark.cmark_parser_attach_syntax_extension(
+			parser, cmark.cmark_find_syntax_extension( bytes( extension, "UTF-8" ) )
+		)
+
+	markdown = markdown.encode( "UTF-8" )
+	cmark.cmark_parser_feed( parser, markdown, len( markdown ) )
+	document = cmark.cmark_parser_finish( parser )
+
+	result = cmark.cmark_render_html( document, cmark.CMARK_OPT_UNSAFE, cmark.cmark_parser_get_syntax_extensions( parser ) ).decode( "UTF-8")
+
+	cmark.cmark_parser_free( parser )
+	cmark.cmark_node_free( document )
+
+	return result
 
 def __nodeDocumentation( node ) :
 
@@ -254,7 +274,7 @@ def __appDocumentation( app ) :
 
 def __fileContents( file ) :
 
-	with open( os.path.expandvars( file ), "r" ) as f :
+	with open( os.path.expandvars( file ), "r", encoding = "utf-8" ) as f :
 		text = f.read()
 
 	return text
@@ -277,12 +297,12 @@ def __makeDirs( directory ) :
 		if not os.path.isdir( directory ) :
 			raise
 
-def __tocString( ) :
+def __tocString() :
 
 	tocString = inspect.cleandoc(
 
 		"""
-		```eval_rst
+		```{{eval-rst}}
 		.. toctree::
 		    :titlesonly:
 		    :maxdepth: 1
@@ -295,28 +315,62 @@ def __tocString( ) :
 	return tocString
 
 __cmarkDLL = ""
+__cmarkExtensionsDLL = None
 def __cmark() :
 
 	global __cmarkDLL
+	global __cmarkExtensionsDLL
 	if __cmarkDLL != "" :
 		return __cmarkDLL
 
 	sys = platform.system()
 
 	if sys == "Darwin" :
-		libName = "libcmark-gfm.dylib"
+		prefix = "lib"
+		suffix = ".dylib"
 	elif sys == "Windows" :
-		libName = "cmark-gfm.dll"
+		prefix = ""
+		suffix = ".dll"
 	else :
-		libName = "libcmark-gfm.so"
+		prefix = "lib"
+		suffix = ".so"
 
 	try :
-		__cmarkDLL = ctypes.CDLL( libName )
+		__cmarkDLL = ctypes.CDLL( f"{prefix}cmark-gfm{suffix}" )
+		__cmarkExtensionsDLL = ctypes.CDLL( f"{prefix}cmark-gfm-extensions{suffix}" )
 	except :
 		__cmarkDLL = None
 		return __cmarkDLL
 
+	__cmarkExtensionsDLL.cmark_gfm_core_extensions_ensure_registered()
+
+	__cmarkDLL.cmark_parser_new.restype = ctypes.c_void_p
+	__cmarkDLL.cmark_parser_new.argtypes = [ctypes.c_int]
+
+	__cmarkDLL.cmark_parser_attach_syntax_extension.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+	__cmarkDLL.cmark_parser_get_syntax_extensions.restype = ctypes.c_void_p
+	__cmarkDLL.cmark_parser_get_syntax_extensions.argtypes = [ctypes.c_void_p]
+
+	__cmarkDLL.cmark_parser_feed.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+
+	__cmarkDLL.cmark_parser_finish.restype = ctypes.c_void_p
+	__cmarkDLL.cmark_parser_finish.argtypes = [ctypes.c_void_p]
+
+	__cmarkDLL.cmark_parser_free.argtypes = [ctypes.c_void_p]
+
+	__cmarkDLL.cmark_find_syntax_extension.restype = ctypes.c_void_p
+	__cmarkDLL.cmark_find_syntax_extension.argtypes = [ctypes.c_char_p]
+
+	__cmarkDLL.cmark_node_free.argtypes = [ctypes.c_void_p]
+
+	__cmarkDLL.cmark_render_html.restype = ctypes.c_char_p
+	__cmarkDLL.cmark_render_html.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+
 	__cmarkDLL.cmark_markdown_to_html.restype = ctypes.c_char_p
 	__cmarkDLL.cmark_markdown_to_html.argtypes = [ctypes.c_char_p, ctypes.c_long, ctypes.c_long]
+
+	__cmarkDLL.CMARK_OPT_DEFAULT = 0
+	__cmarkDLL.CMARK_OPT_UNSAFE = 1 << 17
 
 	return __cmarkDLL

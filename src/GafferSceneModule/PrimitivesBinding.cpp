@@ -46,14 +46,19 @@
 #include "GafferScene/Cube.h"
 #include "GafferScene/ExternalProcedural.h"
 #include "GafferScene/Grid.h"
+#include "GafferScene/ImageScatter.h"
+#include "GafferScene/ImageToPoints.h"
 #include "GafferScene/Light.h"
 #include "GafferScene/ObjectToScene.h"
 #include "GafferScene/Plane.h"
+#include "GafferScene/ShaderPlug.h"
 #include "GafferScene/Sphere.h"
 #include "GafferScene/Text.h"
 #include "GafferScene/LightFilter.h"
 
 #include "GafferBindings/DependencyNodeBinding.h"
+
+#include "fmt/format.h"
 
 using namespace std;
 using namespace boost::python;
@@ -67,7 +72,7 @@ namespace {
 class LightSerialiser : public GafferBindings::NodeSerialiser
 {
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const GafferBindings::Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, GafferBindings::Serialisation &serialisation ) const override
 	{
 		std::string defaultPC = GafferBindings::NodeSerialiser::postConstructor( graphComponent, identifier, serialisation );
 		const GafferScene::Light *light = static_cast<const GafferScene::Light *>( graphComponent );
@@ -75,7 +80,7 @@ class LightSerialiser : public GafferBindings::NodeSerialiser
 		// \todo - Remove this once old scripts have been converted
 		// Before we start serialization, clean up any old scripts that might have dynamic parameters on lights
 		// ( Now we create the parameters with a loadShader after the constructor, so they don't need to be dynamic )
-		for( PlugIterator it( light->parametersPlug() ); !it.done(); ++it )
+		for( Plug::Iterator it( light->parametersPlug() ); !it.done(); ++it )
 		{
 			(*it)->setFlags( Gaffer::Plug::Dynamic, false );
 		}
@@ -92,11 +97,18 @@ class LightSerialiser : public GafferBindings::NodeSerialiser
 		{
 			shaderNamePlug = light->getChild<Gaffer::StringPlug>( "__model" );
 		}
+		if( !shaderNamePlug )
+		{
+			if( const GafferScene::Shader *shader = light->getChild<GafferScene::Shader>( "__shader" ) )
+			{
+				shaderNamePlug = shader->namePlug();
+			}
+		}
 
 		const std::string shaderName = shaderNamePlug ? shaderNamePlug->getValue() : "";
 		if( shaderName.size() )
 		{
-			return defaultPC + boost::str( boost::format( "%s.loadShader( \"%s\" )\n" ) % identifier % shaderName );
+			return defaultPC + fmt::format( "{}.loadShader( \"{}\" )\n", identifier, shaderName );
 		}
 
 		return defaultPC;
@@ -111,7 +123,7 @@ namespace GafferSceneModule {
 class LightFilterSerialiser : public GafferBindings::NodeSerialiser
 {
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const GafferBindings::Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, GafferBindings::Serialisation &serialisation ) const override
 	{
 		std::string defaultPostConstructor = GafferBindings::NodeSerialiser::postConstructor( graphComponent, identifier, serialisation );
 
@@ -120,7 +132,7 @@ class LightFilterSerialiser : public GafferBindings::NodeSerialiser
 
 		if( shaderName.size() )
 		{
-			return defaultPostConstructor + boost::str( boost::format( "%s.loadShader( \"%s\" )\n" ) % identifier % shaderName );
+			return defaultPostConstructor + fmt::format( "{}.loadShader( \"{}\" )\n", identifier, shaderName );
 		}
 
 		return defaultPostConstructor;
@@ -139,6 +151,8 @@ void GafferSceneModule::bindPrimitives()
 	GafferBindings::DependencyNodeClass<Cube>();
 	GafferBindings::DependencyNodeClass<Text>();
 	GafferBindings::DependencyNodeClass<ObjectToScene>();
+	GafferBindings::DependencyNodeClass<ImageScatter>();
+	GafferBindings::DependencyNodeClass<ImageToPoints>();
 
 	{
 		scope s = GafferBindings::DependencyNodeClass<Camera>();

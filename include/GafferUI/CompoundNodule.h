@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_COMPOUNDNODULE_H
-#define GAFFERUI_COMPOUNDNODULE_H
+#pragma once
 
 #include "GafferUI/LinearContainer.h"
 #include "GafferUI/Nodule.h"
@@ -53,7 +52,7 @@ class GAFFERUI_API CompoundNodule : public Nodule
 
 	public :
 
-		CompoundNodule( Gaffer::PlugPtr plug );
+		explicit CompoundNodule( Gaffer::PlugPtr plug );
 		~CompoundNodule() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::CompoundNodule, CompoundNoduleTypeId, Nodule );
@@ -77,9 +76,4 @@ class GAFFERUI_API CompoundNodule : public Nodule
 
 IE_CORE_DECLAREPTR( CompoundNodule );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<CompoundNodule> > CompoundNoduleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<CompoundNodule> > RecursiveCompoundNoduleIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_COMPOUNDNODULE_H

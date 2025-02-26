@@ -35,15 +35,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_STANDARDSTYLE_H
-#define GAFFERUI_STANDARDSTYLE_H
+#pragma once
 
 #include "GafferUI/Style.h"
 
 #include "IECore/Export.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathColor.h"
+#include "Imath/ImathColor.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 #include <array>
@@ -87,19 +86,20 @@ class GAFFERUI_API StandardStyle : public Style
 		void renderHorizontalRule( const Imath::V2f &center, float length, State state = NormalState ) const override;
 
 		void renderNodeFrame( const Imath::Box2f &contents, float borderWidth, State state = NormalState, const Imath::Color3f *userColor = nullptr ) const override;
+		void renderNodeFocusRegion( const Imath::Box2f &contents, float borderWidth, State state = NormalState ) const override;
 		void renderNodule( float radius, State state = NormalState, const Imath::Color3f *userColor = nullptr ) const override;
 		void renderConnection( const Imath::V3f &srcPosition, const Imath::V3f &srcTangent, const Imath::V3f &dstPosition, const Imath::V3f &dstTangent, State state = NormalState, const Imath::Color3f *userColor = nullptr ) const override;
 		Imath::V3f closestPointOnConnection( const Imath::V3f &p, const Imath::V3f &srcPosition, const Imath::V3f &srcTangent, const Imath::V3f &dstPosition, const Imath::V3f &dstTangent ) const override;
 		void renderAuxiliaryConnection( const Imath::Box2f &srcNodeFrame, const Imath::Box2f &dstNodeFrame, State state ) const override;
 		void renderAuxiliaryConnection( const Imath::V2f &srcPosition, const Imath::V2f &srcTangent, const Imath::V2f &dstPosition, const Imath::V2f &dstTangent, State state ) const override;
-
 		void renderBackdrop( const Imath::Box2f &box, State state = NormalState, const Imath::Color3f *userColor = nullptr ) const override;
+		Imath::V2f renderAnnotation( const Imath::V2f &origin, const std::string &text, State state = NormalState, const Imath::Color3f *userColor = nullptr ) const override;
 
 		void renderTranslateHandle( Axes axes, State state = NormalState ) const override;
 		void renderRotateHandle( Axes axes, State state = NormalState, const Imath::V3f &highlightVector = Imath::V3f( 0 ) ) const override;
 		void renderScaleHandle( Axes axes, State state = NormalState ) const override;
 
-		void renderAnimationCurve( const Imath::V2f &start, const Imath::V2f &end, const Imath::V2f &startTangent, const Imath::V2f &endTangent, State state, const Imath::Color3f *userColor = nullptr ) const override;
+		void renderAnimationCurve( const std::vector< Imath::V2f > &vertices, bool inKeyRange, State state, const Imath::Color3f *userColor = nullptr ) const override;
 		void renderAnimationKey( const Imath::V2f &position, State state, float size = 2.0, const Imath::Color3f *userColor = nullptr ) const override;
 
 		enum Color
@@ -131,6 +131,8 @@ class GAFFERUI_API StandardStyle : public Style
 		void renderConnectionInternal( const Imath::V3f &srcPosition, const Imath::V3f &srcTangent, const Imath::V3f &dstPosition, const Imath::V3f &dstTangent ) const;
 		static unsigned int connectionDisplayList();
 
+		void renderFrameInternal( const Imath::Box2f &contents, float padding, float borderWidth, const Imath::Color3f &userColor ) const;
+
 		static IECoreGL::Shader *shader();
 		static int g_borderParameter;
 		static int g_borderRadiusParameter;
@@ -153,11 +155,10 @@ class GAFFERUI_API StandardStyle : public Style
 		float m_fontScales[LastText];
 
 		IECoreGL::StatePtr m_highlightState;
+		mutable float m_pixelSize;
 
 };
 
 IE_CORE_DECLAREPTR( Style );
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_STANDARDSTYLE_H

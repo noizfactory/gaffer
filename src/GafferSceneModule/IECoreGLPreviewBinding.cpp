@@ -36,8 +36,10 @@
 
 #include "IECoreGLPreviewBinding.h"
 
+#include "GafferScene/Private/IECoreGLPreview/Visualiser.h"
 #include "GafferScene/Private/IECoreGLPreview/ObjectVisualiser.h"
 #include "GafferScene/Private/IECoreGLPreview/AttributeVisualiser.h"
+#include "GafferScene/Private/IECoreGLPreview/LightVisualiser.h"
 
 #include "IECorePython/RefCountedBinding.h"
 
@@ -60,5 +62,66 @@ void GafferSceneModule::bindIECoreGLPreview()
 		.staticmethod( "registerVisualiser" )
 		.def( "allVisualisations", &AttributeVisualiser::allVisualisations )
 		.staticmethod( "allVisualisations" )
+	;
+
+	IECorePython::RefCountedClass<LightVisualiser, IECore::RefCounted>( "LightVisualiser" )
+		.def( "registerLightVisualiser", &LightVisualiser::registerLightVisualiser )
+		.staticmethod( "registerLightVisualiser" )
+	;
+
+	auto v = class_<Visualisation>( "Visualisation", no_init );
+	{
+		scope visualisationScope( v );
+
+		enum_<Visualisation::Scale>("Scale")
+			.value( "None", Visualisation::Scale::None )
+			.value( "None_", Visualisation::Scale::None )
+			.value( "Local", Visualisation::Scale::Local )
+			.value( "Visualiser", Visualisation::Scale::Visualiser )
+			.value( "LocalAndVisualiser", Visualisation::Scale::LocalAndVisualiser )
+		;
+		enum_<Visualisation::Category>("Category")
+			.value( "Generic", Visualisation::Category::Generic )
+			.value( "Frustum", Visualisation::Category::Frustum )
+		;
+		enum_<Visualisation::ColorSpace>( "ColorSpace" )
+			.value( "Scene", Visualisation::ColorSpace::Scene )
+			.value( "Display", Visualisation::ColorSpace::Display )
+		;
+	}
+	v.def( init<
+				IECoreGL::ConstRenderablePtr,
+				Visualisation::Scale,
+				Visualisation::Category,
+				bool
+			>(
+				(
+					arg( "renderable" ),
+					arg( "scale" ) = Visualisation::Scale::Local,
+					arg( "category" ) = Visualisation::Category::Generic,
+					arg( "affectsFramingBound" ) = true
+				)
+			)
+		)
+		.def_readwrite( "renderable", &Visualisation::renderable )
+		.def_readwrite( "scale", &Visualisation::scale )
+		.def_readwrite( "category", &Visualisation::category )
+		.def_readwrite( "affectsFramingBound", &Visualisation::affectsFramingBound )
+		.def_readwrite( "colorSpace", &Visualisation::colorSpace )
+		.def(
+			"createGeometry", &Visualisation::createGeometry,
+			( arg( "renderable" ), arg( "colorSpace" ) = Visualisation::ColorSpace::Display )
+		)
+		.staticmethod( "createGeometry" )
+		.def(
+			"createOrnament", &Visualisation::createOrnament,
+			( arg( "renderable" ), arg( "affectsFramingBounds" ), arg( "colorSpace" ) = Visualisation::ColorSpace::Display )
+		)
+		.staticmethod( "createOrnament" )
+		.def(
+			"createFrustum", &Visualisation::createFrustum,
+			( arg( "renderable" ), arg( "scale" ), arg( "colorSpace" ) = Visualisation::ColorSpace::Display )
+		)
+		.staticmethod( "createFrustum" )
 	;
 }

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_OPENGLATTRIBUTES_H
-#define GAFFERSCENE_OPENGLATTRIBUTES_H
+#pragma once
 
 #include "GafferScene/Attributes.h"
 
@@ -47,15 +46,13 @@ class GAFFERSCENE_API OpenGLAttributes : public GafferScene::Attributes
 
 	public :
 
-		OpenGLAttributes( const std::string &name=defaultName<OpenGLAttributes>() );
+		explicit OpenGLAttributes( const std::string &name=defaultName<OpenGLAttributes>() );
 		~OpenGLAttributes() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::OpenGLAttributes, OpenGLAttributesTypeId, Attributes );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::OpenGLAttributes, OpenGLAttributesTypeId, Attributes );
 
 };
 
 IE_CORE_DECLAREPTR( OpenGLAttributes )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_OPENGLATTRIBUTES_H

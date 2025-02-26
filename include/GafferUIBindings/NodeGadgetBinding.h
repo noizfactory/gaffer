@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUIBINDINGS_NODEGADGETBINDING_H
-#define GAFFERUIBINDINGS_NODEGADGETBINDING_H
+#pragma once
 
 #include "GafferUIBindings/GadgetBinding.h"
 
@@ -81,7 +80,7 @@ class NodeGadgetWrapper : public GadgetWrapper<WrappedType>
 						);
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -110,7 +109,7 @@ class NodeGadgetWrapper : public GadgetWrapper<WrappedType>
 						);
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -123,5 +122,3 @@ class NodeGadgetWrapper : public GadgetWrapper<WrappedType>
 } // namespace GafferUIBindings
 
 #include "GafferUIBindings/NodeGadgetBinding.inl"
-
-#endif // GAFFERUIBINDINGS_NODEGADGETBINDING_H

@@ -35,14 +35,15 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PLUG_H
-#define GAFFER_PLUG_H
+#pragma once
 
 #include "Gaffer/FilteredChildIterator.h"
 #include "Gaffer/FilteredRecursiveChildIterator.h"
 #include "Gaffer/GraphComponent.h"
 
 #include "IECore/Object.h"
+
+#include <list>
 
 namespace Gaffer
 {
@@ -140,7 +141,7 @@ class GAFFER_API Plug : public GraphComponent
 			All = Dynamic | Serialisable | AcceptsInputs | Cacheable | AcceptsDependencyCycles
 		};
 
-		Plug( const std::string &name=defaultName<Plug>(), Direction direction=In, unsigned flags=Default );
+		explicit Plug( const std::string &name=defaultName<Plug>(), Direction direction=In, unsigned flags=Default );
 		~Plug() override;
 
 		template<typename T=Plug, Plug::Direction D=Plug::Invalid>
@@ -178,7 +179,7 @@ class GAFFER_API Plug : public GraphComponent
 		/// @name Connections
 		///////////////////////////////////////////////////////////////////////
 		//@{
-		typedef std::list<Plug *> OutputContainer;
+		using OutputContainer = std::list<Plug *>;
 		/// Plugs may accept or reject a potential input by
 		/// implementing this method to return true for
 		/// acceptance and false for rejection. Implementations
@@ -226,8 +227,10 @@ class GAFFER_API Plug : public GraphComponent
 
 	protected :
 
+		void nameChanged( IECore::InternedString oldName ) override;
 		void parentChanging( Gaffer::GraphComponent *newParent ) override;
 		void parentChanged( Gaffer::GraphComponent *oldParent ) override;
+		void childrenReordered( const std::vector<size_t> &oldIndices ) override;
 
 		/// Initiates the propagation of dirtiness from the specified
 		/// plug to its outputs and affected plugs (as defined by
@@ -242,9 +245,19 @@ class GAFFER_API Plug : public GraphComponent
 		/// connected to the signal.
 		virtual void dirty();
 
+		/// Makes any pending calls to `dirty()` that would otherwise be
+		/// delayed by a DirtyPropagationScope. May be called by plugs
+		/// that wish to allow edits and computes to be interleaved within
+		/// a single DirtyPropagationScope, requiring caches to be invalidated
+		/// before the scope is closed.
+		///
+		/// > Note : Never calls `plugDirtiedSignal()` - that is always
+		/// > deferred until the DirtyPropagationScope closes.
+		static void flushDirtyPropagationScope();
+
 	private :
 
-		static void propagateDirtinessForParentChange( Plug *plugToDirty );
+		static void propagateDirtinessAtLeaves( Plug *plugToDirty );
 
 		void setFlagsInternal( unsigned flags );
 
@@ -279,7 +292,7 @@ IE_CORE_DECLAREPTR( Plug );
 template<typename T, Plug::Direction D>
 struct Plug::TypePredicate
 {
-	typedef T ChildType;
+	using ChildType = T;
 
 	bool operator()( const GraphComponentPtr &g ) const
 	{
@@ -300,7 +313,7 @@ struct Plug::TypePredicate
 template<Plug::Direction D=Plug::Invalid, typename T=Plug>
 struct PlugPredicate
 {
-	typedef T ChildType;
+	using ChildType = T;
 
 	bool operator()( const GraphComponentPtr &g ) const
 	{
@@ -317,17 +330,6 @@ struct PlugPredicate
 	}
 };
 
-/// \deprecated Use Plug::Iterator etc instead
-typedef FilteredChildIterator<PlugPredicate<> > PlugIterator;
-typedef FilteredChildIterator<PlugPredicate<Plug::In, Plug> > InputPlugIterator;
-typedef FilteredChildIterator<PlugPredicate<Plug::Out, Plug> > OutputPlugIterator;
-
-typedef FilteredRecursiveChildIterator<PlugPredicate<>, PlugPredicate<> > RecursivePlugIterator;
-typedef FilteredRecursiveChildIterator<PlugPredicate<Plug::In, Plug>, PlugPredicate<> > RecursiveInputPlugIterator;
-typedef FilteredRecursiveChildIterator<PlugPredicate<Plug::Out, Plug>, PlugPredicate<> > RecursiveOutputPlugIterator;
-
 } // namespace Gaffer
 
 #include "Gaffer/Plug.inl"
-
-#endif // GAFFER_PLUG_H

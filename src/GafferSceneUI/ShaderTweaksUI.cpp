@@ -36,8 +36,6 @@
 
 #include "GafferScene/ShaderTweaks.h"
 
-#include "GafferScene/TweakPlug.h"
-
 #include "GafferUI/Nodule.h"
 #include "GafferUI/NoduleLayout.h"
 #include "GafferUI/PlugAdder.h"
@@ -45,11 +43,13 @@
 #include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/ScriptNode.h"
+#include "Gaffer/TweakPlug.h"
 #include "Gaffer/UndoScope.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferUI;
 using namespace GafferScene;
@@ -72,7 +72,9 @@ class TweakPlugAdder : public PlugAdder
 			plugsParent->node()->plugInputChangedSignal().connect( boost::bind( &TweakPlugAdder::plugInputChanged, this, ::_1 ) );
 			plugsParent->childAddedSignal().connect( boost::bind( &TweakPlugAdder::childAdded, this ) );
 			plugsParent->childRemovedSignal().connect( boost::bind( &TweakPlugAdder::childRemoved, this ) );
-			Metadata::plugValueChangedSignal().connect( boost::bind( &TweakPlugAdder::plugMetadataChanged, this, ::_1, ::_2, ::_3, ::_4 ) );
+			Metadata::plugValueChangedSignal( plugsParent->node() ).connect(
+				boost::bind( &TweakPlugAdder::plugMetadataChanged, this, ::_1, ::_2 )
+			);
 			buttonReleaseSignal().connect( boost::bind( &TweakPlugAdder::buttonRelease, this, ::_2 ) );
 
 			updateVisibility();
@@ -119,7 +121,7 @@ class TweakPlugAdder : public PlugAdder
 		{
 			vector<Plug *> result;
 
-			for( TweakPlugIterator it( m_plugsParent.get() ); !it.done(); ++it )
+			for( TweakPlug::Iterator it( m_plugsParent.get() ); !it.done(); ++it )
 			{
 				TweakPlug *tweakPlug = it->get();
 				if( input )
@@ -200,9 +202,9 @@ class TweakPlugAdder : public PlugAdder
 			updateVisibility();
 		}
 
-		void plugMetadataChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug )
+		void plugMetadataChanged( const Gaffer::Plug *plug, IECore::InternedString key )
 		{
-			if( MetadataAlgo::childAffectedByChange( m_plugsParent.get(), nodeTypeId, plugPath, plug ) )
+			if( plug->parent() == m_plugsParent )
 			{
 				if( key == g_visibleKey || key == g_noduleTypeKey )
 				{
@@ -220,7 +222,7 @@ struct Registration
 
 	Registration()
 	{
-		NoduleLayout::registerCustomGadget( "GafferSceneUI.ShaderTweaksUI.PlugAdder", boost::bind( &create, ::_1 ) );
+		NoduleLayout::registerCustomGadget( "GafferSceneUI.ShaderTweaksUI.PlugAdder", &create );
 	}
 
 	private :
@@ -235,4 +237,3 @@ struct Registration
 Registration g_registration;
 
 } // namespace
-

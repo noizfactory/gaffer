@@ -1,11 +1,25 @@
 #! /bin/bash
 # BuildTarget: images/expansion.png
+# BuildTarget: images/plus.png
+# BuildTarget: images/nodeSetNodeSelection.png
+# BuildTarget: images/nodeSetFocusNode.png
+# BuildTarget: images/nodeSetStandardSet.png
+# BuildTarget: images/layoutButton.png
+# BuildTarget: images/objects.png
+# BuildTarget: images/addObjects.png
+# BuildTarget: images/replaceObjects.png
+# BuildTarget: images/collapsibleArrowRight.png
+# BuildTarget: images/timelinePlay.png
+# BuildTarget: images/removeObjects.png
+# BuildTarget: images/gafferSceneUITranslateTool.png
+# BuildTarget: images/gafferSceneUIRotateTool.png
 
 set -e
 
 cp $GAFFER_ROOT/graphics/expansion.png images
 cp $GAFFER_ROOT/graphics/plus.png images
-cp $GAFFER_ROOT/graphics/nodeSetDriverNodeSelection.png images
+cp $GAFFER_ROOT/graphics/nodeSetNodeSelection.png images
+cp $GAFFER_ROOT/graphics/nodeSetFocusNode.png images
 cp $GAFFER_ROOT/graphics/nodeSetStandardSet.png images
 cp $GAFFER_ROOT/graphics/layoutButton.png images
 cp $GAFFER_ROOT/graphics/objects.png images

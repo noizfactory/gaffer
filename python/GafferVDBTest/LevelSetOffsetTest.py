@@ -34,26 +34,18 @@
 #
 ##########################################################################
 
-
-import os
+import pathlib
 
 import IECore
-import IECoreScene
-import IECoreVDB
 
-import GafferTest
 import GafferScene
 import GafferVDB
 import GafferVDBTest
 
-
 class LevelSetOffsetTest( GafferVDBTest.VDBTestCase ) :
-	def setUp( self ) :
-		GafferVDBTest.VDBTestCase.setUp( self )
-		self.sourcePath = os.path.join( self.dataDir, "sphere.vdb" )
-		self.sceneInterface = IECoreScene.SceneInterface.create( self.sourcePath, IECore.IndexedIO.OpenMode.Read )
 
 	def testBoundsUpdated( self ) :
+
 		sphere = GafferScene.Sphere()
 		sphere["radius"].setValue( 5 )
 
@@ -69,13 +61,28 @@ class LevelSetOffsetTest( GafferVDBTest.VDBTestCase ) :
 
 		# sphere centred at the origin so we just take the x value of the max and it should equal the radius
 		# hopefully the leafCounts should go like the square of the radius.
-		self.assertEqualTolerance( 5.0, levelSetOffset['out'].bound( "sphere" ).max()[0], 0.05 )
+		self.assertAlmostEqual( 5.0, levelSetOffset['out'].bound( "sphere" ).max()[0], delta = 0.05 )
 		self.assertTrue( 1020 <= levelSetOffset['out'].object( "sphere" ).findGrid( "surface" ).leafCount() <= 1040 )
 
 		levelSetOffset["offset"].setValue( -1.0 )
-		self.assertEqualTolerance( 6.0, levelSetOffset['out'].bound( "sphere" ).max()[0], 0.05 )
+		self.assertAlmostEqual( 6.0, levelSetOffset['out'].bound( "sphere" ).max()[0], delta = 0.05 )
 		self.assertTrue( 1420 <= levelSetOffset['out'].object( "sphere" ).findGrid( "surface" ).leafCount() <= 1450)
 
 		levelSetOffset["offset"].setValue( 1.0 )
-		self.assertEqualTolerance( 4.0, levelSetOffset['out'].bound( "sphere" ).max()[0], 0.05 )
+		self.assertAlmostEqual( 4.0, levelSetOffset['out'].bound( "sphere" ).max()[0], delta = 0.05 )
 		self.assertTrue( 640 <= levelSetOffset['out'].object( "sphere" ).findGrid( "surface" ).leafCount() <= 650)
+
+	def testParallelGetValueComputesObjectOnce( self ) :
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setValue( pathlib.Path( __file__ ).parent / "data" / "sphere.vdb" )
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/vdb" ] ) )
+
+		offset = GafferVDB.LevelSetOffset()
+		offset["in"].setInput( reader["out"] )
+		offset["filter"].setInput( pathFilter["out"] )
+		offset["grid"].setValue( "ls_sphere" )
+
+		self.assertParallelGetValueComputesObjectOnce( offset["out"], "/vdb" )

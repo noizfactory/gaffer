@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_OFFSET_H
-#define GAFFERIMAGE_OFFSET_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -48,10 +47,10 @@ class GAFFERIMAGE_API Offset : public ImageProcessor
 {
 	public :
 
-		Offset( const std::string &name=defaultName<Offset>() );
+		explicit Offset( const std::string &name=defaultName<Offset>() );
 		~Offset() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Offset, OffsetTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Offset, OffsetTypeId, ImageProcessor );
 
 		Gaffer::V2iPlug *offsetPlug();
 		const Gaffer::V2iPlug *offsetPlug() const;
@@ -61,9 +60,11 @@ class GAFFERIMAGE_API Offset : public ImageProcessor
 	protected :
 
 		void hashDataWindow( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 
 		Imath::Box2i computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const override;
+		IECore::ConstIntVectorDataPtr computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 	private :
@@ -75,5 +76,3 @@ class GAFFERIMAGE_API Offset : public ImageProcessor
 IE_CORE_DECLAREPTR( Offset )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_OFFSET_H

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_AUXILIARYCONNECTIONSGADGET_H
-#define GAFFERUI_AUXILIARYCONNECTIONSGADGET_H
+#pragma once
 
 #include "GafferUI/Gadget.h"
 
@@ -92,7 +91,9 @@ class GAFFERUI_API AuxiliaryConnectionsGadget : public Gadget
 		friend class GraphGadget;
 
 		void parentChanging( Gaffer::GraphComponent *newParent ) override;
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
@@ -118,19 +119,19 @@ class GAFFERUI_API AuxiliaryConnectionsGadget : public Gadget
 
 		struct Connections
 		{
-			boost::signals::scoped_connection plugInputChangedConnection;
-			boost::signals::scoped_connection noduleAddedConnection;
-			boost::signals::scoped_connection noduleRemovedConnection;
-			boost::signals::scoped_connection childRemovedConnection;
+			Gaffer::Signals::ScopedConnection plugInputChangedConnection;
+			Gaffer::Signals::ScopedConnection noduleAddedConnection;
+			Gaffer::Signals::ScopedConnection noduleRemovedConnection;
+			Gaffer::Signals::ScopedConnection childRemovedConnection;
 			bool dirty = true;
 		};
 
-		boost::signals::scoped_connection m_graphGadgetChildAddedConnection;
-		boost::signals::scoped_connection m_graphGadgetChildRemovedConnection;
+		Gaffer::Signals::ScopedConnection m_graphGadgetChildAddedConnection;
+		Gaffer::Signals::ScopedConnection m_graphGadgetChildRemovedConnection;
 
 		// Key is the NodeGadget at the destination end of the connections
 		// tracked by `Connections.dirty`.
-		typedef std::unordered_map<const NodeGadget *, Connections> NodeGadgetConnections;
+		using NodeGadgetConnections = std::unordered_map<const NodeGadget *, Connections>;
 		mutable NodeGadgetConnections m_nodeGadgetConnections;
 
 		// An auxiliary connection that we will draw.
@@ -182,5 +183,3 @@ class GAFFERUI_API AuxiliaryConnectionsGadget : public Gadget
 };
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_AUXILIARYCONNECTIONSGADGET_H

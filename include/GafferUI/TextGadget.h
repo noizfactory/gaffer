@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_TEXTGADGET_H
-#define GAFFERUI_TEXTGADGET_H
+#pragma once
 
 #include "GafferUI/Gadget.h"
 
@@ -50,7 +49,7 @@ class GAFFERUI_API TextGadget : public Gadget
 
 	public :
 
-		TextGadget( const std::string &text );
+		explicit TextGadget( const std::string &text );
 		~TextGadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::TextGadget, TextGadgetTypeId, Gadget );
@@ -58,25 +57,25 @@ class GAFFERUI_API TextGadget : public Gadget
 		const std::string &getText() const;
 		void setText( const std::string &text );
 
+		void setDimmed( bool dimmed );
+		bool getDimmed() const;
+
 		Imath::Box3f bound() const override;
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
-		bool hasLayer( Layer layer ) const override { return layer == Layer::Main; };
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
 		std::string m_text;
 		Imath::Box3f m_bound;
+		bool m_dimmed;
 
 };
 
 IE_CORE_DECLAREPTR( TextGadget );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<TextGadget> > TextGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<TextGadget> > RecursiveTextGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_TEXTGADGET_H

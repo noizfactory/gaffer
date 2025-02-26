@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_DILATE_H
-#define GAFFERIMAGE_DILATE_H
+#pragma once
 
 #include "GafferImage/RankFilter.h"
 
@@ -47,15 +46,13 @@ class GAFFERIMAGE_API Dilate : public RankFilter
 
 	public :
 
-		Dilate( const std::string &name=defaultName<Dilate>() );
+		explicit Dilate( const std::string &name=defaultName<Dilate>() );
 		~Dilate() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Dilate, DilateTypeId, RankFilter );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Dilate, DilateTypeId, RankFilter );
 
 };
 
 IE_CORE_DECLAREPTR( Dilate );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_DILATE_H

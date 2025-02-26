@@ -34,25 +34,24 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_MIRROR_H
-#define GAFFERIMAGE_MIRROR_H
+#pragma once
 
-#include "GafferImage/ImageProcessor.h"
+#include "GafferImage/FlatImageProcessor.h"
 
 #include "Gaffer/CompoundNumericPlug.h"
 
 namespace GafferImage
 {
 
-class GAFFERIMAGE_API Mirror : public ImageProcessor
+class GAFFERIMAGE_API Mirror : public FlatImageProcessor
 {
 
 	public :
 
-		Mirror( const std::string &name=defaultName<Mirror>() );
+		explicit Mirror( const std::string &name=defaultName<Mirror>() );
 		~Mirror() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Mirror, MirrorTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Mirror, MirrorTypeId, FlatImageProcessor );
 
 		Gaffer::BoolPlug *horizontalPlug();
 		const Gaffer::BoolPlug *horizontalPlug() const;
@@ -79,5 +78,3 @@ class GAFFERIMAGE_API Mirror : public ImageProcessor
 IE_CORE_DECLAREPTR( Mirror )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_MIRROR_H

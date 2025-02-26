@@ -46,6 +46,13 @@ import IECoreArnold
 import GafferUI
 import GafferArnold
 
+if [ int( x ) for x in arnold.AiGetVersion()[:3] ] < [ 7, 3, 1 ] :
+	__AI_NODE_IMAGER = arnold.AI_NODE_DRIVER
+else :
+	__AI_NODE_IMAGER = arnold.AI_NODE_IMAGER
+
+## \todo Rename. This isn't about loading shaders, it's about loading all sorts
+# of Arnold node definitions.
 def appendShaders( menuDefinition, prefix="/Arnold" ) :
 
 	MenuItem = collections.namedtuple( "MenuItem", [ "menuPath", "nodeCreator" ] )
@@ -56,7 +63,7 @@ def appendShaders( menuDefinition, prefix="/Arnold" ) :
 	uncategorisedMenuItems = []
 	with IECoreArnold.UniverseBlock( writable = False ) :
 
-		it = arnold.AiUniverseGetNodeEntryIterator( arnold.AI_NODE_SHADER | arnold.AI_NODE_LIGHT )
+		it = arnold.AiUniverseGetNodeEntryIterator( arnold.AI_NODE_SHADER | arnold.AI_NODE_LIGHT | arnold.AI_NODE_COLOR_MANAGER | __AI_NODE_IMAGER )
 
 		while not arnold.AiNodeEntryIteratorFinished( it ) :
 
@@ -75,12 +82,26 @@ def appendShaders( menuDefinition, prefix="/Arnold" ) :
 					nodeCreator = functools.partial( __shaderCreator, shaderName, GafferArnold.ArnoldLightFilter, nodeName )
 				else :
 					nodeCreator = functools.partial( __shaderCreator, shaderName, GafferArnold.ArnoldShader, nodeName )
-			else :
+			elif arnold.AiNodeEntryGetType( nodeEntry ) == arnold.AI_NODE_LIGHT :
 				menuPath = "Light"
 				if shaderName != "mesh_light" :
 					nodeCreator = functools.partial( __shaderCreator, shaderName, GafferArnold.ArnoldLight, nodeName )
 				else :
 					nodeCreator = GafferArnold.ArnoldMeshLight
+			elif arnold.AiNodeEntryGetType( nodeEntry ) == arnold.AI_NODE_COLOR_MANAGER :
+				menuPath = "Globals/Color Manager"
+				nodeCreator = functools.partial( __colorManagerCreator, shaderName, nodeName )
+				displayName = displayName.replace( "Color Manager ", "" )
+			else :
+				assert( arnold.AiNodeEntryGetType( nodeEntry ) == __AI_NODE_IMAGER )
+				if [ int( x ) for x in arnold.AiGetVersion()[:3] ] < [ 7, 3, 1 ] :
+					# Imagers masquerade as drivers, but we can identify them
+					# using metadata.
+					if __aiMetadataGetStr( nodeEntry, "", "subtype" ) != "imager" :
+						continue
+				menuPath = "Globals/Imagers"
+				nodeCreator = functools.partial( __shaderCreator, shaderName, GafferArnold.ArnoldShader, nodeName )
+				displayName = displayName.replace( "Imager ", "" )
 
 			if category :
 				menuPath += "/" + category.strip( "/" )
@@ -123,9 +144,15 @@ def __shaderCreator( shaderName, nodeType, nodeName ) :
 
 	return node
 
+def __colorManagerCreator( colorManagerName, nodeName ) :
+
+	node = GafferArnold.ArnoldColorManager( nodeName )
+	node.loadColorManager( colorManagerName )
+	return node
+
 def __aiMetadataGetStr( nodeEntry, paramName, name ) :
 
-	value = arnold.AtStringReturn()
+	value = arnold.AtStringStruct()
 	if arnold.AiMetaDataGetStr( nodeEntry, paramName, name, value ) :
 		return arnold.AtStringToStr( value )
 

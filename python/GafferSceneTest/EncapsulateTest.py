@@ -34,8 +34,9 @@
 #
 ##########################################################################
 
-import inspect
+import imath
 import unittest
+import subprocess
 
 import IECore
 
@@ -55,19 +56,22 @@ class EncapsulateTest( GafferSceneTest.SceneTestCase ) :
 
 		sphere = GafferScene.Sphere()
 		sphere["sets"].setValue( "sphereSet" )
+		sphere["transform"]["translate"].setValue( imath.V3f( 1, 2, 3 ) )
 
 		cube = GafferScene.Cube()
 		cube["sets"].setValue( "cubeSet" )
 
 		groupB = GafferScene.Group()
 		groupB["in"][0].setInput( sphere["out"] )
-		groupB["in"][1].setInput( sphere["out"] )
+		groupB["in"][1].setInput( cube["out"] )
 		groupB["name"].setValue( "groupB" )
+		groupB["transform"]["rotate"].setValue( imath.V3f( 100, 200, 300 ) )
 
 		groupA = GafferScene.Group()
 		groupA["in"][0].setInput( groupB["out"] )
 		groupA["in"][1].setInput( sphere["out"] )
 		groupA["name"].setValue( "groupA" )
+		groupA["transform"]["rotate"].setValue( imath.V3f( 400, 500, 600 ) )
 
 		# When there is no filter attached, the node
 		# should be an exact pass-through.
@@ -129,6 +133,35 @@ class EncapsulateTest( GafferSceneTest.SceneTestCase ) :
 		self.assertEqual( encapsulate["out"].set( "sphereSet" ).value.paths(), [ "/groupA/sphere" ] )
 		self.assertEqual( encapsulate["out"].set( "cubeSet" ).value.paths(), [] )
 
+		with self.assertRaisesRegex( Gaffer.ProcessException, "Encapsulate.out.childNames : Tried to access path \"/groupA/groupB/sphere\", but its ancestor has been converted to a capsule" ):
+			encapsulate["out"].childNames( "/groupA/groupB/sphere" )
+
+		with self.assertRaisesRegex( Gaffer.ProcessException, "Encapsulate.out.object : Tried to access path \"/groupA/groupB/sphere\", but its ancestor has been converted to a capsule" ):
+			encapsulate["out"].object( "/groupA/groupB/sphere" )
+
+		# Check that the capsule expands during rendering to render the same as the unencapsulated scene.
+		# ( Except for the light links, which aren't output by the Capsule currently )
+		self.assertScenesRenderSame( encapsulate["in"], encapsulate["out"], expandProcedurals = True, ignoreLinks = True )
+
+		# As a double check, test that this setup works properly with Unencapsulate
+		unencapsulateFilter = GafferScene.PathFilter()
+
+		unencapsulate = GafferScene.Unencapsulate()
+		unencapsulate["in"].setInput( encapsulate["out"] )
+		unencapsulate["filter"].setInput( unencapsulateFilter["out"] )
+
+		# We can reverse the encapsulate by unencapsulating everything
+		unencapsulateFilter["paths"].setValue( IECore.StringVectorData( [ "..." ] ) )
+		self.assertScenesEqual( encapsulate["in"], unencapsulate["out"] )
+
+		# Or by targetting just the path that was encapsulated
+		unencapsulateFilter["paths"].setValue( IECore.StringVectorData( [ "/groupA/groupB" ] ) )
+		self.assertScenesEqual( encapsulate["in"], unencapsulate["out"] )
+
+		# But if we don't target that path, the scene stays encapsulated
+		unencapsulateFilter["paths"].setValue( IECore.StringVectorData( [ "/groupA/" ] ) )
+		self.assertScenesEqual( encapsulate["out"], unencapsulate["out"] )
+
 	def testCapsuleHash( self ) :
 
 		sphere = GafferScene.Sphere()
@@ -177,6 +210,27 @@ class EncapsulateTest( GafferSceneTest.SceneTestCase ) :
 		encapsulate["in"].setInput( group1["out"] )
 		assertHashesUnique( "/group" )
 
+		# Test changing the filter or globals
+		group2["in"][1].setInput( group1["out"] )
+
+		options = GafferScene.CustomOptions()
+		options["in"].setInput( group2["out"] )
+
+		encapsulate["in"].setInput( options["out"] )
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/group/group" ] ) )
+
+		c = encapsulate["out"].object( "/group/group" )
+
+		# Changing filter doesn't affect hash
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/group/group", "/group/group2" ] ) )
+		self.assertEqual( c, encapsulate["out"].object( "/group/group" ) )
+
+		# Changing globals shouldn't affect hash
+		# \todo : But it currently does due to current issue with handling motion blur.  Change this
+		# assertNotEqual to an assertEqual after fixing shutter handling for capsules
+		options["options"].addChild( Gaffer.NameValuePlug( "test", IECore.IntData( 10 ) ) )
+		self.assertNotEqual( c, encapsulate["out"].object( "/group/group" ) )
+
 	def testSetMemberAtRoot( self ) :
 
 		sphere = GafferScene.Sphere()
@@ -195,6 +249,68 @@ class EncapsulateTest( GafferSceneTest.SceneTestCase ) :
 		encapsulate["filter"].setInput( pathFilter["out"] )
 
 		self.assertEqual( encapsulate["out"].set( "A" ).value.paths(), [ "/group/sphere" ] )
+
+	def testSignalThreadSafety( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["random"] = Gaffer.Random()
+		script["random"]["seedVariable"].setValue( "collect:rootName" )
+
+		script["sphere"] = GafferScene.Sphere()
+		script["sphere"]["radius"].setInput( script["random"]["outFloat"] )
+
+		script["filter"] = GafferScene.PathFilter()
+		script["filter"]["paths"].setValue( IECore.StringVectorData( [ "/sphere" ] ) )
+
+		script["encapsulate"] = GafferScene.Encapsulate()
+		script["encapsulate"]["in"].setInput( script["sphere"]["out"] )
+		script["encapsulate"]["filter"].setInput( script["filter"]["out"] )
+
+		script["collect"] = GafferScene.CollectScenes()
+		script["collect"]["in"].setInput( script["encapsulate"]["out"] )
+		script["collect"]["rootNames"].setValue( IECore.StringVectorData( [ str( x ) for x in range( 0, 100 ) ] ) )
+
+		script["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
+		script.save()
+
+		# This exposed a crash caused by non-threadsafe access to signals from Capsules. It
+		# will throw if the subprocess crashes.
+		subprocess.check_output( [ str( Gaffer.executablePath() ), "stats", script["fileName"].getValue(), "-scene", "collect" ] )
+
+	@unittest.expectedFailure
+	def testInheritTransformSamples( self ):
+		# This turns out to be just an illustration of the known issue where you can't set motion blur
+		# attributes from outside the Capsule. In this case, it feels like the attributes should be set inside
+		# the Capsule, because they are set on '/group' before the Encapsulate, but attributes on the root
+		# location are stored outside the Capsule, so it hits the same problem.
+
+		sphere = GafferScene.Sphere()
+		sphere["expression"] = Gaffer.Expression()
+		sphere["expression"].setExpression( 'parent["transform"]["translate"]["x"] = context.getFrame()' )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sphere["out"] )
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ '/group' ] ) )
+
+		standardAttributes = GafferScene.StandardAttributes()
+		standardAttributes["in"].setInput( group["out"] )
+		standardAttributes["filter"].setInput( pathFilter["out"] )
+		standardAttributes["attributes"]["transformBlurSegments"]["value"].setValue( 4 )
+		standardAttributes["attributes"]["transformBlurSegments"]["enabled"].setValue( True )
+
+		standardOptions = GafferScene.StandardOptions()
+		standardOptions["in"].setInput( standardAttributes["out"] )
+		standardOptions["options"]["transformBlur"]["value"].setValue( True )
+		standardOptions["options"]["transformBlur"]["enabled"].setValue( True )
+
+		encapsulate = GafferScene.Encapsulate()
+		encapsulate["in"].setInput( standardOptions["out"] )
+		encapsulate["filter"].setInput( pathFilter["out"] )
+
+		self.assertScenesRenderSame( encapsulate["in"], encapsulate["out"], expandProcedurals = True, ignoreLinks = True )
 
 if __name__ == "__main__":
 	unittest.main()

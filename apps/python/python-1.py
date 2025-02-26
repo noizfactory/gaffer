@@ -115,13 +115,14 @@ class python( Gaffer.Application ) :
 		try:
 			sys.argv = [ args[ "file" ].value ] + list( args[ "arguments" ] )
 			try :
-				execfile(
-					args["file"].value,
-					{
-						"argv" : args["arguments"],
-						"__name__" : "__main__",
-					}
-				)
+				with open( args["file"].value, encoding = "utf-8" ) as f :
+					exec(
+						compile( f.read(), args["file"].value, "exec" ),
+						{
+							"argv" : args["arguments"],
+							"__name__" : "__main__",
+						}
+					)
 				return 0
 			except SystemExit as e :
 				# don't print traceback when a sys.exit was called, but return the exit code as the result

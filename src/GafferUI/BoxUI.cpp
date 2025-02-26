@@ -41,10 +41,11 @@
 #include "Gaffer/Box.h"
 #include "Gaffer/BoxIn.h"
 #include "Gaffer/BoxOut.h"
+#include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/UndoScope.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace IECore;
 using namespace Gaffer;
@@ -73,6 +74,11 @@ class BoxPlugAdder : public PlugAdder
 			}
 
 			if( endpoint->node() == m_box )
+			{
+				return false;
+			}
+
+			if( MetadataAlgo::readOnly( m_box.get() ) )
 			{
 				return false;
 			}
@@ -119,7 +125,7 @@ struct Registration
 
 	Registration()
 	{
-		NoduleLayout::registerCustomGadget( "GafferUI.BoxUI.PlugAdder", boost::bind( &create, ::_1 ) );
+		NoduleLayout::registerCustomGadget( "GafferUI.BoxUI.PlugAdder", &create );
 	}
 
 	private :
@@ -138,4 +144,3 @@ struct Registration
 Registration g_registration;
 
 } // namespace
-

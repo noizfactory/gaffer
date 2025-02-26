@@ -221,5 +221,126 @@ class LoopTest( GafferTest.TestCase ) :
 		self.assertIsInstance( s2["c"]["previous"], Gaffer.IntPlug )
 		self.assertIsInstance( s2["c"]["next"], Gaffer.IntPlug )
 
+	def testComputeDuringDirtyPropagation( self ) :
+
+		# Make a loop
+
+		loop = self.intLoop()
+		add = GafferTest.AddNode()
+
+		loop["in"].setValue( 0 )
+		loop["next"].setInput( add["sum"] )
+		loop["iterations"].setValue( 5 )
+
+		add["op1"].setInput( loop["previous"] )
+		add["op2"].setValue( 1 )
+
+		self.assertEqual( loop["out"].getValue(), 5 )
+
+		# Edit `loop["in"]` to trigger dirty propagation, and capture the
+		# value of each plug at the point `plugDirtiedSignal()` is emitted
+		# for it.
+
+		def plugValue( plug ) :
+
+			with Gaffer.Context() as c :
+
+				if plug in {
+					loop["next"], loop["previous"], add["op1"], add["sum"]
+				} :
+					# These plugs are sensitive to "loop:index", so we provide it
+					# manually. We are spying on the values in the last-but-one
+					# iteration of the loop.
+					c["loop:index"] = 3
+
+				return plug.getValue()
+
+		valuesWhenDirtied = {}
+		def plugDirtied( plug ) :
+
+			valuesWhenDirtied[plug] = plugValue( plug )
+
+		loop.plugDirtiedSignal().connect( plugDirtied )
+		add.plugDirtiedSignal().connect( plugDirtied )
+		loop["in"].setValue( 1 )
+
+		# Check that we saw the values we expected.
+
+		self.assertEqual( valuesWhenDirtied[loop["in"]], 1 )
+		self.assertEqual( valuesWhenDirtied[loop["out"]], 6 )
+		self.assertEqual( valuesWhenDirtied[loop["next"]], 5 )
+		self.assertEqual( valuesWhenDirtied[loop["previous"]], 4 )
+		self.assertEqual( valuesWhenDirtied[add["sum"]], 5 )
+		self.assertEqual( valuesWhenDirtied[add["op1"]], 4 )
+
+		# Double check that we see the same values after
+		# clearing the cache and doing a fresh compute.
+
+		Gaffer.ValuePlug.clearCache()
+		Gaffer.ValuePlug.clearHashCache()
+
+		for plug, value in valuesWhenDirtied.items() :
+			self.assertEqual( plugValue( plug ), value )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration:hashAliasing" } )
+	def testHashAliasingDeadlock( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["loop"] = Gaffer.Loop()
+		script["loop"].setup( Gaffer.StringPlug() )
+
+		# Dumb expression that just sets the value for the next iteration to
+		# the value from the previous iteration. Because of de8ab79d6f958cef3b80954798f8083a346945a7,
+		# the hash for the expression output is identical for every iteration of
+		# the loop, even though the context differs.
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( """parent["loop"]["next"] = parent["loop"]["previous"]""" )
+
+		# Get the result of the loop. This actually computes the _first_ iteration of the loop first,
+		# while computing the hash of the result, and reuses the result for every other loop iteration.
+		script["loop"]["out"].getValue()
+		# Simulate cache eviction by clearing the compute cache.
+		Gaffer.ValuePlug.clearCache()
+		# Get the value again. Now, because the hash is still cached, this will first start the
+		# compute for the _last_ iteration. This leads to a recursive compute, which can cause deadlock
+		# if not handled appropriately.
+		script["loop"]["out"].getValue()
+
+	def testEmptyLoopVariable( self ) :
+
+		loop = self.intLoop()
+
+		loopBody = GafferTest.AddNode()
+		loopBody["op1"].setInput( loop["previous"] )
+		loopBody["op2"].setValue( 2 )
+		loop["next"].setInput( loopBody["sum"] )
+		loop["iterations"].setValue( 4 )
+
+		self.assertEqual( loop["out"].getValue(), 8 )
+
+		loop["indexVariable"].setValue( "" )
+		self.assertEqual( loop["out"].getValue(), 0 )
+
+	def testPreviousIteration( self ) :
+
+		loop = self.intLoop()
+		loop["next"].setInput( loop["previous"] )
+		loop["iterations"].setValue( 10 )
+
+		iteration = loop.previousIteration( loop["out"] )
+		self.assertTrue( iteration[0].isSame( loop["next"] ) )
+		self.assertEqual( iteration[1]["loop:index"], 9 )
+
+		for i in range( 0, 9 ) :
+			with iteration[1] :
+				iteration = loop.previousIteration( loop["previous"] )
+				self.assertTrue( iteration[0].isSame( loop["next"] ) )
+				self.assertEqual( iteration[1]["loop:index"], 8 - i )
+
+		iteration = loop.previousIteration( loop["previous"] )
+		self.assertTrue( iteration[0].isSame( loop["in"] ) )
+		self.assertNotIn( "loop:index", iteration[1] )
+
 if __name__ == "__main__":
 	unittest.main()

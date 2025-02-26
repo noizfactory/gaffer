@@ -34,20 +34,38 @@
 #
 ##########################################################################
 
-from SceneViewTest import SceneViewTest
-from ShaderAssignmentUITest import ShaderAssignmentUITest
-from StandardGraphLayoutTest import StandardGraphLayoutTest
-from SceneGadgetTest import SceneGadgetTest
-from SceneInspectorTest import SceneInspectorTest
-from HierarchyViewTest import HierarchyViewTest
-from DocumentationTest import DocumentationTest
-from ShaderViewTest import ShaderViewTest
-from ShaderUITest import ShaderUITest
-from TranslateToolTest import TranslateToolTest
-from ScaleToolTest import ScaleToolTest
-from RotateToolTest import RotateToolTest
-from ContextAlgoTest import ContextAlgoTest
-from CameraToolTest import CameraToolTest
+from .SceneViewTest import SceneViewTest
+from .ShaderAssignmentUITest import ShaderAssignmentUITest
+from .StandardGraphLayoutTest import StandardGraphLayoutTest
+from .SceneGadgetTest import SceneGadgetTest
+from .SceneInspectorTest import SceneInspectorTest
+from .HierarchyViewTest import HierarchyViewTest
+from .DocumentationTest import DocumentationTest
+from .ShaderViewTest import ShaderViewTest
+from .ShaderUITest import ShaderUITest
+from .TranslateToolTest import TranslateToolTest
+from .ScaleToolTest import ScaleToolTest
+from .RotateToolTest import RotateToolTest
+from .ContextAlgoTest import ContextAlgoTest
+from .CameraToolTest import CameraToolTest
+from .VisualiserTest import VisualiserTest
+from .TransformToolTest import TransformToolTest
+from .CropWindowToolTest import CropWindowToolTest
+from .NodeUITest import NodeUITest
+from .ParameterInspectorTest import ParameterInspectorTest
+from .AttributeInspectorTest import AttributeInspectorTest
+from .HistoryPathTest import HistoryPathTest
+from .LightEditorTest import LightEditorTest
+from .SetMembershipInspectorTest import SetMembershipInspectorTest
+from .SetEditorTest import SetEditorTest
+from .LightToolTest import LightToolTest
+from .OptionInspectorTest import OptionInspectorTest
+from .LightPositionToolTest import LightPositionToolTest
+from .RenderPassEditorTest import RenderPassEditorTest
+from .SelectionToolTest import SelectionToolTest
+from .InspectorColumnTest import InspectorColumnTest
+from .ScriptNodeAlgoTest import ScriptNodeAlgoTest
+from .AttributeEditorTest import AttributeEditorTest
 
 if __name__ == "__main__":
 	unittest.main()

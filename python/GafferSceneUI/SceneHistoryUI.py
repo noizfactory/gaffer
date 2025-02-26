@@ -54,7 +54,7 @@ def appendViewContextMenuItems( viewer, view, menuDefinition ) :
 		{
 			"subMenu" : functools.partial(
 				__historySubMenu,
-				context = view.getContext(),
+				context = view.context(),
 				scene = view["in"],
 				selectedPath = __sceneViewSelectedPath( view )
 			)
@@ -64,9 +64,11 @@ def appendViewContextMenuItems( viewer, view, menuDefinition ) :
 def connectToEditor( editor ) :
 
 	if isinstance( editor, GafferUI.Viewer ) :
-		editor.keyPressSignal().connect( __viewerKeyPress, scoped = False )
-	elif isinstance( editor, GafferSceneUI.HierarchyView ) :
-		editor.keyPressSignal().connect( __hierarchyViewKeyPress, scoped = False )
+		editor.keyPressSignal().connect( __viewerKeyPress )
+	elif isinstance( editor, GafferSceneUI.HierarchyView ) or isinstance( editor, GafferSceneUI.LightEditor ) :
+		editor.keyPressSignal().connect( __hierarchyViewKeyPress )
+	elif isinstance( editor, GafferUI.NodeEditor ) :
+		editor.keyPressSignal().connect( __nodeEditorKeyPress )
 
 ##########################################################################
 # Internal implementation
@@ -104,15 +106,15 @@ def __sceneViewSelectedPath( sceneView ) :
 	else :
 		return None
 
-def __hierarchyViewSelectedPath( hierarchyView ) :
+def __selectedPath( scriptNode ) :
 
-	selection = GafferSceneUI.ContextAlgo.getSelectedPaths( hierarchyView.getContext() )
+	selection = GafferSceneUI.ScriptNodeAlgo.getSelectedPaths( scriptNode )
 	if selection.size() != 1 :
 		return None
 
 	return selection.paths()[0]
 
-def __editSourceNode( context, scene, path ) :
+def __editSourceNode( context, scene, path, nodeEditor = None ) :
 
 	with context :
 		source = GafferScene.SceneAlgo.source( scene, path )
@@ -121,8 +123,11 @@ def __editSourceNode( context, scene, path ) :
 		return
 
 	node = source.node()
-	node = __ancestorWithReadOnlyChildNodes( node ) or node
-	GafferUI.NodeEditor.acquire( node, floating = True )
+	node = __ancestorWithNonViewableChildNodes( node ) or node
+	if nodeEditor is not None :
+		nodeEditor.setNodeSet( Gaffer.StandardSet( [ node ] ) )
+	else :
+		GafferUI.NodeEditor.acquire( node, floating = True )
 
 def __tweaksNode( scene, path ) :
 
@@ -140,7 +145,7 @@ def __tweaksNode( scene, path ) :
 
 	return GafferScene.SceneAlgo.shaderTweaks( scene, path, shaderAttributeNames[0] )
 
-def __editTweaksNode( context, scene, path ) :
+def __editTweaksNode( context, scene, path, nodeEditor = None ) :
 
 	with context :
 		tweaks = __tweaksNode( scene, path )
@@ -148,14 +153,17 @@ def __editTweaksNode( context, scene, path ) :
 	if tweaks is None :
 		return
 
-	node = __ancestorWithReadOnlyChildNodes( tweaks ) or tweaks
-	GafferUI.NodeEditor.acquire( node, floating = True )
+	node = __ancestorWithNonViewableChildNodes( tweaks ) or tweaks
+	if nodeEditor is not None :
+		nodeEditor.setNodeSet( Gaffer.StandardSet( [ node ] ) )
+	else :
+		GafferUI.NodeEditor.acquire( node, floating = True )
 
-def __ancestorWithReadOnlyChildNodes( node ) :
+def __ancestorWithNonViewableChildNodes( node ) :
 
 	result = None
 	while isinstance( node, Gaffer.Node ) :
-		if Gaffer.MetadataAlgo.getChildNodesAreReadOnly( node ) :
+		if Gaffer.Metadata.value( node, "graphEditor:childrenViewable" ) == False :
 			result = node
 		node = node.parent()
 
@@ -178,23 +186,48 @@ def __viewerKeyPress( viewer, event ) :
 	if event == __editSourceKeyPress :
 		selectedPath = __sceneViewSelectedPath( view )
 		if selectedPath is not None :
-			__editSourceNode( view.getContext(), view["in"], selectedPath )
+			__editSourceNode( view.context(), view["in"], selectedPath )
 		return True
 	elif event == __editTweaksKeyPress :
 		selectedPath = __sceneViewSelectedPath( view )
 		if selectedPath is not None :
-			__editTweaksNode( view.getContext(), view["in"], selectedPath )
+			__editTweaksNode( view.context(), view["in"], selectedPath )
 		return True
 
 def __hierarchyViewKeyPress( hierarchyView, event ) :
 
 	if event == __editSourceKeyPress :
-		selectedPath = __hierarchyViewSelectedPath( hierarchyView )
+		selectedPath = __selectedPath( hierarchyView.scriptNode() )
 		if selectedPath is not None :
-			__editSourceNode( hierarchyView.getContext(), hierarchyView.scene(), selectedPath )
+			__editSourceNode( hierarchyView.context(), hierarchyView.scene(), selectedPath )
 		return True
 	elif event == __editTweaksKeyPress :
-		selectedPath = __hierarchyViewSelectedPath( hierarchyView )
+		selectedPath = __selectedPath( hierarchyView.scriptNode() )
 		if selectedPath is not None :
-			__editTweaksNode( hierarchyView.getContext(), hierarchyView.scene(), selectedPath )
+			__editTweaksNode( hierarchyView.context(), hierarchyView.scene(), selectedPath )
+		return True
+
+def __nodeEditorKeyPress( nodeEditor, event ) :
+
+	focusNode = nodeEditor.scriptNode().getFocus()
+	if focusNode is None :
+		return False
+
+	scene = next(
+		( p for p in GafferScene.ScenePlug.RecursiveOutputRange( focusNode ) if not p.getName().startswith( "__" ) ),
+		None
+	)
+
+	if scene is None :
+		return False
+
+	if event == __editSourceKeyPress :
+		selectedPath = __selectedPath( nodeEditor.scriptNode() )
+		if selectedPath is not None :
+			__editSourceNode( nodeEditor.scriptNode().context(), scene, selectedPath, nodeEditor )
+		return True
+	elif event == __editTweaksKeyPress :
+		selectedPath = __selectedPath( nodeEditor.scriptNode() )
+		if selectedPath is not None :
+			__editTweaksNode( nodeEditor.scriptNode().context(), scene, selectedPath, nodeEditor )
 		return True

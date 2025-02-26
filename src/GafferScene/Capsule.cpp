@@ -36,19 +36,33 @@
 
 #include "GafferScene/Capsule.h"
 
-#include "GafferScene/RendererAlgo.h"
+#include "GafferScene/Private/RendererAlgo.h"
 #include "GafferScene/ScenePlug.h"
 
 #include "Gaffer/Node.h"
 
 #include "IECore/MessageHandler.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
+
+namespace
+{
+	Gaffer::Context *capsuleContext( const Context &context )
+	{
+		Gaffer::Context *result = new Gaffer::Context( context, /* omitCanceller = */ true );
+
+		// We don't want to include the scenePath of the original location of the capsule
+		// as part of the context used downstream to evaluate the insides of the capsule
+		result->remove( ScenePlug::scenePathContextName );
+		return result;
+	}
+}
 
 IE_CORE_DEFINEOBJECTTYPEDESCRIPTION( Capsule );
 
@@ -64,49 +78,12 @@ Capsule::Capsule(
 	const IECore::MurmurHash &hash,
 	const Imath::Box3f &bound
 )
-	:	m_hash( hash ), m_bound( bound ), m_scene( nullptr ), m_root( root ), m_context( new Gaffer::Context( context ) )
+	:	m_hash( hash ), m_bound( bound ), m_scene( scene ), m_root( root ), m_context( capsuleContext( context ) )
 {
-	setScene( scene );
 }
 
 Capsule::~Capsule()
 {
-	// Disconnect from signals
-	setScene( nullptr );
-}
-
-void Capsule::setScene( const ScenePlug *scene )
-{
-	assert( !scene || scene->parent() );
-
-	if( const Node *node = m_scene ? m_scene->node() : nullptr )
-	{
-		const_cast<Node *>( node )->plugDirtiedSignal().disconnect(
-			boost::bind( &Capsule::plugDirtied, this, ::_1 )
-		);
-	}
-	if( m_scene )
-	{
-		const_cast<ScenePlug *>( m_scene )->parentChangedSignal().disconnect(
-			boost::bind( &Capsule::parentChanged, this, ::_1 )
-		);
-	}
-
-	m_scene = scene;
-
-	if( m_scene )
-	{
-		const_cast<ScenePlug *>( m_scene )->parentChangedSignal().connect(
-			boost::bind( &Capsule::parentChanged, this, ::_1 )
-		);
-	}
-	if( const Node *node = m_scene ? m_scene->node() : nullptr )
-	{
-		const_cast<Node *>( node )->plugDirtiedSignal().connect(
-			boost::bind( &Capsule::plugDirtied, this, ::_1 )
-		);
-	}
-
 }
 
 bool Capsule::isEqualTo( const IECore::Object *other ) const
@@ -122,10 +99,20 @@ bool Capsule::isEqualTo( const IECore::Object *other ) const
 
 void Capsule::hash( IECore::MurmurHash &h ) const
 {
-	throwIfExpired();
+	throwIfNoScene();
 
 	Procedural::hash( h );
 	h.append( m_hash );
+
+	if( m_renderOptions )
+	{
+		// Hash only what affects our rendering, not everything in
+		// `RenderOptions::globals`.
+		h.append( m_renderOptions->transformBlur );
+		h.append( m_renderOptions->deformationBlur );
+		h.append( m_renderOptions->shutter );
+		m_renderOptions->includedPurposes->hash( h );
+	}
 }
 
 void Capsule::copyFrom( const IECore::Object *other, IECore::Object::CopyContext *context )
@@ -135,9 +122,9 @@ void Capsule::copyFrom( const IECore::Object *other, IECore::Object::CopyContext
 	const Capsule *capsule = static_cast<const Capsule *>( other );
 	m_hash = capsule->m_hash;
 	m_bound = capsule->m_bound;
+	m_scene = capsule->m_scene;
 	m_root = capsule->m_root;
 	m_context = capsule->m_context;
-	setScene( capsule->m_scene );
 }
 
 void Capsule::save( IECore::Object::SaveContext *context ) const
@@ -162,60 +149,67 @@ void Capsule::memoryUsage( IECore::Object::MemoryAccumulator &accumulator ) cons
 
 Imath::Box3f Capsule::bound() const
 {
-	throwIfExpired();
+	throwIfNoScene();
 	return m_bound;
 }
 
 void Capsule::render( IECoreScenePreview::Renderer *renderer ) const
 {
-	throwIfExpired();
-	IECore::ConstCompoundObjectPtr globals = m_scene->globalsPlug()->getValue();
-	RendererAlgo::RenderSets renderSets( m_scene );
-	Context::Scope scope( m_context.get() );
-	RendererAlgo::outputObjects( m_scene, globals.get(), renderSets, /* lightLinks = */ nullptr, renderer, m_root );
+	throwIfNoScene();
+	ScenePlug::GlobalScope scope( m_context.get() );
+	const GafferScene::Private::RendererAlgo::RenderOptions renderOpts = renderOptions();
+	GafferScene::Private::RendererAlgo::RenderSets renderSets( m_scene );
+	GafferScene::Private::RendererAlgo::outputObjects( m_scene, renderOpts, renderSets, /* lightLinks = */ nullptr, renderer, m_root );
 }
 
 const ScenePlug *Capsule::scene() const
 {
-	throwIfExpired();
+	throwIfNoScene();
 	return m_scene;
 }
 
 const ScenePlug::ScenePath &Capsule::root() const
 {
-	throwIfExpired();
+	throwIfNoScene();
 	return m_root;
 }
 
 const Gaffer::Context *Capsule::context() const
 {
-	throwIfExpired();
+	throwIfNoScene();
 	return m_context.get();
 }
 
-void Capsule::plugDirtied( const Gaffer::Plug *plug )
+void Capsule::setRenderOptions( const GafferScene::Private::RendererAlgo::RenderOptions &renderOptions )
 {
-	if( plug->parent() == m_scene && plug != m_scene->globalsPlug() )
+	// This is not pretty, but it allows the capsule to render with the correct
+	// motion blur and `includedPurposes`, taken from the downstream node being
+	// rendered rather than from the capsule's own globals.
+	m_renderOptions = renderOptions;
+}
+
+std::optional<GafferScene::Private::RendererAlgo::RenderOptions> Capsule::getRenderOptions() const
+{
+	return m_renderOptions;
+}
+
+GafferScene::Private::RendererAlgo::RenderOptions Capsule::renderOptions() const
+{
+	std::optional<GafferScene::Private::RendererAlgo::RenderOptions> renderOptions = getRenderOptions();
+	if( renderOptions )
 	{
-		// Our hash is based on the state of the graph at the
-		// moment we were constructed. If the graph has subsequently
-		// changed then we are no longer valid. Mark ourselves as
-		// expired.
-		setScene( nullptr );
+		return *renderOptions;
+	}
+	else
+	{
+		return GafferScene::Private::RendererAlgo::RenderOptions( m_scene );
 	}
 }
 
-void Capsule::parentChanged( const Gaffer::GraphComponent *graphComponent )
-{
-	assert( graphComponent == m_scene );
-	setScene( nullptr );
-}
-
-void Capsule::throwIfExpired() const
+void Capsule::throwIfNoScene() const
 {
 	if( !m_scene )
 	{
-		throw IECore::Exception( "Capsule has expired" );
+		throw IECore::Exception( "No scene" );
 	}
 }
-

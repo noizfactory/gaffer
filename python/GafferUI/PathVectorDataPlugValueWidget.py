@@ -58,19 +58,20 @@ class PathVectorDataPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		GafferUI.PlugValueWidget.__init__( self, self.__dataWidget, plug, **kw )
 
-		self.__dataWidget.dataChangedSignal().connect( Gaffer.WeakMethod( self.__dataChanged ), scoped = False )
+		self.__dataWidget.dataChangedSignal().connect( Gaffer.WeakMethod( self.__dataChanged ) )
 		self.__deprecatedPathChooserDialogueKeywords = pathChooserDialogueKeywords
-
-		self._updateFromPlug()
 
 	def path( self ) :
 
 		return self.__dataWidget.path()
 
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
 
-		if self.getPlug() is not None :
-			self.__dataWidget.setData( self.getPlug().getValue() )
+		if len( values ) :
+			assert( len( values ) == 1 )
+			self.__dataWidget.setData( values[0] )
+
+	def _updateFromEditable( self ) :
 
 		self.__dataWidget.setEditable( self._editable() )
 
@@ -79,7 +80,7 @@ class PathVectorDataPlugValueWidget( GafferUI.PlugValueWidget ) :
 		assert( widget is self.__dataWidget )
 
 		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
-			with Gaffer.BlockedConnection( self._plugConnections() ) :
+			with self._blockedUpdateFromValues() :
 				self.getPlug().setValue( self.__dataWidget.getData()[0] )
 
 	def __pathChooserDialogueKeywords( self ) :

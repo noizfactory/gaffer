@@ -38,6 +38,7 @@
 
 #include "GafferScene/SceneNode.h"
 
+#include "Gaffer/NumericPlug.h"
 #include "Gaffer/StringPlug.h"
 #include "Gaffer/TransformPlug.h"
 
@@ -51,9 +52,12 @@ using namespace GafferScene;
 
 static IECore::InternedString g_lightsSetName( "__lights" );
 static IECore::InternedString g_defaultLightsSetName( "defaultLights" );
-static IECore::InternedString g_visualiserScaleAttribute( "visualiser:scale" );
+static IECore::InternedString g_lightMuteAttributeName( "light:mute" );
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Light );
+static IECore::BoolDataPtr g_true = new IECore::BoolData( true );
+static IECore::BoolDataPtr g_false = new IECore::BoolData( false );
+
+GAFFER_NODE_DEFINE_TYPE( Light );
 
 size_t Light::g_firstPlugIndex = 0;
 
@@ -63,7 +67,27 @@ Light::Light( const std::string &name )
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new Plug( "parameters" ) );
 	addChild( new BoolPlug( "defaultLight", Gaffer::Plug::Direction::In, true ) );
-	addChild( new FloatPlug( "visualiserScale", Gaffer::Plug::Direction::In, 1.0 ) );
+	addChild( new Gaffer::NameValuePlug( "light:mute", new IECore::BoolData( false ), false, "mute" ) );
+
+	Gaffer::CompoundDataPlug *visualiserAttr = new CompoundDataPlug( "visualiserAttributes" );
+
+	FloatPlugPtr scaleValuePlug = new FloatPlug( "value", Gaffer::Plug::Direction::In, 1.0f, 0.01f );
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:visualiser:scale", scaleValuePlug, false, "scale" ) );
+
+	IntPlugPtr maxResValuePlug = new IntPlug( "value", Gaffer::Plug::Direction::In, 512, 2, 2048 );
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:visualiser:maxTextureResolution", maxResValuePlug, false, "maxTextureResolution" ) );
+
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:visualiser:frustum", new IECore::StringData( "whenSelected" ), false, "frustum" ) );
+
+	FloatPlugPtr frustumScaleValuePlug = new FloatPlug( "value", Gaffer::Plug::Direction::In, 1.0f, 0.01f );
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:light:frustumScale", frustumScaleValuePlug, false, "lightFrustumScale" ) );
+
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:light:drawingMode", new IECore::StringData( "texture" ), false, "lightDrawingMode" ) );
+
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:light:lookThroughAperture", new IECore::FloatData( 2.0f ), false, "lookThroughAperture" ) );
+	visualiserAttr->addChild( new Gaffer::NameValuePlug( "gl:light:lookThroughClippingPlanes", new IECore::V2fData( Imath::V2f( -100000, 100000 ) ), false, "lookThroughClippingPlanes" ) );
+
+	addChild( visualiserAttr  );
 }
 
 Light::~Light()
@@ -90,22 +114,35 @@ const Gaffer::BoolPlug *Light::defaultLightPlug() const
 	return getChild<BoolPlug>( g_firstPlugIndex + 1 );
 }
 
-Gaffer::FloatPlug *Light::visualiserScalePlug()
+Gaffer::NameValuePlug *Light::mutePlug()
 {
-	return getChild<FloatPlug>( g_firstPlugIndex + 2 );
+	return getChild<Gaffer::NameValuePlug>( g_firstPlugIndex + 2 );
 }
 
-const Gaffer::FloatPlug *Light::visualiserScalePlug() const
+const Gaffer::NameValuePlug *Light::mutePlug() const
 {
-	return getChild<FloatPlug>( g_firstPlugIndex + 2 );
+	return getChild<Gaffer::NameValuePlug>( g_firstPlugIndex + 2 );
+}
+
+Gaffer::CompoundDataPlug *Light::visualiserAttributesPlug()
+{
+	return getChild<Gaffer::CompoundDataPlug>( g_firstPlugIndex + 3 );
+}
+
+const Gaffer::CompoundDataPlug *Light::visualiserAttributesPlug() const
+{
+	return getChild<Gaffer::CompoundDataPlug>( g_firstPlugIndex + 3 );
 }
 
 void Light::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	ObjectSource::affects( input, outputs );
 
-	if( parametersPlug()->isAncestorOf( input ) || input == visualiserScalePlug() )
-	{
+	if(
+		parametersPlug()->isAncestorOf( input )
+		|| visualiserAttributesPlug()->isAncestorOf( input )
+		|| mutePlug()->isAncestorOf( input )
+	) {
 		outputs.push_back( outPlug()->attributesPlug() );
 	}
 
@@ -137,7 +174,8 @@ IECore::ConstObjectPtr Light::computeSource( const Context *context ) const
 void Light::hashAttributes( const SceneNode::ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
 	hashLight( context, h );
-	visualiserScalePlug()->hash( h );
+	visualiserAttributesPlug()->hash( h );
+	mutePlug()->hash( h );
 }
 
 IECore::ConstCompoundObjectPtr Light::computeAttributes( const SceneNode::ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
@@ -146,14 +184,23 @@ IECore::ConstCompoundObjectPtr Light::computeAttributes( const SceneNode::SceneP
 
 	std::string lightAttribute = "light";
 
-	IECoreScene::ShaderNetworkPtr lightShaders = computeLight( context );
+	IECoreScene::ConstShaderNetworkPtr lightShaders = computeLight( context );
 	if( const IECoreScene::Shader *shader = lightShaders->outputShader() )
 	{
 		lightAttribute = shader->getType();
 	}
 
-	result->members()[lightAttribute] = lightShaders;
-	result->members()[g_visualiserScaleAttribute] = new IECore::FloatData( visualiserScalePlug()->getValue() );
+	// As we output as const, then this just lets us get through the next few lines...
+	result->members()[lightAttribute] = const_cast<IECoreScene::ShaderNetwork*>( lightShaders.get() );
+
+	visualiserAttributesPlug()->fillCompoundObject( result->members() );
+
+	if( mutePlug()->enabledPlug()->getValue() )
+	{
+		auto p = mutePlug()->valuePlug<BoolPlug>();
+
+		result->members()[g_lightMuteAttributeName] = p->getValue() ? g_true : g_false;
+	}
 
 	return result;
 }

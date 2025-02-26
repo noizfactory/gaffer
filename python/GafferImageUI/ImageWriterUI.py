@@ -34,13 +34,40 @@
 #
 ##########################################################################
 
+import os
+
 import IECore
 
 import Gaffer
 import GafferUI
 import GafferImageUI
 import GafferImage
-import OpenColorIOTransformUI
+from . import OpenColorIOTransformUI
+
+layoutVariableDesc = """
+			Special context variables available for setting layout plugs:
+
+			* `${imageWriter:viewName}` : The current view
+			* `${imageWriter:channelName}` : The current channel name
+			* `${imageWriter:layerName}` : The prefix of the channel name
+			* `${imageWriter:baseName}` : The suffix of the channel name
+			* `${imageWriter:standardPartName}` : Like the layerName, but set to "rgba" instead of empty for the main layer
+			* `${imageWriter:nukeViewName}` : Like viewName, but set to "main" when there is no current view
+			* `${imageWriter:nukeLayerName}` : Like layerName, but set to "depth" for "Z", and "other" for custom channels of the main layer
+			* `${imageWriter:nukeBaseName}` : Like baseName, but set to "red", "green", "blue", "alpha" instead of RGBA for layers other than the main layer.
+			* `${imageWriter:nukePartName}` : Like standardPartName, but set to "depth" for "Z", and "other" for custom channels of the main layer
+			* `${imageWriter:singlePartViewName}` : The current view, or "" if this is the first view. This should be used to compose channel names for single-part multi-view EXR files.
+
+"""
+
+def __extension( parent ) :
+
+	fileNamePlug = parent["fileName"]
+	fileName = fileNamePlug.getValue()
+	ext = os.path.splitext( fileName )[1]
+	if ext :
+		return ext.lower()[1:]
+	return "" if fileNamePlug.isSetToDefault() else "unknown"
 
 Gaffer.Metadata.registerNode(
 
@@ -53,6 +80,19 @@ Gaffer.Metadata.registerNode(
 	ImageWriter.
 	""",
 
+	"layout:activator:dpx", lambda p : __extension( p ) in ( "dpx", "unknown" ),
+	"layout:activator:field3d", lambda p : __extension( p ) in ( "f3d", "unknown" ),
+	"layout:activator:fits", lambda p : __extension( p ) in ( "fits", "unknown" ),
+	"layout:activator:iff", lambda p : __extension( p ) in ( "iff", "unknown" ),
+	"layout:activator:jpeg", lambda p : __extension( p ) in ( "jpg", "jpe", "jpeg", "jif", "jfif", "jfi", "unknown" ),
+	"layout:activator:jpeg2000", lambda p : __extension( p ) in ( "jp2", "j2k", "unknown" ),
+	"layout:activator:openexr", lambda p : __extension( p ) in ( "exr", "unknown" ),
+	"layout:activator:png", lambda p : __extension( p ) in ( "png", "unknown" ),
+	"layout:activator:rla", lambda p : __extension( p ) in ( "rla", "unknown" ),
+	"layout:activator:sgi", lambda p : __extension( p ) in ( "sgi", "rgb", "rgba", "bw", "int", "inta", "unknown" ),
+	"layout:activator:targa", lambda p : __extension( p ) in ( "tga", "unknown" ),
+	"layout:activator:tiff", lambda p : __extension( p ) in ( "tif", "tiff", "unknown" ),
+	"layout:activator:webp", lambda p : __extension( p ) in ( "webp", "unknown" ),
 
 	plugs = {
 
@@ -96,23 +136,96 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferImageUI.ChannelMaskPlugValueWidget",
 
-
 		],
 
 		"colorSpace" : [
 
 			"description",
 			"""
-			The colour space of the output image, used to convert the input image
-			from the scene linear colorspace defined by the OpenColorIO config.
-			The default behaviour is to automatically determine the colorspace by
-			calling the function registered with `ImageWriter::setDefaultColorSpaceFunction()`.
+			The colour space of the output image, used to convert the input
+			image from the working space. The default behaviour is to automatically
+			determine the colorspace by calling the function registered with
+			`ImageWriter::setDefaultColorSpaceFunction()`.
 			""",
 
 			"presetNames", OpenColorIOTransformUI.colorSpacePresetNames,
 			"presetValues", OpenColorIOTransformUI.colorSpacePresetValues,
+			"openColorIO:categories", "file-io",
+			"openColorIO:extraPresetNames", IECore.StringVectorData( [ "Automatic" ] ),
+			"openColorIO:extraPresetValues", IECore.StringVectorData( [ "" ] ),
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+
+		],
+
+		"layout" : [
+
+			"description",
+			"""
+			Controls where channels are placed in the file, including how they are named.
+			"Single part" writes all channels to the same part ( all interleaved ).
+			"Part per layer" writes a separate part for each layer, so they may be loaded
+			independently for better performance, and is the default.  "Part per view" is
+			a compromise, where layers are not separated, but views are separated, so that
+			stereo files can use independent data windows.
+
+			There is also the option to use a layout that matches Nuke's default
+			behaviour, but does not conform to the EXR specification. The Nuke presets
+			match "Part per Layer", "Part per View", and "Single Part" respectively, but with
+			the following deviations from the specification :
+
+			* The layer name is omitted from the channel name
+			* Custom channels from the main layer are placed in a part named other
+			* The channel Z from the main layer is placed in a part named depth
+			* The RGBA channels from secondary layers are renamed to red, green, blue, and alpha
+			* When writing single part stereo, the view name comes before the layer name
+
+			You may also pick "custom", and set up your own layout.  This allows for things
+			like a mixed layout that is partially EXR spec compliant, and partially Nuke.  Or
+			you could use a expression to group some layers together in the same part.
+
+			""",
+
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"presetsPlugValueWidget:allowCustom", True,
+			"presetsPlugValueWidget:customWidgetType", "GafferUI.LayoutPlugValueWidget",
+
+		],
+		"layout.partName" : [
+
+			"description",
+			"""
+			Specifies the name to be stored in EXR's part name metadata.
+
+			If different channels are given different part names, then a multipart
+			file is produced.
+			""" + layoutVariableDesc,
+
+			# The presets for this are useful in testing and scripting when the UI isn't loaded,
+			# so we register them in src/GafferImage/ImageWriter.cpp
+
+		],
+		"layout.channelName" : [
+
+			"description",
+			"""
+			Specifies the channel name to be given to EXR.  To match the standard, this should just
+			be exactly the Gaffer channel name.  But some other software like Nuke omits the layer prefix,
+			and assumes that the part name will be prefixed to the channel.
+			""" + layoutVariableDesc,
+
+			# The presets for this are useful in testing and scripting when the UI isn't loaded,
+			# so we register them in src/GafferImage/ImageWriter.cpp
+
+		],
+
+		"matchDataWindows" : [
+			"description",
+			"""
+			For multi-view images, sets the data windows to be the same for all views, by expanding them
+			all to include the union of all views.  Wastes disk space and processing time, but is
+			required by Nuke for multi-view images.
+			"""
 		],
 
 		"out" : [
@@ -133,6 +246,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.DPX",
+			"layout:visibilityActivator", "dpx",
 
 		],
 
@@ -161,6 +275,7 @@ Gaffer.Metadata.registerNode(
 			"nodule:type", "",
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.Field3D",
+			"layout:visibilityActivator", "field3d",
 
 		],
 
@@ -200,6 +315,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.FITS",
+			"layout:visibilityActivator", "fits",
 
 		],
 
@@ -228,6 +344,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.IFF",
+			"layout:visibilityActivator", "iff",
 
 		],
 
@@ -253,6 +370,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.Jpeg",
+			"layout:visibilityActivator", "jpeg",
 
 		],
 
@@ -292,6 +410,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.Jpeg2000",
+			"layout:visibilityActivator", "jpeg2000",
 
 		],
 
@@ -317,6 +436,9 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.OpenEXR",
+			"layout:visibilityActivator", "openexr",
+
+			"layout:activator:compressionIsDWA", lambda plug : plug["compression"].getValue() in ( "dwaa", "dwab" ),
 
 		],
 
@@ -354,16 +476,50 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"openexr.dwaCompressionLevel" : [
+
+			"description",
+			"""
+			The compression level used when writing files with DWAA or DWAB compression.
+			Higher values decrease file size at the expense of image quality.
+			""",
+
+			"layout:activator", "compressionIsDWA",
+
+		],
+
 		"openexr.dataType" : [
 
 			"description",
 			"""
-			The data type to be written to the OpenEXR file.
+			The data type to be written to the OpenEXR file.  If you want to use different
+			data types for different channels, you can drive this with an expression or spreadsheet,
+			which may use the same context variables as the layout plugs ( the useful ones are
+			`${imageWriter:channelName}`, `${imageWriter:layerName}` and `${imageWriter:baseName}`,
+			for the whole channel name, and for the prefix and suffix respectively ).
 			""",
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
 			"preset:Float", "float",
 			"preset:Half Float", "half",
+
+			"ui:spreadsheet:selectorValue", "${imageWriter:channelName}",
+
+		],
+
+		"openexr.depthDataType" : [
+
+			"description",
+			"""
+			Overriding the data type for depth channels is useful because many of the things depth is used
+			for require greater precision.  This is a simple override which sets Z and ZBack to float precision.
+			If you want to do something more complex, set this to `Use Default`, and connect an expression or
+			spreadsheet to the `Data Type` plug.
+			""",
+
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"preset:Override to Float", "float",
+			"preset:Use Default", "",
 
 		],
 
@@ -376,6 +532,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.PNG",
+			"layout:visibilityActivator", "png",
 
 		],
 
@@ -414,6 +571,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.RLA",
+			"layout:visibilityActivator", "rla",
 
 		],
 
@@ -440,6 +598,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.SGI",
+			"layout:visibilityActivator", "sgi",
 
 		],
 
@@ -465,6 +624,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.Targa",
+			"layout:visibilityActivator", "targa",
 
 		],
 
@@ -490,6 +650,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.TIFF",
+			"layout:visibilityActivator", "tiff",
 
 		],
 
@@ -544,6 +705,7 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
 			"layout:section", "Settings.WebP",
+			"layout:visibilityActivator", "webp",
 
 		],
 

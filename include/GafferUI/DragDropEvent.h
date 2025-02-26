@@ -34,12 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_DRAGDROPEVENT_H
-#define GAFFERUI_DRAGDROPEVENT_H
+#pragma once
 
 #include "GafferUI/ButtonEvent.h"
 
 #include "IECore/RunTimeTyped.h"
+
+#include <any>
 
 namespace GafferUI
 {
@@ -49,7 +50,7 @@ IE_CORE_FORWARDDECLARE( Gadget )
 struct GAFFERUI_API DragDropEvent : public ButtonEvent
 {
 
-	DragDropEvent(
+	explicit DragDropEvent(
 		Buttons button = None,
 		Buttons buttons = None,
 		const IECore::LineSegment3f &Line=IECore::LineSegment3f(),
@@ -59,16 +60,21 @@ struct GAFFERUI_API DragDropEvent : public ButtonEvent
 	{
 	};
 
+	/// The Widget where the drag originated. Stored as `any` to avoid
+	/// dependency on Python in `libGafferUI`, and therefore only truly
+	/// useful when accessed from the Python bindings.
+	std::any sourceWidget;
 	/// The Gadget where the drag originated.
 	GafferUI::GadgetPtr sourceGadget;
 	/// An object representing the data being dragged.
 	IECore::RunTimeTypedPtr data;
+	/// The Widget where the drag ends. See notes for `sourceWidget`.
+	std::any destinationWidget;
 	/// The Gadget where the drag ends.
 	GafferUI::GadgetPtr destinationGadget;
 	/// The result returned from the drop signal handler on the destination.
 	bool dropResult;
+
 };
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_DRAGDROPEVENT_H

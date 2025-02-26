@@ -41,34 +41,31 @@ import IECore
 import Gaffer
 import GafferUI
 import GafferImage
-import OpenColorIOTransformUI
-
+from . import OpenColorIOTransformUI
 
 def __displayPresetNames( plug ) :
 
-	config = PyOpenColorIO.GetCurrentConfig()
-
-	return IECore.StringVectorData( [ "None" ] + config.getDisplays() )
+	config = GafferImage.OpenColorIOAlgo.currentConfig()
+	return IECore.StringVectorData( [ "Default ({})".format( config.getDefaultDisplay() ) ] + list( config.getDisplays() ) )
 
 def __displayPresetValues( plug ) :
 
-	config = PyOpenColorIO.GetCurrentConfig()
-
-	return IECore.StringVectorData( [ "" ] + config.getDisplays() )
+	config = GafferImage.OpenColorIOAlgo.currentConfig()
+	return IECore.StringVectorData( [ "" ] + list( config.getDisplays() ) )
 
 def __viewPresetNames( plug ) :
 
-	config = PyOpenColorIO.GetCurrentConfig()
-	display = plug.parent()["display"].getValue()
+	config = GafferImage.OpenColorIOAlgo.currentConfig()
+	display = plug.parent()["display"].getValue() or config.getDefaultDisplay()
 
-	return IECore.StringVectorData( [ "None" ] + config.getViews( display ) )
+	return IECore.StringVectorData( [ "Default ({})".format( config.getDefaultView( display ) ) ] + list( config.getViews( display ) ) )
 
 def __viewPresetValues( plug ) :
 
-	config = PyOpenColorIO.GetCurrentConfig()
-	display = plug.parent()["display"].getValue()
+	config = GafferImage.OpenColorIOAlgo.currentConfig()
+	display = plug.parent()["display"].getValue() or config.getDefaultDisplay()
 
-	return IECore.StringVectorData( [ "" ] + config.getViews( display ) )
+	return IECore.StringVectorData( [ "" ] + list( config.getViews( display ) ) )
 
 Gaffer.Metadata.registerNode(
 
@@ -76,8 +73,7 @@ Gaffer.Metadata.registerNode(
 
 	"description",
 	"""
-	Applies color transformations provided by
-	OpenColorIO via a DisplayTransform file and OCIO FileTransform.
+	Applies an OpenColorIO display transform to an image.
 	""",
 
 	plugs = {
@@ -91,6 +87,8 @@ Gaffer.Metadata.registerNode(
 
 			"presetNames", OpenColorIOTransformUI.colorSpacePresetNames,
 			"presetValues", OpenColorIOTransformUI.colorSpacePresetValues,
+			"openColorIO:extraPresetNames", IECore.StringVectorData( [ "Working Space" ] ),
+			"openColorIO:extraPresetValues", IECore.StringVectorData( [ "" ] ),
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
 		],
@@ -99,7 +97,8 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The name of the display to use.
+			The name of the display to use. Defaults to the default display as
+			defined by the current OpenColorIO config.
 			""",
 
 			"presetNames", __displayPresetNames,
@@ -113,16 +112,31 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The name of the view to use.
+			The name of the view to use. Defaults to the default view for the
+			display, as defined by the current OpenColorIO config.
 			""",
 
 			"presetNames", __viewPresetNames,
 			"presetValues", __viewPresetValues,
 
-			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"plugValueWidget:type", "GafferImageUI.DisplayTransformUI._ViewPlugValueWidget",
 
 		],
 
 	}
 
 )
+
+class _ViewPlugValueWidget( GafferUI.PresetsPlugValueWidget ) :
+
+	def __init__( self, plugs, **kw ) :
+
+		GafferUI.PresetsPlugValueWidget.__init__( self, plugs, **kw )
+
+	def _auxiliaryPlugs( self, plug ) :
+
+		# Declare our dependency on the `display` plug, so the
+		# default label updates when the display is changed.
+		node = plug.node()
+		if isinstance( node, GafferImage.DisplayTransform ) :
+			return [ node["display"] ]

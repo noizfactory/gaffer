@@ -48,7 +48,7 @@ class RandomTest( GafferTest.TestCase ) :
 	def testHashes( self ) :
 
 		r = Gaffer.Random()
-		self.assertHashesValid( r, inputsToIgnore = [ r["contextEntry"], ] )
+		self.assertHashesValid( r, inputsToIgnore = [ r["seedVariable"], ] )
 
 	def testOutFloat( self ) :
 
@@ -74,13 +74,13 @@ class RandomTest( GafferTest.TestCase ) :
 
 			r["seed"].setValue( s )
 			v = r["outFloat"].getValue()
-			self.failUnless( v >= r["floatRange"].getValue()[0] )
-			self.failUnless( v <= r["floatRange"].getValue()[1] )
+			self.assertGreaterEqual( v, r["floatRange"].getValue()[0] )
+			self.assertLessEqual( v, r["floatRange"].getValue()[1] )
 
 	def testContext( self ) :
 
 		r = Gaffer.Random()
-		r["contextEntry"].setValue( "frame" )
+		r["seedVariable"].setValue( "frame" )
 
 		c = Gaffer.Context()
 
@@ -119,10 +119,10 @@ class RandomTest( GafferTest.TestCase ) :
 
 		f1 = r["outFloat"].getValue()
 
-		r["contextEntry"].setValue( "frame" )
+		r["seedVariable"].setValue( "frame" )
 		self.assertNotEqual( f1, r["outFloat"].getValue() )
 
-		r["contextEntry"].setValue( "oops!" )
+		r["seedVariable"].setValue( "oops!" )
 		self.assertEqual( f1, r["outFloat"].getValue() )
 
 	def testAffects( self ) :
@@ -165,6 +165,11 @@ class RandomTest( GafferTest.TestCase ) :
 
 		self.assertEqual( c3, c4 )
 		self.assertEqual( c3, c2 )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testRandomPerf( self ) :
+
+		GafferTest.testRandomPerf()
 
 if __name__ == "__main__":
 	unittest.main()

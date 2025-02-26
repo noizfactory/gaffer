@@ -35,6 +35,7 @@
 ##########################################################################
 
 import warnings
+
 import Gaffer
 import GafferUI
 
@@ -102,9 +103,9 @@ class SelectionMenu( GafferUI.Widget ) :
 	def setIcon( self, index, imageOrImageFileName ):
 		icon = None
 
-		assert( isinstance( imageOrImageFileName, ( basestring, GafferUI.Image, type( None ) ) ) )
+		assert( isinstance( imageOrImageFileName, ( str, GafferUI.Image, type( None ) ) ) )
 
-		if isinstance( imageOrImageFileName, basestring ) :
+		if isinstance( imageOrImageFileName, str ) :
 			icon = GafferUI.Image( imageOrImageFileName )
 		else :
 			icon = imageOrImageFileName

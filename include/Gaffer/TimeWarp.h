@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_TIMEWARP_H
-#define GAFFER_TIMEWARP_H
+#pragma once
 
 #include "Gaffer/ContextProcessor.h"
 #include "Gaffer/NumericPlug.h"
@@ -43,14 +42,14 @@
 namespace Gaffer
 {
 
-class IECORE_EXPORT TimeWarp : public ContextProcessor
+class GAFFER_API TimeWarp : public ContextProcessor
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::TimeWarp, TimeWarpTypeId, ContextProcessor );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::TimeWarp, TimeWarpTypeId, ContextProcessor );
 
-		TimeWarp( const std::string &name=GraphComponent::defaultName<TimeWarp>() );
+		explicit TimeWarp( const std::string &name=GraphComponent::defaultName<TimeWarp>() );
 		~TimeWarp() override;
 
 		FloatPlug *speedPlug();
@@ -62,7 +61,7 @@ class IECORE_EXPORT TimeWarp : public ContextProcessor
 	protected :
 
 		bool affectsContext( const Plug *input ) const override;
-		void processContext( Context::EditableScope &context ) const override;
+		void processContext( Context::EditableScope &context, IECore::ConstRefCountedPtr &storage ) const override;
 
 	private :
 
@@ -73,5 +72,3 @@ class IECORE_EXPORT TimeWarp : public ContextProcessor
 IE_CORE_DECLAREPTR( TimeWarp );
 
 } // namespace Gaffer
-
-#endif // GAFFER_TIMEWARP_H

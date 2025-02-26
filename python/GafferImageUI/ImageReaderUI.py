@@ -39,7 +39,12 @@ import IECore
 import Gaffer
 import GafferUI
 import GafferImage
-import OpenColorIOTransformUI
+
+from GafferUI.PlugValueWidget import sole
+
+from . import OpenColorIOTransformUI
+
+from GafferUI.PlugValueWidget import sole
 
 Gaffer.Metadata.registerNode(
 
@@ -119,7 +124,10 @@ Gaffer.Metadata.registerNode(
 			and display window of the start frame.
 			""",
 
-			"plugValueWidget:type", "GafferImageUI.ImageReaderUI._FrameMaskPlugValueWidget",
+			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
+			"layoutPlugValueWidget:orientation", "horizontal",
+
+			"layout:activator:modeIsNotNone", lambda plug : plug["mode"].getValue() != GafferImage.ImageReader.FrameMaskMode.None_,
 
 		],
 
@@ -130,11 +138,12 @@ Gaffer.Metadata.registerNode(
 			The mode used detemine the mask behaviour for the start frame.
 			""",
 
-			"preset:None", GafferImage.ImageReader.FrameMaskMode.None,
+			"preset:None", GafferImage.ImageReader.FrameMaskMode.None_,
 			"preset:Black Outside", GafferImage.ImageReader.FrameMaskMode.BlackOutside,
 			"preset:Clamp to Range", GafferImage.ImageReader.FrameMaskMode.ClampToFrame,
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"layout:label", "",
 
 		],
 
@@ -147,6 +156,9 @@ Gaffer.Metadata.registerNode(
 
 			"presetNames", lambda plug : IECore.StringVectorData( [ str(x) for x in plug.node()["__oiioReader"]["availableFrames"].getValue() ] ),
 			"presetValues", lambda plug : plug.node()["__oiioReader"]["availableFrames"].getValue(),
+
+			"layout:label", "",
+			"layout:activator", "modeIsNotNone",
 
 		],
 
@@ -161,7 +173,10 @@ Gaffer.Metadata.registerNode(
 			and display window of the end frame.
 			""",
 
-			"plugValueWidget:type", "GafferImageUI.ImageReaderUI._FrameMaskPlugValueWidget",
+			"plugValueWidget:type", "GafferUI.LayoutPlugValueWidget",
+			"layoutPlugValueWidget:orientation", "horizontal",
+
+			"layout:activator:modeIsNotNone", lambda plug : plug["mode"].getValue() != GafferImage.ImageReader.FrameMaskMode.None_,
 
 		],
 
@@ -172,11 +187,12 @@ Gaffer.Metadata.registerNode(
 			The mode used detemine the mask behaviour for the end frame.
 			""",
 
-			"preset:None", GafferImage.ImageReader.FrameMaskMode.None,
+			"preset:None", GafferImage.ImageReader.FrameMaskMode.None_,
 			"preset:Black Outside", GafferImage.ImageReader.FrameMaskMode.BlackOutside,
 			"preset:Clamp to Range", GafferImage.ImageReader.FrameMaskMode.ClampToFrame,
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"layout:label", "",
 
 		],
 
@@ -190,78 +206,149 @@ Gaffer.Metadata.registerNode(
 			"presetNames", lambda plug : IECore.StringVectorData( [ str(x) for x in plug.node()["__oiioReader"]["availableFrames"].getValue() ] ),
 			"presetValues", lambda plug : plug.node()["__oiioReader"]["availableFrames"].getValue(),
 
+			"layout:label", "",
+			"layout:activator", "modeIsNotNone",
+
 		],
 
 		"colorSpace" : [
 
 			"description",
 			"""
-			The colour space of the input image, used to convert the input image to
-			the scene linear colorspace defined by the OpenColorIO config. The default
-			behaviour is to automatically determine the colorspace by calling the function
-			registered with `ImageReader::setDefaultColorSpaceFunction()`.
+			The colour space of the input image, used to convert the input to
+			the working space. When set to `Automatic`, the colour space is
+			determined automatically using the function registered with
+			`ImageReader::setDefaultColorSpaceFunction()`.
 			""",
 
 			"presetNames", OpenColorIOTransformUI.colorSpacePresetNames,
 			"presetValues", OpenColorIOTransformUI.colorSpacePresetValues,
+			"openColorIO:categories", "file-io",
+			"openColorIO:extraPresetNames", IECore.StringVectorData( [ "Automatic" ] ),
+			"openColorIO:extraPresetValues", IECore.StringVectorData( [ "" ] ),
+
+			"plugValueWidget:type", "GafferImageUI.ImageReaderUI._ColorSpacePlugValueWidget",
+
+		],
+
+		"channelInterpretation" : [
+
+			"description",
+			"""
+			Controls how we create channels based on the contents of the file.  Unfortunately,
+			some software, such as Nuke, does not produce EXR files which follow the EXR specification,
+			so the mode "Default" uses heuristics to guess what the channels mean.
+
+			"Default" mode should support most files coming from either Nuke or standards compliant software.
+			It can't handle every possibility in the spec though - in corner cases, it could get confused and
+			think something comes from Nuke, and incorrectly prepend the part name to the channel name.
+
+			If you know your EXR is compliant, you can "EXR Specification" mode which disables the heuristics,
+			and just uses the channel names directly from the file.
+
+			"Legacy" mode matches Gaffer <= 0.61 behaviour for compatibility reasons - it should not be used.
+			""",
+
+			"preset:Legacy", GafferImage.ImageReader.ChannelInterpretation.Legacy,
+			"preset:Default", GafferImage.ImageReader.ChannelInterpretation.Default,
+			"preset:EXR Specification", GafferImage.ImageReader.ChannelInterpretation.Specification,
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
 
 		],
 
+		"availableFrames" : [
+
+			"description",
+			"""
+			A list of the available frames for the current file sequence.
+			Empty when the input `fileName` is not a file sequence.
+			""",
+
+			"layout:section", "Frames",
+			"plugValueWidget:type", "GafferImageUI.ImageReaderUI._AvailableFramesPlugValueWidget",
+
+		],
+
+		"fileValid" : [
+			"description",
+			"""
+			Whether or not the files exists and can be read into memory,
+			value calculated per frame if an image sequence. Behaviour changes
+			if a frame mask of ClampToFrame or Black is selected, if outside
+			the frame mask fileValid will be set to True if the nearest frame is valid.
+
+			> Note : When the file is not valid, the image will also contain a `fileValid`
+			> metadata value of `False`. This can be easier to access from downstream
+			> nodes than the `fileValid` plug itself.
+			""",
+
+			"layout:section", "Frames",
+
+		]
+
 	}
 
 )
 
-class _FrameMaskPlugValueWidget( GafferUI.PlugValueWidget ) :
+# Augments PresetsPlugValueWidget label with the computed colour space
+# when preset is "Automatic". Since this involves opening the file to
+# read metadata, we do the work in the background via an auxiliary plug
+# passed to `_valuesForUpdate()`.
+class _ColorSpacePlugValueWidget( GafferUI.PresetsPlugValueWidget ) :
+
+	def __init__( self, plugs, **kw ) :
+
+		GafferUI.PresetsPlugValueWidget.__init__( self, plugs, **kw )
+
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
+
+		presets = GafferUI.PresetsPlugValueWidget._valuesForUpdate( plugs, [ [] for p in plugs ] )
+
+		result = []
+		for preset, colorSpacePlugs in zip( presets, auxiliaryPlugs ) :
+
+			automaticSpace = ""
+			if len( colorSpacePlugs ) and preset == "Automatic" :
+				with IECore.IgnoredExceptions( Gaffer.ProcessException ) :
+					automaticSpace = colorSpacePlugs[0].getValue() or "Working Space"
+
+			result.append( {
+				"preset" : preset,
+				"automaticSpace" : automaticSpace
+			} )
+
+		return result
+
+	def _updateFromValues( self, values, exception ) :
+
+		GafferUI.PresetsPlugValueWidget._updateFromValues( self, [ v["preset"] for v in values ], exception )
+
+		if self.menuButton().getText() == "Automatic" :
+			automaticSpace = sole( v["automaticSpace"] for v in values )
+			if automaticSpace != "" :
+				self.menuButton().setText( "Automatic ({})".format( automaticSpace or "---" ) )
+
+	def _auxiliaryPlugs( self, plug ) :
+
+		node = plug.node()
+		if isinstance( node, GafferImage.ImageReader ) :
+			return [ node["__intermediateColorSpace"] ]
+
+class _AvailableFramesPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 	def __init__( self, plug, **kw ) :
 
-		with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing=4 ) as self.__row :
+		self.__textWidget = GafferUI.TextWidget( editable = False )
+		GafferUI.PlugValueWidget.__init__( self, self.__textWidget, plug, **kw )
 
-			GafferUI.PlugValueWidget.create( plug["mode"] )
-			GafferUI.PlugValueWidget.create( plug["frame"] )
+	def _updateFromValues( self, values, exception ) :
 
-		GafferUI.PlugValueWidget.__init__( self, self.__row, plug, **kw )
+		value = sole( values )
+		if value is None :
+			self.__textWidget.setText( "---" )
+		else :
+			self.__textWidget.setText( str( IECore.frameListFromList( list( value ) ) ) )
 
-	def setPlug( self, plug ) :
-
-		assert( len( plug ) == len( self.getPlug() ) )
-
-		GafferUI.PlugValueWidget.setPlug( self, plug )
-
-		for index, plug in enumerate( plug.children() ) :
-			self.__row[index].setPlug( plug )
-
-	def setHighlighted( self, highlighted ) :
-
-		GafferUI.PlugValueWidget.setHighlighted( self, highlighted )
-
-		for i in range( 0, len( self.getPlug() ) ) :
-			self.__row[i].setHighlighted( highlighted )
-
-	def setReadOnly( self, readOnly ) :
-
-		if readOnly == self.getReadOnly() :
-			return
-
-		GafferUI.PlugValueWidget.setReadOnly( self, readOnly )
-
-		for w in self.__row :
-			if isinstance( w, GafferUI.PlugValueWidget ) :
-				w.setReadOnly( readOnly )
-
-	def childPlugValueWidget( self, childPlug, lazy=True ) :
-
-		for i, p in enumerate( self.getPlug().children() ) :
-			if p.isSame( childPlug ) :
-				return self.__row[i]
-
-		return None
-
-	def _updateFromPlug( self ) :
-
-		with self.getContext() :
-			mode = self.getPlug()["mode"].getValue()
-
-		self.childPlugValueWidget( self.getPlug()["frame"] ).setEnabled( mode != GafferImage.ImageReader.FrameMaskMode.None )
+		self.__textWidget.setErrored( exception is not None )

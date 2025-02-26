@@ -34,14 +34,17 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_METADATAALGO_H
-#define GAFFER_METADATAALGO_H
+#pragma once
 
 #include "Gaffer/Export.h"
+#include "Gaffer/Metadata.h"
 #include "Gaffer/Node.h"
 
+#include "IECore/SimpleTypedData.h"
 #include "IECore/StringAlgo.h"
 #include "IECore/TypeIds.h"
+
+#include "Imath/ImathColor.h"
 
 #include <vector>
 
@@ -96,10 +99,14 @@ GAFFER_API bool getChildNodesAreReadOnly( const Node *node );
 /// This is the method that should be used to determine if a graphComponent should be editable
 /// by the user or not.
 GAFFER_API bool readOnly( const GraphComponent *graphComponent );
+/// Returns the outer-most `GraphComponent` responsible for making `graphComponent` read-only. This may be
+/// `graphComponent` itself. Returns `nullptr` if `graphComponent` is not considered read-only.
+GAFFER_API const GraphComponent *readOnlyReason( const GraphComponent *graphComponent );
 
 /// Determines if a metadata value change affects the result of `readOnly( graphComponent )`.
 GAFFER_API bool readOnlyAffectedByChange( const GraphComponent *graphComponent, IECore::TypeId changedNodeTypeId, const IECore::StringAlgo::MatchPattern &changedPlugPath, const IECore::InternedString &changedKey, const Gaffer::Plug *changedPlug );
 GAFFER_API bool readOnlyAffectedByChange( const GraphComponent *graphComponent, IECore::TypeId changedNodeTypeId, const IECore::InternedString &changedKey, const Gaffer::Node *changedNode );
+GAFFER_API bool readOnlyAffectedByChange( const GraphComponent *graphComponent, const Gaffer::GraphComponent *changedGraphComponent, const IECore::InternedString &changedKey );
 GAFFER_API bool readOnlyAffectedByChange( const IECore::InternedString &changedKey );
 
 /// Bookmarks
@@ -131,8 +138,64 @@ GAFFER_API Node *getNumericBookmark( ScriptNode *script, int bookmark );
 GAFFER_API int numericBookmark( const Node *node );
 GAFFER_API bool numericBookmarkAffectedByChange( const IECore::InternedString &changedKey );
 
-/// Utilities
-/// =========
+/// Annotations
+/// ===========
+///
+/// Annotations define arbitrary text to be displayed in a coloured area
+/// next to a node. Each node can have arbitrary numbers of annotations,
+/// with different annotations being distinguished by their `name`.
+/// Templates can be used to define defaults for standard annotation types.
+/// The text from the template is used as a default when first creating
+/// an annotation via the UI, and the colour from the template provides
+/// the default colour if one is not specified explicitly by an annotation
+/// itself.
+
+struct GAFFER_API Annotation
+{
+
+	Annotation() = default;
+	Annotation( const std::string &text );
+	Annotation( const std::string &text, const Imath::Color3f &color );
+	Annotation( const IECore::ConstStringDataPtr &text, const IECore::ConstColor3fDataPtr &color = nullptr );
+	Annotation( const Annotation &other ) = default;
+	Annotation( Annotation &&other ) = default;
+
+	operator bool() const { return textData.get(); }
+
+	bool operator == ( const Annotation &rhs );
+	bool operator != ( const Annotation &rhs ) { return !(*this == rhs); };
+
+	IECore::ConstStringDataPtr textData;
+	IECore::ConstColor3fDataPtr colorData;
+
+	const std::string &text() const { return textData ? textData->readable() : g_defaultText; }
+	const Imath::Color3f &color() const { return colorData ? colorData->readable() : g_defaultColor; }
+
+	private :
+
+		static std::string g_defaultText;
+		static Imath::Color3f g_defaultColor;
+
+};
+
+GAFFER_API void addAnnotation( Node *node, const std::string &name, const Annotation &annotation, bool persistent = true );
+GAFFER_API Annotation getAnnotation( const Node *node, const std::string &name, bool inheritTemplate = false );
+GAFFER_API void removeAnnotation( Node *node, const std::string &name );
+[[deprecated( "Use alternative form with `RegistrationTypes` instead")]]
+GAFFER_API void annotations( const Node *node, std::vector<std::string> &names );
+GAFFER_API std::vector<std::string> annotations( const Node *node, Metadata::RegistrationTypes types = Metadata::RegistrationTypes::All );
+
+/// Pass `user = false` for annotations not intended for creation directly by the user.
+GAFFER_API void addAnnotationTemplate( const std::string &name, const Annotation &annotation, bool user = true );
+GAFFER_API Annotation getAnnotationTemplate( const std::string &name );
+GAFFER_API void removeAnnotationTemplate( const std::string &name );
+/// Pass `userOnly = true` to omit templates registered with `user = false`.
+GAFFER_API void annotationTemplates( std::vector<std::string> &names, bool userOnly = false );
+
+GAFFER_API bool annotationsAffectedByChange( const IECore::InternedString &changedKey );
+
+/// Change queries
+/// ==============
 
 /// Determines if a metadata value change (as signalled by `Metadata::plugValueChangedSignal()`
 /// or `Metadata:nodeValueChangedSignal()`) affects a given plug or node.
@@ -145,16 +208,42 @@ GAFFER_API bool childAffectedByChange( const GraphComponent *parent, IECore::Typ
 GAFFER_API bool ancestorAffectedByChange( const Plug *plug, IECore::TypeId changedTypeId, const IECore::StringAlgo::MatchPattern &changedPlugPath, const Gaffer::Plug *changedPlug );
 GAFFER_API bool ancestorAffectedByChange( const GraphComponent *graphComponent, IECore::TypeId changedNodeTypeId, const Gaffer::Node *changedNode );
 
-/// Copies metadata from one target to another. The exclude pattern is used with StringAlgo::matchMultiple().
+/// Copying
+/// =======
+
+/// Copies metadata from one target to another.
 /// \undoable
+/// \todo Default `persistent` to true after removing the deprecated overload below.
+GAFFER_API void copy( const GraphComponent *from, GraphComponent *to, bool persistent );
+/// As above, but skipping items where `predicate( const GraphComponent *from, const GraphComponent *to, name )` returns false.
+/// \undoable
+template<typename Predicate>
+void copyIf( const GraphComponent *from, GraphComponent *to, Predicate &&predicate, bool persistent = true );
+/// \deprecated Either use the simpler version of `copy()`, or use `copyIf()` to implement exclusions.
 GAFFER_API void copy( const GraphComponent *from, GraphComponent *to, const IECore::StringAlgo::MatchPattern &exclude = "", bool persistentOnly = true, bool persistent = true );
 
 /// Copy nodule and noodle color meta data from srcPlug to dstPlug
 /// \undoable
 GAFFER_API void copyColors( const Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug, bool overwrite );
 
+/// Promotability
+/// =============
+
+/// Returns true if metadata can be promoted from one plug to another.
+GAFFER_API bool isPromotable( const GraphComponent *from, const GraphComponent *to, const IECore::InternedString &name );
+
+/// Cleanup
+/// =======
+
+/// Removes any redundant metadata registrations from `graphComponent` and all
+/// its descendants. By redundant we mean instance-level registrations that have
+/// the same value as an exising type-based fallback, so that removing the
+/// instance registration has no effect on the composed result.
+/// \undoable
+GAFFER_API void deregisterRedundantValues( GraphComponent *graphComponent );
+
 } // namespace MetadataAlgo
 
 } // namespace Gaffer
 
-#endif // GAFFER_METADATAALGO_H
+#include "Gaffer/MetadataAlgo.inl"

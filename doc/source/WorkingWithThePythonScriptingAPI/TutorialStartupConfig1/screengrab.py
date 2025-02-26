@@ -1,11 +1,11 @@
-# BuildTarget: images/tutorialSettingsWindowDefaultContextVariables.png
 # BuildTarget: images/tutorialSettingsWindowCustomContextVariable.png
+# BuildTarget: images/tutorialSettingsWindowDefaultContextVariables.png
 # BuildTarget: images/tutorialVariableSubstitutionInStringPlug.png
-# BuildTarget: images/tutorialVariableSubstitutionExpression.png
 # BuildTarget: images/tutorialVariableSubstitutionTest.png
+# BuildDependency: scripts/tutorialVariableSubstitutionInStringPlug_edit.gfr
 
-import os
-import subprocess32 as subprocess
+import pathlib
+import subprocess
 import tempfile
 import time
 
@@ -27,24 +27,24 @@ def __delay( delay ) :
 		GafferUI.EventLoop.waitForIdle( 1 )
 
 # Create a random directory in `/tmp` for the dispatcher's `jobsDirectory`, so we don't clutter the user's `~gaffer` directory
-__temporaryDirectory = tempfile.mkdtemp( prefix = "gafferDocs" )
+__temporaryDirectory = pathlib.Path( tempfile.mkdtemp( prefix = "gafferDocs" ) )
 
 def __getTempFilePath( fileName, directory = __temporaryDirectory ) :
-	filePath = "/".join( ( directory, fileName ) )
-	
-	return filePath
+
+	return ( directory / fileName ).as_posix()
+
+def __outputImagePath( fileName ) :
+
+	return pathlib.Path( "images/{}.png".format( fileName ) ).absolute().as_posix()
 
 def __dispatchScript( script, tasks, settings ) :
 	command = "gaffer dispatch -script {} -tasks {} -dispatcher Local -settings {} -dispatcher.jobsDirectory '\"{}/dispatcher/local\"'".format(
 		script,
 		" ".join( tasks ),
 		" ".join( settings ),
-		__temporaryDirectory
-		)
-	process = subprocess.Popen( command, shell=True, stderr = subprocess.PIPE )
-	process.wait()
-
-	return process
+		__temporaryDirectory.as_posix()
+	)
+	subprocess.check_call( command, shell=True )
 
 # Illustration: a `tree` command run on a custom startup config
 # TODO: Automate `images/illustrationStartupConfigDirectoryTree.png` when these tools become available:
@@ -74,6 +74,7 @@ __tempImagePath = __getTempFilePath( "{}.png".format( __imageName ) )
 script["SceneReader"] = GafferScene.SceneReader()
 script["SceneReader"]["fileName"].setValue( "${project:resources}/gafferBot/caches/gafferBot.scc" )
 script.selection().add( script["SceneReader"] )
+script.setFocus( script["SceneReader"] )
 with GafferUI.Window( "Node Editor : SceneReader" ) as __nodeEditorWindow :
 
 	nodeEditor = GafferUI.NodeEditor( script )
@@ -87,20 +88,21 @@ __dispatchScript(
 	tasks = [ "ImageWriter" ],
 	settings = [
 		"-ImageReader.fileName '\"{}\"'".format( __tempImagePath ),
-		"-ImageWriter.fileName '\"{}\"'".format( os.path.abspath( "images/{}.png".format( __imageName ) ) )
-		]
-	)
+		"-ImageWriter.fileName '\"{}\"'".format( __outputImagePath( __imageName ) )
+	]
+)
 script.selection().clear()
 __nodeEditorWindow.setVisible( False )
 
 # Tutorial: testing the variable substitution in main window
 # TODO: Automate the right window pane to be wider
 script.selection().add( script["SceneReader"] )
+script.setFocus( script["SceneReader"] )
 __delay(1)
 with script.context():
 	viewer.view().viewportGadget().frame( script["SceneReader"]["out"].bound( "/" ) )
 	viewer.view().viewportGadget().getPrimaryChild().waitForCompletion()
 	paths = IECore.PathMatcher( [ "/" ] )
-	GafferSceneUI.ContextAlgo.expand( script.context(), paths )
-	GafferSceneUI.ContextAlgo.expandDescendants( script.context(), paths, script["SceneReader"]["out"] )
+	GafferSceneUI.ScriptNodeAlgo.expandInVisibleSet( script, paths )
+	GafferSceneUI.ScriptNodeAlgo.expandDescendantsInVisibleSet( script, paths, script["SceneReader"]["out"] )
 GafferUI.WidgetAlgo.grab( widget = scriptWindow, imagePath = "images/tutorialVariableSubstitutionTest.png" )

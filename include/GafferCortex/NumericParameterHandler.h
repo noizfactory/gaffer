@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_NUMERICPARAMETERHANDLER_H
-#define GAFFERCORTEX_NUMERICPARAMETERHANDLER_H
+#pragma once
 
 #include "GafferCortex/ParameterHandler.h"
 
@@ -55,10 +54,10 @@ class GAFFERCORTEX_API NumericParameterHandler : public ParameterHandler
 
 		IE_CORE_DECLAREMEMBERPTR( NumericParameterHandler<T> );
 
-		typedef IECore::NumericParameter<T> ParameterType;
-		typedef Gaffer::NumericPlug<T> PlugType;
+		using ParameterType = IECore::NumericParameter<T>;
+		using PlugType = Gaffer::NumericPlug<T>;
 
-		NumericParameterHandler( typename ParameterType::Ptr parameter );
+		explicit NumericParameterHandler( typename ParameterType::Ptr parameter );
 		~NumericParameterHandler() override;
 
 		IECore::Parameter *parameter() override;
@@ -80,5 +79,3 @@ class GAFFERCORTEX_API NumericParameterHandler : public ParameterHandler
 };
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_NUMERICPARAMETERHANDLER_H

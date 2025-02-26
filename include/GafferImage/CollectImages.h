@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_COLLECTIMAGES_H
-#define GAFFERIMAGE_COLLECTIMAGES_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -49,10 +48,10 @@ class GAFFERIMAGE_API CollectImages : public ImageProcessor
 
 	public :
 
-		CollectImages( const std::string &name=defaultName<CollectImages>() );
+		explicit CollectImages( const std::string &name=defaultName<CollectImages>() );
 		~CollectImages() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::CollectImages, CollectImagesTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::CollectImages, CollectImagesTypeId, ImageProcessor );
 
 		Gaffer::StringVectorDataPlug *rootLayersPlug();
 		const Gaffer::StringVectorDataPlug *rootLayersPlug() const;
@@ -60,9 +59,21 @@ class GAFFERIMAGE_API CollectImages : public ImageProcessor
 		Gaffer::StringPlug *layerVariablePlug();
 		const Gaffer::StringPlug *layerVariablePlug() const;
 
+		Gaffer::BoolPlug *addLayerPrefixPlug();
+		const Gaffer::BoolPlug *addLayerPrefixPlug() const;
+
+		Gaffer::BoolPlug *mergeMetadataPlug();
+		const Gaffer::BoolPlug *mergeMetadataPlug() const;
+
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 	protected :
+
+		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
+
+		void hashViewNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstStringVectorDataPtr computeViewNames( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 		void hashFormat( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		GafferImage::Format computeFormat( const Gaffer::Context *context, const ImagePlug *parent ) const override;
@@ -73,6 +84,12 @@ class GAFFERIMAGE_API CollectImages : public ImageProcessor
 		void hashDataWindow( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		Imath::Box2i computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
+		void hashDeep( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		bool computeDeep( const Gaffer::Context *context, const ImagePlug *parent ) const override;
+
+		void hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstIntVectorDataPtr computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
+
 		void hashChannelNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 
@@ -81,6 +98,9 @@ class GAFFERIMAGE_API CollectImages : public ImageProcessor
 
 	private :
 
+		Gaffer::ObjectPlug *mappingPlug();
+		const Gaffer::ObjectPlug *mappingPlug() const;
+
 		static size_t g_firstPlugIndex;
 
 };
@@ -88,5 +108,3 @@ class GAFFERIMAGE_API CollectImages : public ImageProcessor
 IE_CORE_DECLAREPTR( CollectImages )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_COLLECTIMAGES_H

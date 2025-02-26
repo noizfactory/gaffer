@@ -194,10 +194,9 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		c = Gaffer.Context()
 
 		n = GafferDispatchTest.LoggingTaskNode()
-		t = GafferDispatch.TaskNode.Task( n, c )
-		t2 = GafferDispatch.TaskNode.Task( n, c )
-		t3 = GafferDispatch.TaskNode.Task( t2 )
-		t4 = GafferDispatch.TaskNode.Task( n["task"], c )
+		t = GafferDispatch.TaskNode.Task( n["task"], c )
+		t2 = GafferDispatch.TaskNode.Task( t )
+		t3 = GafferDispatch.TaskNode.Task( n["task"], c )
 
 		self.assertEqual( t.plug(), n["task"] )
 		self.assertEqual( t.context(), c )
@@ -205,20 +204,18 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		self.assertEqual( t2.context(), c )
 		self.assertEqual( t3.plug(), n["task"] )
 		self.assertEqual( t3.context(), c )
-		self.assertEqual( t4.plug(), n["task"] )
-		self.assertEqual( t4.context(), c )
 
 	def testTaskComparison( self ) :
 
 		c = Gaffer.Context()
 		n = GafferDispatchTest.LoggingTaskNode()
-		t1 = GafferDispatch.TaskNode.Task( n, c )
-		t2 = GafferDispatch.TaskNode.Task( n, c )
+		t1 = GafferDispatch.TaskNode.Task( n["task"], c )
+		t2 = GafferDispatch.TaskNode.Task( n["task"], c )
 		c2 = Gaffer.Context()
 		c2["a"] = 2
-		t3 = GafferDispatch.TaskNode.Task( n, c2 )
+		t3 = GafferDispatch.TaskNode.Task( n["task"], c2 )
 		n2 = GafferDispatchTest.LoggingTaskNode()
-		t4 = GafferDispatch.TaskNode.Task( n2, c2 )
+		t4 = GafferDispatch.TaskNode.Task( n2["task"], c2 )
 
 		self.assertEqual( t1, t1 )
 		self.assertEqual( t1, t2 )
@@ -309,10 +306,10 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		p = Gaffer.PlugAlgo.promote( s["b"]["e"]["preTasks"][0] )
 		p.setName( "p" )
 
-		s["b"].exportForReference( self.temporaryDirectory() + "/test.grf" )
+		s["b"].exportForReference( self.temporaryDirectory() / "test.grf" )
 
 		s["r"] = Gaffer.Reference()
-		s["r"].load( self.temporaryDirectory() + "/test.grf" )
+		s["r"].load( self.temporaryDirectory() / "test.grf" )
 
 		s["e"] = GafferDispatchTest.TextWriter()
 
@@ -327,28 +324,16 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		p = Gaffer.PlugAlgo.promote( s["b"]["e"]["preTasks"] )
 		p.setName( "p" )
 
-		s["b"].exportForReference( self.temporaryDirectory() + "/test.grf" )
+		s["b"].exportForReference( self.temporaryDirectory() / "test.grf" )
 
 		s["r"] = Gaffer.Reference()
-		s["r"].load( self.temporaryDirectory() + "/test.grf" )
+		s["r"].load( self.temporaryDirectory() / "test.grf" )
 
 		s["e"] = GafferDispatchTest.TextWriter()
 
 		s["r"]["p"][0].setInput( s["e"]["task"] )
 
 		self.assertTrue( s["r"]["e"]["preTasks"][0].source().isSame( s["e"]["task"] ) )
-
-	def testLoadPromotedRequirementsFromVersion0_15( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/promotedRequirementsVersion-0.15.0.0.gfr" )
-		s.load()
-
-	def testLoadPromotedRequirementsNetworkFromVersion0_15( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/promotedRequirementsNetworkVersion-0.15.0.0.gfr" )
-		s.load()
 
 	def testPostTasks( self ) :
 
@@ -359,19 +344,6 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		with c :
 			self.assertEqual( writer["task"].preTasks(), [ GafferDispatch.TaskNode.Task( writer["preTasks"][0], c ) ] )
 			self.assertEqual( writer["task"].postTasks(), [ GafferDispatch.TaskNode.Task( writer["postTasks"][0], c ) ] )
-
-	def testLoadNetworkFromVersion0_19( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/version-0.19.0.0.gfr" )
-		s.load()
-
-		self.assertEqual( len( s["TaskList"]["preTasks"] ), 2 )
-		self.assertEqual( s["TaskList"]["preTasks"][0].getName(), "preTask0" )
-		self.assertEqual( s["TaskList"]["preTasks"][1].getName(), "preTask1" )
-
-		self.assertTrue( s["TaskList"]["preTasks"][0].getInput().isSame( s["SystemCommand"]["task"] ) )
-		self.assertTrue( s["TaskList"]["preTasks"][1].getInput() is None )
 
 	def testExecuteSequenceWithIterable( self ) :
 
@@ -398,7 +370,7 @@ class TaskNodeTest( GafferTest.TestCase ) :
 
 			cs = GafferTest.CapturingSlot( n.errorSignal() )
 
-			self.assertRaisesRegexp(
+			self.assertRaisesRegex(
 				RuntimeError,
 				"Error in {}".format( f ),
 				getattr( n["task"], f ),
@@ -508,9 +480,10 @@ class TaskNodeTest( GafferTest.TestCase ) :
 		self.assertEqual( postTasks[0].plug(), s["n3"]["internalTask"]["postTasks"][0] )
 		self.assertEqual( postTasks[1].plug(), s["n3"]["internalTask"]["postTasks"][1] )
 
-		dispatcher = GafferDispatchTest.DispatcherTest.TestDispatcher()
-		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() )
-		dispatcher.dispatch( [ s["n3"] ] )
+		s["dispatcher"] = GafferDispatchTest.DispatcherTest.TestDispatcher()
+		s["dispatcher"]["tasks"][0].setInput( s["n3"]["task"] )
+		s["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		s["dispatcher"]["task"].execute()
 
 		self.assertEqual( len( log ), 3 )
 		self.assertEqual( [ l.node for l in log ], [ s["n1"], s["n3"]["internalTask"], s["n2"] ] )

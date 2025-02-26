@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDAOVSHADER_H
-#define GAFFERARNOLD_ARNOLDAOVSHADER_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -52,10 +51,10 @@ class GAFFERARNOLD_API ArnoldAOVShader : public GafferScene::GlobalShader
 
 	public :
 
-		ArnoldAOVShader( const std::string &name=defaultName<ArnoldAOVShader>() );
+		explicit ArnoldAOVShader( const std::string &name=defaultName<ArnoldAOVShader>() );
 		~ArnoldAOVShader() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldAOVShader, ArnoldAOVShaderTypeId, GafferScene::GlobalShader );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldAOVShader, ArnoldAOVShaderTypeId, GafferScene::GlobalShader );
 
 		Gaffer::StringPlug *optionSuffixPlug();
 		const Gaffer::StringPlug *optionSuffixPlug() const;
@@ -75,5 +74,3 @@ class GAFFERARNOLD_API ArnoldAOVShader : public GafferScene::GlobalShader
 IE_CORE_DECLAREPTR( ArnoldAOVShader )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDAOVSHADER_H

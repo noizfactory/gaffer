@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_MERGE_H
-#define GAFFERIMAGE_MERGE_H
+#pragma once
 
-#include "GafferImage/ImageProcessor.h"
+#include "GafferImage/FlatImageProcessor.h"
 
 #include "Gaffer/NumericPlug.h"
 
@@ -56,15 +55,15 @@ namespace GafferImage
 /// - For some operations we do not need to track the intermediate alpha values at all.
 /// - We could improve our masking of invalid pixels with special cases for wholly valid tiles,
 ///   wholly invalid tiles, and by chunking the work on the valid sections.
-class GAFFERIMAGE_API Merge : public ImageProcessor
+class GAFFERIMAGE_API Merge : public FlatImageProcessor
 {
 
 	public :
 
-		Merge( const std::string &name=defaultName<Merge>() );
+		explicit Merge( const std::string &name=defaultName<Merge>() );
 		~Merge() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Merge, MergeTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Merge, MergeTypeId, FlatImageProcessor );
 
 		enum Operation
 		{
@@ -105,10 +104,6 @@ class GAFFERIMAGE_API Merge : public ImageProcessor
 
 	private :
 
-		// Performs the merge operation using the functor 'F'.
-		template<typename F>
-		IECore::ConstFloatVectorDataPtr merge( F f, const std::string &channelName, const Imath::V2i &tileOrigin ) const;
-
 		static size_t g_firstPlugIndex;
 
 };
@@ -116,5 +111,3 @@ class GAFFERIMAGE_API Merge : public ImageProcessor
 IE_CORE_DECLAREPTR( Merge )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_MERGE_H

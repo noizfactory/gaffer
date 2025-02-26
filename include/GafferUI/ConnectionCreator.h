@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_CONNECTIONCREATOR_H
-#define GAFFERUI_CONNECTIONCREATOR_H
+#pragma once
 
 #include "GafferUI/Gadget.h"
 
@@ -56,7 +55,7 @@ class GAFFERUI_API ConnectionCreator : public Gadget
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::ConnectionCreator, ConnectionCreatorTypeId, Gadget );
 
-		ConnectionCreator( const std::string &name=defaultName<ConnectionCreator>() );
+		explicit ConnectionCreator( const std::string &name=defaultName<ConnectionCreator>() );
 		~ConnectionCreator() override;
 
 		/// May be called by the recipient of a drag to figure out if this
@@ -76,9 +75,4 @@ class GAFFERUI_API ConnectionCreator : public Gadget
 
 IE_CORE_DECLAREPTR( ConnectionCreator )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<ConnectionCreator>> ConnectionCreatorIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<ConnectionCreator>> RecursiveConnectionCreatorIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_CONNECTIONCREATOR_H

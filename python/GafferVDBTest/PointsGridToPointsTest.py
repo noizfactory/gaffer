@@ -41,7 +41,6 @@ import IECore
 import IECoreScene
 import IECoreVDB
 import GafferVDBTest
-import os
 import GafferScene
 
 import imath
@@ -50,16 +49,20 @@ import imath
 class PointsGridToPointsTest( GafferVDBTest.VDBTestCase ) :
 	def setUp( self ) :
 		GafferVDBTest.VDBTestCase.setUp( self )
-		self.sourcePath = os.path.join( self.dataDir, "points.vdb" )
-		self.sceneInterface = IECoreScene.SceneInterface.create( self.sourcePath, IECore.IndexedIO.OpenMode.Read )
+		self.sourcePath = self.dataDir / "points.vdb"
+		self.sceneInterface = IECoreScene.SceneInterface.create( str( self.sourcePath ), IECore.IndexedIO.OpenMode.Read )
 
 	def testCanConvertPointsGridToPoints( self ) :
 
 		sceneReader = GafferScene.SceneReader( "SceneReader" )
 		sceneReader["fileName"].setValue( self.sourcePath )
 
+		pointsFilter = GafferScene.PathFilter()
+		pointsFilter["paths"].setValue( IECore.StringVectorData( [ "/vdb" ] ) )
+
 		pointsGridToPoints = GafferVDB.PointsGridToPoints( "PointsGridToPoints" )
 		pointsGridToPoints["in"].setInput( sceneReader["out"] )
+		pointsGridToPoints["filter"].setInput( pointsFilter["out"] )
 
 		points = pointsGridToPoints["out"].object("/vdb")
 
@@ -73,8 +76,12 @@ class PointsGridToPointsTest( GafferVDBTest.VDBTestCase ) :
 		sceneReader = GafferScene.SceneReader( "SceneReader" )
 		sceneReader["fileName"].setValue( self.sourcePath )
 
+		pointsFilter = GafferScene.PathFilter()
+		pointsFilter["paths"].setValue( IECore.StringVectorData( [ "/vdb" ] ) )
+
 		pointsGridToPoints = GafferVDB.PointsGridToPoints( "PointsGridToPoints" )
 		pointsGridToPoints["in"].setInput( sceneReader["out"] )
+		pointsGridToPoints["filter"].setInput( pointsFilter["out"] )
 		pointsGridToPoints["grid"].setValue( "nogridhere" )
 
 		vdb = pointsGridToPoints["out"].object("/vdb")

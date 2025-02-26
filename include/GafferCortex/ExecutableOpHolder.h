@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_EXECUTABLEOPHOLDER_H
-#define GAFFERCORTEX_EXECUTABLEOPHOLDER_H
+#pragma once
 
 #include "GafferCortex/ParameterisedHolder.h"
 
@@ -57,9 +56,9 @@ class GAFFERCORTEX_API ExecutableOpHolder : public ParameterisedHolderTaskNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferCortex::ExecutableOpHolder, ExecutableOpHolderTypeId, ParameterisedHolderTaskNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferCortex::ExecutableOpHolder, ExecutableOpHolderTypeId, ParameterisedHolderTaskNode );
 
-		ExecutableOpHolder( const std::string &name=defaultName<ExecutableOpHolder>() );
+		explicit ExecutableOpHolder( const std::string &name=defaultName<ExecutableOpHolder>() );
 
 		void setParameterised( IECore::RunTimeTypedPtr parameterised, bool keepExistingValues=false ) override;
 
@@ -69,13 +68,18 @@ class GAFFERCORTEX_API ExecutableOpHolder : public ParameterisedHolderTaskNode
 		IECore::Op *getOp( std::string *className = nullptr, int *classVersion = nullptr );
 		const IECore::Op *getOp( std::string *className = nullptr, int *classVersion = nullptr ) const;
 
+	protected :
+
 		IECore::MurmurHash hash( const Gaffer::Context *context ) const override;
 		void execute() const override;
+
+	private :
+
+		// Friendship for the bindings
+		friend struct GafferDispatchBindings::Detail::TaskNodeAccessor;
 
 };
 
 IE_CORE_DECLAREPTR( ExecutableOpHolder )
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_EXECUTABLEOPHOLDER_H

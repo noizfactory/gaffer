@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_RESAMPLEPRIMITIVEVARIABLES_H
-#define GAFFERSCENE_RESAMPLEPRIMITIVEVARIABLES_H
+#pragma once
 
 #include "GafferScene/PrimitiveVariableProcessor.h"
 
@@ -47,10 +46,10 @@ class GAFFERSCENE_API ResamplePrimitiveVariables : public PrimitiveVariableProce
 
 	public :
 
-		ResamplePrimitiveVariables( const std::string &name = defaultName<ResamplePrimitiveVariables>() );
+		explicit ResamplePrimitiveVariables( const std::string &name = defaultName<ResamplePrimitiveVariables>() );
 		~ResamplePrimitiveVariables() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ResamplePrimitiveVariables, ResamplePrimitiveVariablesTypeId, PrimitiveVariableProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ResamplePrimitiveVariables, ResamplePrimitiveVariablesTypeId, PrimitiveVariableProcessor );
 
 		Gaffer::IntPlug *interpolationPlug();
 		const Gaffer::IntPlug *interpolationPlug() const;
@@ -70,5 +69,3 @@ class GAFFERSCENE_API ResamplePrimitiveVariables : public PrimitiveVariableProce
 IE_CORE_DECLAREPTR( ResamplePrimitiveVariables )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_RESAMPLEPRIMITIVEVARIABLES_H

@@ -36,7 +36,7 @@
 
 import os
 import shlex
-import subprocess32 as subprocess
+import subprocess
 
 import IECore
 

@@ -40,11 +40,11 @@
 
 #include "GafferScene/AimConstraint.h"
 #include "GafferScene/Constraint.h"
+#include "GafferScene/FramingConstraint.h"
 #include "GafferScene/FreezeTransform.h"
 #include "GafferScene/ParentConstraint.h"
 #include "GafferScene/PointConstraint.h"
 #include "GafferScene/Transform.h"
-#include "GafferScene/CollectTransforms.h"
 
 #include "GafferBindings/ComputeNodeBinding.h"
 
@@ -56,7 +56,7 @@ using namespace GafferScene;
 void GafferSceneModule::bindTransform()
 {
 
-	typedef ComputeNodeWrapper<FilteredSceneProcessor> Wrapper;
+	using Wrapper = ComputeNodeWrapper<FilteredSceneProcessor>;
 	GafferBindings::DependencyNodeClass<FilteredSceneProcessor, Wrapper>()
 		.def( init<const std::string &, IECore::PathMatcher::Result>(
 				(
@@ -85,12 +85,15 @@ void GafferSceneModule::bindTransform()
 			.value( "BoundMin", Constraint::BoundMin )
 			.value( "BoundMax", Constraint::BoundMax )
 			.value( "BoundCenter", Constraint::BoundCenter )
+			.value( "UV", Constraint::UV )
+			.value( "Vertex", Constraint::Vertex )
 		;
 	}
 
 	GafferBindings::DependencyNodeClass<AimConstraint>();
 	GafferBindings::DependencyNodeClass<PointConstraint>();
 	GafferBindings::DependencyNodeClass<ParentConstraint>();
+	GafferBindings::DependencyNodeClass<FramingConstraint>();
 	GafferBindings::DependencyNodeClass<GafferScene::FreezeTransform>();
 
 	{
@@ -104,7 +107,4 @@ void GafferSceneModule::bindTransform()
 			.value( "ResetWorld", Transform::ResetWorld )
 		;
 	}
-
-	GafferBindings::DependencyNodeClass<GafferScene::CollectTransforms>();
-
 }

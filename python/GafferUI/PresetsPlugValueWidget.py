@@ -34,6 +34,7 @@
 #
 ##########################################################################
 
+import collections
 import functools
 
 import IECore
@@ -41,95 +42,157 @@ import IECore
 import Gaffer
 import GafferUI
 
+from GafferUI.PlugValueWidget import sole
+
 class PresetsPlugValueWidget( GafferUI.PlugValueWidget ) :
 
-	def __init__( self, plug, **kw ) :
+	def __init__( self, plugs, **kw ) :
 
 		cont = GafferUI.ListContainer(
 			GafferUI.ListContainer.Orientation.Vertical, spacing=4, borderWidth=0,
 		)
 
-		GafferUI.PlugValueWidget.__init__( self, cont, plug, **kw )
+		GafferUI.PlugValueWidget.__init__( self, cont, plugs, **kw )
 
 		self.__menuButton = GafferUI.MenuButton( "", menu = GafferUI.Menu( Gaffer.WeakMethod( self.__menuDefinition ) ) )
 		cont.addChild( self.__menuButton )
 
-		self.__customValuePlugWidget = GafferUI.PlugValueWidget.create( plug, useTypeOnly=True )
+		self.__customValuePlugWidget = GafferUI.PlugValueWidget.create( plugs, typeMetadata = "presetsPlugValueWidget:customWidgetType" )
+
 		cont.addChild( self.__customValuePlugWidget )
 
 		self._addPopupMenu( self.__menuButton )
-		self._updateFromPlug()
 
-	def _updateFromPlug( self ) :
+		# Possible states :
+		#
+		# - None : Multiple plugs, and they have different values.
+		# - "<presetName>" : All plugs have value matching `<presetName>`.
+		# - "" : All plugs have a value that isn't a preset.
+		self.__currentPreset = None
+		# We do this again when `_updateFromValues()` is called, but doing it
+		# from the constructor first avoids layout flicker by getting the
+		# visibility correct before the widget is shown.
+		self.__customValuePlugWidget.setVisible( self.__isCustom() )
+
+	def menu( self ) :
+
+		return self.__menuButton.getMenu()
+
+	def menuButton( self ) :
+
+		return self.__menuButton
+
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
+
+		return [ Gaffer.NodeAlgo.currentPreset( p ) or "" for p in plugs ]
+
+	def _updateFromValues( self, values, exception ) :
+
+		self.__currentPreset = sole( values )
+		isCustom = self.__isCustom()
+
+		self.__customValuePlugWidget.setVisible( isCustom )
+
+		if exception is not None :
+			self.__menuButton.setText( "" )
+		elif isCustom :
+			self.__menuButton.setText( "Custom" )
+		elif self.__currentPreset :
+			self.__menuButton.setText( self.__currentPreset )
+		elif self.__currentPreset is None :
+			self.__menuButton.setText( "---" )
+		else :
+			self.__menuButton.setText( "Invalid" )
+
+		self.__menuButton.setErrored( exception is not None )
+
+	def _valuesDependOnContext( self ) :
+
+		# We allow the presets metadata to be context-sensitive, so must
+		# update whenever the context changes.
+		return True
+
+	def _updateFromMetadata( self ) :
+
+		self._requestUpdateFromValues()
+
+	def _updateFromEditable( self ) :
 
 		self.__menuButton.setEnabled( self._editable() )
-
-		text = ""
-		allowCustom = False
-		isCustom = False
-		if self.getPlug() is not None :
-			allowCustom = Gaffer.Metadata.value( self.getPlug(), "presetsPlugValueWidget:allowCustom" )
-			isCustom = Gaffer.Metadata.value( self.getPlug(), "presetsPlugValueWidget:isCustom" )
-
-			with self.getContext() :
-				presetName = Gaffer.NodeAlgo.currentPreset( self.getPlug() )
-
-			if allowCustom:
-				if isCustom or not presetName:
-					isCustom = True
-					text = "Custom"
-				else:
-					text = presetName or "Invalid"
-			else:
-				text = presetName or "Invalid"
-
-		self.__menuButton.setText( text )
-		self.__customValuePlugWidget.setVisible( isCustom )
 
 	def __menuDefinition( self ) :
 
 		result = IECore.MenuDefinition()
-		if self.getPlug() is None :
+		if not self.getPlugs() :
 			return result
 
-		currentPreset = Gaffer.NodeAlgo.currentPreset( self.getPlug() )
-		allowCustom = Gaffer.Metadata.value( self.getPlug(), "presetsPlugValueWidget:allowCustom" )
-		isCustom = Gaffer.Metadata.value( self.getPlug(), "presetsPlugValueWidget:isCustom" )
-		for n in Gaffer.NodeAlgo.presets( self.getPlug() ) :
-			menuPath = n if n.startswith( "/" ) else "/" + n
+		# Required for context-sensitive dynamic presets
+		with self.context():
+
+			# Find the union of the presets across all plugs,
+			# and count how many times they occur.
+			presets = []
+			presetCounts = collections.Counter()
+			for plug in self.getPlugs() :
+				for preset in Gaffer.NodeAlgo.presets( plug ) :
+					if not presetCounts[preset] :
+						presets.append( preset )
+					presetCounts[preset] += 1
+
+		# Build menu. We'll list every preset we found, but disable
+		# any which aren't available for all plugs.
+		isCustom = self.__isCustom()
+		readOnly = any( Gaffer.MetadataAlgo.readOnly( p ) for p in self.getPlugs() )
+		for preset in presets :
+
+			menuPath = preset if preset.startswith( "/" ) else "/" + preset
 			result.append(
 				menuPath,
 				{
-					"command" : functools.partial( Gaffer.WeakMethod( self.__applyPreset ), preset = n ),
-					"checkBox" : n == currentPreset and not isCustom,
+					"command" : functools.partial( Gaffer.WeakMethod( self.__applyPreset ), preset = preset ),
+					"checkBox" : preset == self.__currentPreset and not isCustom,
+					"active" : ( presetCounts[preset] == len( self.getPlugs() ) ) and not readOnly
 				}
 			)
 
-		if allowCustom:
+		allowCustom = sole( ( Gaffer.Metadata.value( p, "presetsPlugValueWidget:allowCustom" ) for p in self.getPlugs() ) )
+		if allowCustom :
 			result.append( "/CustomDivider", { "divider" : True } )
 			result.append(
 				"/Custom",
 				{
 					"command" : Gaffer.WeakMethod( self.__applyCustomPreset ),
-					"checkBox" : isCustom or not currentPreset,
+					"checkBox" : isCustom,
+					"active" : not readOnly,
 				}
 			)
 
 		return result
 
+	def __isCustom( self ) :
+
+		allowCustom = sole( ( Gaffer.Metadata.value( p, "presetsPlugValueWidget:allowCustom" ) for p in self.getPlugs() ) )
+		isCustom = any( Gaffer.Metadata.value( p, "presetsPlugValueWidget:isCustom" ) for p in self.getPlugs() )
+		return allowCustom and ( isCustom or self.__currentPreset == "" )
+
 	def __applyPreset( self, unused, preset ) :
 
-		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
-			Gaffer.Metadata.deregisterValue( self.getPlug(), "presetsPlugValueWidget:isCustom" )
-			Gaffer.NodeAlgo.applyPreset( self.getPlug(), preset )
+		# Required for context-sensitive dynamic presets
+		with self.context() :
+			with Gaffer.UndoScope( self.scriptNode() ) :
+				for plug in self.getPlugs() :
+					Gaffer.Metadata.deregisterValue( plug, "presetsPlugValueWidget:isCustom" )
+					Gaffer.NodeAlgo.applyPreset( plug, preset )
 
 	def __applyCustomPreset( self, unused ) :
 
-		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
-			# When we first switch to custom mode, the current value will
-			# actually be one of the registered presets. So we use this
-			# metadata value to keep track of the user's desire to be in
-			# custom mode despite of this fact. We use metadata rather than
-			# a member variable so that undo will take us back to the non-custom
-			# state automatically.
-			Gaffer.Metadata.registerValue( self.getPlug(), "presetsPlugValueWidget:isCustom", True )
+		with Gaffer.UndoScope( self.scriptNode() ) :
+			for plug in self.getPlugs() :
+				# When we first switch to custom mode, the current value will
+				# actually be one of the registered presets. So we use this
+				# metadata value to keep track of the user's desire to be in
+				# custom mode despite of this fact. We use metadata rather than
+				# a member variable so that undo will take us back to the non-custom
+				# state automatically.
+				Gaffer.Metadata.registerValue( plug, "presetsPlugValueWidget:isCustom", True )

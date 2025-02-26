@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef IECORESCENEPREVIEW_CAPTURINGRENDERER_H
-#define IECORESCENEPREVIEW_CAPTURINGRENDERER_H
+#pragma once
 
 #include "GafferScene/Private/IECoreScenePreview/Renderer.h"
 
@@ -50,19 +49,28 @@ namespace IECoreScenePreview
 /// A "Renderer" which just captures the scene passed to it, and
 /// keeps a history of any interactive edits made. Useful for testing
 /// renderer output code.
-class IECORESCENE_API CapturingRenderer : public Renderer
+///
+/// If the Bool `cr:unrenderable` attribute is set to true at a location, then
+/// calls to object, light, lightFilter, camera, etc... for that location will
+/// return nullptr rather than a valid ObjectInterface.
+class GAFFERSCENE_API CapturingRenderer : public Renderer
 {
 
 	public :
 
 		IE_CORE_DECLAREMEMBERPTR( CapturingRenderer )
 
-		CapturingRenderer( RenderType type = RenderType::Interactive, const std::string &fileName = "" );
+		CapturingRenderer(
+			RenderType type = RenderType::Interactive,
+			const std::string &fileName = "",
+			const IECore::MessageHandlerPtr &messageHandler = IECore::MessageHandlerPtr()
+		);
+		~CapturingRenderer() override;
 
 		/// Introspection
 		/// =============
 
-		class CapturedAttributes : public AttributesInterface
+		class GAFFERSCENE_API CapturedAttributes : public AttributesInterface
 		{
 
 			public :
@@ -75,6 +83,9 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 
 				CapturedAttributes( const IECore::ConstCompoundObjectPtr &attributes );
 
+				static int uneditableAttributeValue( const CapturedAttributes *attributes );
+				static bool unrenderableAttributeValue( const CapturedAttributes *attributes );
+
 				friend class CapturingRenderer;
 
 				IECore::ConstCompoundObjectPtr m_attributes;
@@ -83,7 +94,7 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 
 		IE_CORE_DECLAREPTR( CapturedAttributes );
 
-		class CapturedObject : public ObjectInterface
+		class GAFFERSCENE_API CapturedObject : public ObjectInterface
 		{
 
 			public :
@@ -95,14 +106,22 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 				/// Introspection
 				/// =============
 
+				const std::string &capturedName() const;
+
 				const std::vector<IECore::ConstObjectPtr> &capturedSamples() const;
 				const std::vector<float> &capturedSampleTimes() const;
 
+				const std::vector<Imath::M44f> &capturedTransforms() const;
+				const std::vector<float> &capturedTransformTimes() const;
+
 				const CapturedAttributes *capturedAttributes() const;
+				std::vector< IECore::InternedString > capturedLinkTypes() const;
 				const ObjectSet *capturedLinks( const IECore::InternedString &type ) const;
 
 				int numAttributeEdits() const;
 				int numLinkEdits( const IECore::InternedString &type ) const;
+
+				uint32_t id() const;
 
 				/// Renderer interface
 				/// ==================
@@ -111,6 +130,7 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 				void transform( const std::vector<Imath::M44f> &samples, const std::vector<float> &times ) override;
 				bool attributes( const AttributesInterface *attributes ) override;
 				void link( const IECore::InternedString &type, const ConstObjectSetPtr &objects ) override;
+				void assignID( uint32_t id ) override;
 
 			private :
 
@@ -122,14 +142,18 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 				const std::string m_name;
 				const std::vector<IECore::ConstObjectPtr> m_capturedSamples;
 				const std::vector<float> m_capturedSampleTimes;
+				std::vector<Imath::M44f> m_capturedTransforms;
+				std::vector<float> m_capturedTransformTimes;
 				ConstCapturedAttributesPtr m_capturedAttributes;
 				int m_numAttributeEdits;
 				std::unordered_map<IECore::InternedString, std::pair<ConstObjectSetPtr, int>> m_capturedLinks;
+				uint32_t m_id;
 
 		};
 
 		IE_CORE_DECLAREPTR( CapturedObject );
 
+		std::vector<std::string> capturedObjectNames() const;
 		const CapturedObject *capturedObject( const std::string &name ) const;
 
 		/// Renderer interface
@@ -140,6 +164,7 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 		void output( const IECore::InternedString &name, const IECoreScene::Output *output ) override;
 		AttributesInterfacePtr attributes( const IECore::CompoundObject *attributes ) override;
 		ObjectInterfacePtr camera( const std::string &name, const IECoreScene::Camera *camera, const AttributesInterface *attributes ) override;
+		ObjectInterfacePtr camera( const std::string &name, const std::vector<const IECoreScene::Camera *> &samples, const std::vector<float> &times, const AttributesInterface *attributes ) override;
 		ObjectInterfacePtr light( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes ) override;
 		ObjectInterfacePtr lightFilter( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes ) override;
 		ObjectInterfacePtr object( const std::string &name, const IECore::Object *object, const AttributesInterface *attributes ) override;
@@ -151,8 +176,11 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 
 		void checkPaused() const;
 
+		IECore::MessageHandlerPtr m_messageHandler;
+
+		RenderType m_renderType;
 		std::atomic_bool m_rendering;
-		using ObjectMap = tbb::concurrent_hash_map<std::string, const CapturedObject *>;
+		using ObjectMap = tbb::concurrent_hash_map<std::string, CapturedObject *>;
 		ObjectMap m_capturedObjects;
 
 		static Renderer::TypeDescription<CapturingRenderer> g_typeDescription;
@@ -162,5 +190,3 @@ class IECORESCENE_API CapturingRenderer : public Renderer
 IE_CORE_DECLAREPTR( CapturingRenderer )
 
 } // namespace IECoreScenePreview
-
-#endif // IECORESCENEPREVIEW_CAPTURINGRENDERER_H

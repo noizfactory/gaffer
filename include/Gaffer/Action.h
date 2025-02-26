@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_ACTION_H
-#define GAFFER_ACTION_H
+#pragma once
 
 #include "Gaffer/Export.h"
 #include "Gaffer/TypeIds.h"
@@ -85,7 +84,7 @@ class GAFFER_API Action : public IECore::RunTimeTyped
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::Action, ActionTypeId, IECore::RunTimeTyped );
 
-		typedef std::function<void ()> Function;
+		using Function = std::function<void ()>;
 
 		/// Enacts the specified action by calling doAction() and
 		/// adding it to the undo queue in the appropriate ScriptNode.
@@ -111,7 +110,7 @@ class GAFFER_API Action : public IECore::RunTimeTyped
 
 	protected :
 
-		Action( bool cancelBackgroundTasks = true );
+		explicit Action( bool cancelBackgroundTasks = true );
 		~Action() override;
 
 		/// Must be implemented by derived classes to
@@ -155,5 +154,3 @@ class GAFFER_API Action : public IECore::RunTimeTyped
 IE_CORE_DECLAREPTR( Action );
 
 } // namespace Gaffer
-
-#endif // GAFFER_ACTION_H

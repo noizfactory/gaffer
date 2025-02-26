@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_GRAPHLAYOUT_H
-#define GAFFERUI_GRAPHLAYOUT_H
+#pragma once
 
 #include "GafferUI/Export.h"
 #include "GafferUI/TypeIds.h"
@@ -45,7 +44,7 @@
 #include "IECore/RunTimeTyped.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathVec.h"
+#include "Imath/ImathVec.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 namespace Gaffer
@@ -109,5 +108,3 @@ class GAFFERUI_API GraphLayout : public IECore::RunTimeTyped
 IE_CORE_DECLAREPTR( GraphLayout );
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_GRAPHLAYOUT_H

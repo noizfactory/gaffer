@@ -58,7 +58,9 @@ class CompoundPathPreview( GafferUI.PathPreviewWidget ) :
 			widget = GafferUI.PathPreviewWidget.create( type, path )
 			self.__labelsAndTabs.append( ( type, widget ) )
 
-		self.__currentTabChangedConnection = self.__tabbedContainer.currentChangedSignal().connect( Gaffer.WeakMethod( self.__currentTabChanged ) )
+		self.__currentTabChangedConnection = self.__tabbedContainer.currentChangedSignal().connect(
+			Gaffer.WeakMethod( self.__currentTabChanged )
+		)
 
 		self.__preferredTab = None
 
@@ -66,7 +68,7 @@ class CompoundPathPreview( GafferUI.PathPreviewWidget ) :
 
 	def _updateFromPath( self ) :
 
-		with Gaffer.BlockedConnection( self.__currentTabChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__currentTabChangedConnection ) :
 
 			del self.__tabbedContainer[:]
 			for label, tab in self.__labelsAndTabs :

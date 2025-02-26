@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_ATOMICFORMATPLUG_H
-#define GAFFERIMAGE_ATOMICFORMATPLUG_H
+#pragma once
 
 #include "GafferImage/FormatData.h"
 #include "GafferImage/TypeIds.h"
@@ -45,18 +44,19 @@
 namespace GafferImage
 {
 
-typedef Gaffer::TypedPlug<GafferImage::Format> AtomicFormatPlug;
+using AtomicFormatPlug = Gaffer::TypedPlug<GafferImage::Format>;
 
 IE_CORE_DECLAREPTR( AtomicFormatPlug );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, AtomicFormatPlug> > AtomicFormatPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, AtomicFormatPlug> > InputAtomicFormatPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, AtomicFormatPlug> > OutputAtomicFormatPlugIterator;
-
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, AtomicFormatPlug>, Gaffer::PlugPredicate<> > RecursiveAtomicFormatPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, AtomicFormatPlug>, Gaffer::PlugPredicate<> > RecursiveInputAtomicFormatPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, AtomicFormatPlug>, Gaffer::PlugPredicate<> > RecursiveOutputAtomicFormatPlugIterator;
-
 } // namespace GafferImage
 
-#endif // GAFFERIMAGE_ATOMICFORMATPLUG_H
+namespace Gaffer
+{
+
+template<>
+GafferImage::Format GafferImage::AtomicFormatPlug::getValue( const IECore::MurmurHash *precomputedHash ) const;
+
+template<>
+IECore::MurmurHash GafferImage::AtomicFormatPlug::hash() const;
+
+} // namespace Gaffer

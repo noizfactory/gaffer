@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_GRAPHCOMPONENT_INL
-#define GAFFER_GRAPHCOMPONENT_INL
+#pragma once
 
 #include "boost/tokenizer.hpp"
 
@@ -75,22 +74,27 @@ inline const T *GraphComponent::getChild( size_t index ) const
 	return IECore::runTimeCast<const T>( m_children[index].get() );
 }
 
+inline const GraphComponent::ChildContainer &GraphComponent::children() const
+{
+	return m_children;
+}
+
 template<typename T>
-T *GraphComponent::descendant( const std::string &relativePath )
+inline T *GraphComponent::descendant( const std::string &relativePath )
 {
 	// preferring the nasty casts over maintaining two nearly identical implementations for getChild.
 	return const_cast<T *>( const_cast<const GraphComponent *>( this )->descendant<T>( relativePath ) );
 }
 
 template<typename T>
-const T *GraphComponent::descendant( const std::string &relativePath ) const
+inline const T *GraphComponent::descendant( const std::string &relativePath ) const
 {
 	if( !relativePath.size() )
 	{
 		return nullptr;
 	}
 
-	typedef boost::tokenizer<boost::char_separator<char> > Tokenizer;
+	using Tokenizer = boost::tokenizer<boost::char_separator<char> >;
 
 	Tokenizer t( relativePath, boost::char_separator<char>( "." ) );
 	const GraphComponent *result = this;
@@ -159,5 +163,3 @@ std::string GraphComponent::defaultName()
 }
 
 } // namespace Gaffer
-
-#endif // GAFFER_GRAPHCOMPONENT_INL

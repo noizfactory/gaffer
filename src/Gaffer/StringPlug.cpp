@@ -39,6 +39,9 @@
 
 #include "Gaffer/Context.h"
 #include "Gaffer/Process.h"
+#include "Gaffer/TypedObjectPlug.h"
+
+#include "boost/algorithm/string/join.hpp"
 
 using namespace IECore;
 using namespace Gaffer;
@@ -73,7 +76,7 @@ bool StringPlug::acceptsInput( const Plug *input ) const
 	}
 	if( input )
 	{
-		return input->isInstanceOf( staticTypeId() );
+		return input->isInstanceOf( staticTypeId() ) || input->isInstanceOf( StringVectorDataPlug::staticTypeId() );
 	}
 	return true;
 }
@@ -93,20 +96,26 @@ void StringPlug::setValue( const std::string &value )
 	setObjectValue( new StringData( value ) );
 }
 
-std::string StringPlug::getValue( const IECore::MurmurHash *precomputedHash ) const
+void StringPlug::setValue( const char *value )
 {
-	IECore::ConstObjectPtr o = getObjectValue( precomputedHash );
-	const IECore::StringData *s = IECore::runTimeCast<const IECore::StringData>( o.get() );
-	if( !s )
-	{
-		throw IECore::Exception( "StringPlug::getObjectValue() didn't return StringData - is the hash being computed correctly?" );
-	}
+	setObjectValue( new StringData( value ) );
+}
+
+void StringPlug::setValue( const std::filesystem::path &value )
+{
+	setValue( value.generic_string() );
+}
+
+std::string StringPlug::getValue() const
+{
+	ConstObjectPtr owner;
+	const StringData *s = getObjectValue<StringData>( owner );
 
 	const bool performSubstitutions =
 		m_substitutions &&
 		direction() == In &&
 		Process::current() &&
-		Context::hasSubstitutions( s->readable() )
+		IECore::StringAlgo::hasSubstitutions( s->readable() )
 	;
 
 	return performSubstitutions ? Context::current()->substitute( s->readable(), m_substitutions ) : s->readable();
@@ -114,10 +123,14 @@ std::string StringPlug::getValue( const IECore::MurmurHash *precomputedHash ) co
 
 void StringPlug::setFrom( const ValuePlug *other )
 {
-	const StringPlug *tOther = IECore::runTimeCast<const StringPlug >( other );
-	if( tOther )
+	if( auto stringPlug = IECore::runTimeCast<const StringPlug >( other ) )
 	{
-		setValue( tOther->getValue() );
+		setValue( stringPlug->getValue() );
+	}
+	else if( auto stringVectorPlug = IECore::runTimeCast<const StringVectorDataPlug >( other ) )
+	{
+		ConstStringVectorDataPtr data = stringVectorPlug->getValue();
+		setValue( boost::algorithm::join( data->readable(), " " ) );
 	}
 	else
 	{
@@ -134,18 +147,17 @@ IECore::MurmurHash StringPlug::hash() const
 
 	if( performSubstitutions )
 	{
-		IECore::ConstObjectPtr o = getObjectValue();
-		const IECore::StringData *s = IECore::runTimeCast<const IECore::StringData>( o.get() );
-		if( !s )
-		{
-			throw IECore::Exception( "StringPlug::getObjectValue() didn't return StringData - is the hash being computed correctly?" );
-		}
-
-		if( Context::hasSubstitutions( s->readable() ) )
+		ConstObjectPtr owner;
+		const StringData *s = getObjectValue<StringData>( owner );
+		if( IECore::StringAlgo::hasSubstitutions( s->readable() ) )
 		{
 			IECore::MurmurHash result;
 			result.append( Context::current()->substitute( s->readable(), m_substitutions ) );
 			return result;
+		}
+		else
+		{
+			return s->Object::hash();
 		}
 	}
 

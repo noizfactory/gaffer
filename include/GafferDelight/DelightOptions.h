@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERDELIGHT_DELIGHTOPTIONS_H
-#define GAFFERDELIGHT_DELIGHTOPTIONS_H
+#pragma once
 
 #include "GafferDelight/Export.h"
 #include "GafferDelight/TypeIds.h"
@@ -50,15 +49,13 @@ class GAFFERDELIGHT_API DelightOptions : public GafferScene::Options
 
 	public :
 
-		DelightOptions( const std::string &name=defaultName<DelightOptions>() );
+		explicit DelightOptions( const std::string &name=defaultName<DelightOptions>() );
 		~DelightOptions() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferDelight::DelightOptions, DelightOptionsTypeId, GafferScene::Options );
+		GAFFER_NODE_DECLARE_TYPE( GafferDelight::DelightOptions, DelightOptionsTypeId, GafferScene::Options );
 
 };
 
 IE_CORE_DECLAREPTR( DelightOptions );
 
 } // namespace GafferDelight
-
-#endif // GAFFERDELIGHT_DELIGHTOPTIONS_H

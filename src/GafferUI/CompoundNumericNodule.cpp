@@ -43,10 +43,11 @@
 #include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
@@ -141,7 +142,7 @@ struct TypeDescription
 	}
 };
 
-static TypeDescription g_typeDescription;
+TypeDescription g_typeDescription;
 
 } // namespace
 
@@ -154,7 +155,7 @@ GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CompoundNumericNodule );
 CompoundNumericNodule::CompoundNumericNodule( Gaffer::PlugPtr plug )
 	:	StandardNodule( plug )
 {
-	Metadata::plugValueChangedSignal().connect( boost::bind( &CompoundNumericNodule::plugMetadataChanged, this, ::_1, ::_2, ::_3, ::_4 ) );
+	Metadata::plugValueChangedSignal( plug->node() ).connect( boost::bind( &CompoundNumericNodule::plugMetadataChanged, this, ::_1, ::_2 ) );
 	updateChildNoduleVisibility();
 }
 
@@ -205,7 +206,7 @@ bool CompoundNumericNodule::canCreateConnection( const Gaffer::Plug *endpoint ) 
 	}
 
 	// Things like float <-> Color3f.[rgb]
-	for( PlugIterator it( plug() ); !it.done(); ++it )
+	for( Plug::Iterator it( plug() ); !it.done(); ++it )
 	{
 		if( canConnect( endpoint, it->get() ) )
 		{
@@ -236,7 +237,7 @@ void CompoundNumericNodule::createConnection( Gaffer::Plug *endpoint )
 
 	vector<Plug *> plugs;
 	string allName;
-	for( PlugIterator it( plug() ); !it.done(); ++it )
+	for( Plug::Iterator it( plug() ); !it.done(); ++it )
 	{
 		if( canConnect( endpoint, it->get() ) )
 		{
@@ -287,11 +288,35 @@ Imath::Box3f CompoundNumericNodule::bound() const
 	}
 }
 
-void CompoundNumericNodule::doRenderLayer( Layer layer, const Style *style ) const
+void CompoundNumericNodule::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
 	if( !noduleLayout() )
 	{
-		StandardNodule::doRenderLayer( layer, style );
+		StandardNodule::renderLayer( layer, style, reason );
+	}
+}
+
+unsigned CompoundNumericNodule::layerMask() const
+{
+	if( !noduleLayout() )
+	{
+		return StandardNodule::layerMask();
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+Imath::Box3f CompoundNumericNodule::renderBound() const
+{
+	if( !noduleLayout() )
+	{
+		return StandardNodule::renderBound();
+	}
+	else
+	{
+		return Box3f();
 	}
 }
 
@@ -305,9 +330,9 @@ const NoduleLayout *CompoundNumericNodule::noduleLayout() const
 	return children().size() ? getChild<NoduleLayout>( 0 ) : nullptr;
 }
 
-void CompoundNumericNodule::plugMetadataChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug )
+void CompoundNumericNodule::plugMetadataChanged( const Gaffer::Plug *plug, IECore::InternedString key )
 {
-	if( !MetadataAlgo::affectedByChange( this->plug(), nodeTypeId, plugPath, plug ) )
+	if( plug != this->plug() )
 	{
 		return;
 	}
@@ -335,7 +360,7 @@ void CompoundNumericNodule::updateChildNoduleVisibility()
 			addChild( layout );
 			if( NodeGadget *nodeGadget = ancestor<NodeGadget>() )
 			{
-				for( PlugIterator it( plug() ); !it.done(); ++it )
+				for( Plug::Iterator it( plug() ); !it.done(); ++it )
 				{
 					if( Nodule *nodule = layout->nodule( it->get() ) )
 					{
@@ -352,7 +377,7 @@ void CompoundNumericNodule::updateChildNoduleVisibility()
 			removeChild( layout );
 			if( NodeGadget *nodeGadget = ancestor<NodeGadget>() )
 			{
-				for( PlugIterator it( plug() ); !it.done(); ++it )
+				for( Plug::Iterator it( plug() ); !it.done(); ++it )
 				{
 					if( Nodule *nodule = layout->nodule( it->get() ) )
 					{

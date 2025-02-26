@@ -67,7 +67,10 @@ class MenuButton( GafferUI.Button ) :
 		self.__menu = menu
 
 		if self.__menu is not None :
-			self.__menuVisibilityChangedConnection = self.__menu.visibilityChangedSignal().connect( Gaffer.WeakMethod( self.__menuVisibilityChanged ) )
+			self.__menuVisibilityChangedConnection = self.__menu.visibilityChangedSignal().connect(
+				Gaffer.WeakMethod( self.__menuVisibilityChanged ),
+				scoped = True
+			)
 		else :
 			self.__menuVisibilityChangedConnection = None
 
@@ -85,7 +88,23 @@ class MenuButton( GafferUI.Button ) :
 		# we also can't use the QPushButton::menu-indicator subcontrol to
 		# style menus. Instead we use this custom property to drive the
 		# stylesheet.
-		self._qtWidget().setProperty( "gafferMenuIndicator", text != "" )
+		wantMenuIndicator = bool( text )
+		haveMenuIndicator = self._qtWidget().property( "gafferMenuIndicator" ) or False
+		if wantMenuIndicator != haveMenuIndicator :
+			self._qtWidget().setProperty( "gafferMenuIndicator", wantMenuIndicator )
+			self._repolish()
+
+	def setErrored( self, errored ) :
+
+		if errored == self.getErrored() :
+			return
+
+		self._qtWidget().setProperty( "gafferError", GafferUI._Variant.toVariant( bool( errored ) ) )
+		self._repolish()
+
+	def getErrored( self ) :
+
+		return GafferUI._Variant.fromVariant( self._qtWidget().property( "gafferError" ) ) or False
 
 	def __pressed( self ) :
 
@@ -102,3 +121,7 @@ class MenuButton( GafferUI.Button ) :
 
 		if not menu.visible() :
 			self._qtWidget().setDown( False )
+			# There is a bug whereby Button never receives the event for __leave,
+			# if the menu is shown. This results in the image highlight state sticking.
+			if self.widgetAt( self.mousePosition() ) is not self :
+				self._Button__leave( self )

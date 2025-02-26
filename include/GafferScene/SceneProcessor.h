@@ -35,8 +35,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEPROCESSOR_H
-#define GAFFERSCENE_SCENEPROCESSOR_H
+#pragma once
+
+#include <limits>
 
 #include "GafferScene/SceneNode.h"
 
@@ -59,15 +60,15 @@ class GAFFERSCENE_API SceneProcessor : public SceneNode
 
 		/// Constructs with a single input ScenePlug named "in". Use inPlug()
 		/// to access this plug.
-		SceneProcessor( const std::string &name=defaultName<SceneProcessor>() );
+		explicit SceneProcessor( const std::string &name=defaultName<SceneProcessor>() );
 		/// Constructs with an ArrayPlug called "in". Use inPlug() as a
 		/// convenience for accessing the first child in the array, and use
 		/// inPlugs() to access the array itself.
-		SceneProcessor( const std::string &name, size_t minInputs, size_t maxInputs = Imath::limits<size_t>::max() );
+		SceneProcessor( const std::string &name, size_t minInputs, size_t maxInputs = std::numeric_limits<size_t>::max() );
 
 		~SceneProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SceneProcessor, SceneProcessorTypeId, SceneNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SceneProcessor, SceneProcessorTypeId, SceneNode );
 
 		/// Returns the primary scene input. For nodes with multiple inputs
 		/// this will be the first child of the inPlugs() array. For nodes
@@ -101,5 +102,3 @@ class GAFFERSCENE_API SceneProcessor : public SceneNode
 IE_CORE_DECLAREPTR( SceneProcessor )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEPROCESSOR_H

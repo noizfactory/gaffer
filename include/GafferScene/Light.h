@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_LIGHT_H
-#define GAFFERSCENE_LIGHT_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
+
+#include "Gaffer/CompoundDataPlug.h"
 
 #include "IECoreScene/ShaderNetwork.h"
 
@@ -49,9 +50,9 @@ class GAFFERSCENE_API Light : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Light, LightTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Light, LightTypeId, ObjectSource );
 
-		Light( const std::string &name=defaultName<Light>() );
+		explicit Light( const std::string &name=defaultName<Light>() );
 		~Light() override;
 
 		Gaffer::Plug *parametersPlug();
@@ -59,6 +60,12 @@ class GAFFERSCENE_API Light : public ObjectSource
 
 		Gaffer::BoolPlug *defaultLightPlug();
 		const Gaffer::BoolPlug *defaultLightPlug() const;
+
+		Gaffer::NameValuePlug *mutePlug();
+		const Gaffer::NameValuePlug *mutePlug() const;
+
+		Gaffer::CompoundDataPlug *visualiserAttributesPlug();
+		const Gaffer::CompoundDataPlug *visualiserAttributesPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -79,10 +86,7 @@ class GAFFERSCENE_API Light : public ObjectSource
 		/// Must be implemented by derived classes to hash and generate the light to be placed
 		/// in the scene graph.
 		virtual void hashLight( const Gaffer::Context *context, IECore::MurmurHash &h ) const = 0;
-		virtual IECoreScene::ShaderNetworkPtr computeLight( const Gaffer::Context *context ) const = 0;
-
-		Gaffer::FloatPlug *visualiserScalePlug();
-		const Gaffer::FloatPlug *visualiserScalePlug() const;
+		virtual IECoreScene::ConstShaderNetworkPtr computeLight( const Gaffer::Context *context ) const = 0;
 
 	private :
 
@@ -93,5 +97,3 @@ class GAFFERSCENE_API Light : public ObjectSource
 IE_CORE_DECLAREPTR( Light )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_LIGHT_H

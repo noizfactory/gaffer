@@ -44,16 +44,19 @@
 #include "Gaffer/StringPlug.h"
 
 #include "IECore/Exception.h"
+#include "IECore/SearchPath.h"
 #include "IECore/StringAlgo.h"
 
 #include "OSL/oslcomp.h"
 
-#include "boost/bind.hpp"
+#include "boost/algorithm/string/replace.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/filesystem.hpp"
 
 #include <fstream>
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace OSL;
 using namespace Gaffer;
@@ -129,19 +132,24 @@ string generate( const OSLCode *shader, string &shaderName )
 
 	string result;
 
-	for( PlugIterator it( shader->parametersPlug() ); !it.done(); ++it )
+	for( Plug::Iterator it( shader->parametersPlug() ); !it.done(); ++it )
 	{
 		result += parameter( it->get() );
 	}
 
 	result += "\n";
 
-	for( PlugIterator it( shader->outPlug() ); !it.done(); ++it )
+	for( Plug::Iterator it( shader->outPlug() ); !it.done(); ++it )
 	{
 		result += parameter( it->get() );
 	}
 
 	result += ")\n";
+
+	// Reset line numbers reported by the OSL parser, so that they
+	// don't include the stuff above.
+
+	result += "#line 1\n";
 
 	// Add on body
 
@@ -195,24 +203,24 @@ class ScopedDirectory : boost::noncopyable
 
 	public :
 
-		ScopedDirectory( const boost::filesystem::path &p )
+		ScopedDirectory( const std::filesystem::path &p )
 			:	m_path( p )
 		{
-			boost::filesystem::create_directories( m_path );
+			std::filesystem::create_directories( m_path );
 		}
 
 		~ScopedDirectory()
 		{
-			boost::filesystem::remove_all( m_path );
+			std::filesystem::remove_all( m_path );
 		}
 
 	private :
 
-		boost::filesystem::path m_path;
+		std::filesystem::path m_path;
 
 };
 
-boost::filesystem::path compile( const std::string &shaderName, const std::string &shaderSource )
+std::filesystem::path compile( const std::string &shaderName, const std::string &shaderSource )
 {
 
 	// We need to ensure the existence of a unique .oso file
@@ -231,7 +239,7 @@ boost::filesystem::path compile( const std::string &shaderName, const std::strin
 
 	// Start by generating our final desired filename.
 
-	boost::filesystem::path directory = boost::filesystem::temp_directory_path() / "gafferOSLCode";
+	std::filesystem::path directory = std::filesystem::temp_directory_path() / "gafferOSLCode";
 	if( const char *cd = getenv( "GAFFEROSL_CODE_DIRECTORY" ) )
 	{
 		directory = cd;
@@ -244,25 +252,25 @@ boost::filesystem::path compile( const std::string &shaderName, const std::strin
 		directory /= shaderName.substr( i, 8 );
 	}
 
-	const boost::filesystem::path osoFileName = directory / ( shaderName + ".oso" );
+	const std::filesystem::path osoFileName = directory / ( shaderName + ".oso" );
 
 	// If that exists, then someone else has done our work already.
 
-	if( boost::filesystem::exists( osoFileName ) )
+	if( std::filesystem::exists( osoFileName ) )
 	{
-		return osoFileName.string();
+		return osoFileName.generic_string();
 	}
 
 	// Make a temporary directory we can do our compilation in. The
 	// ScopedDirectory class will remove it for us automatically on
 	// destruction, so we don't need to worry about exception handling.
 
-	const boost::filesystem::path tempDirectory = directory / boost::filesystem::unique_path();
+	const std::filesystem::path tempDirectory = directory / boost::filesystem::unique_path().string();
 	ScopedDirectory scopedTempDirectory( tempDirectory );
 
 	// Write the source code out.
 
-	const std::string tempOSLFileName = ( tempDirectory / ( shaderName + ".osl" ) ).string();
+	const std::string tempOSLFileName = ( tempDirectory / ( shaderName + ".osl" ) ).generic_string();
 	std::ofstream f( tempOSLFileName.c_str() );
 	if( !f.good() )
 	{
@@ -283,14 +291,14 @@ boost::filesystem::path compile( const std::string &shaderName, const std::strin
 	vector<string> options;
 	if( const char *includePaths = getenv( "OSL_SHADER_PATHS" ) )
 	{
-		StringAlgo::tokenize( includePaths, ':', options );
-		for( vector<string>::iterator it = options.begin(), eIt = options.end(); it != eIt; ++it )
+		SearchPath searchPaths( includePaths );
+		for( const auto &p : searchPaths.paths )
 		{
-			it->insert( 0, "-I" );
+			options.push_back( string( "-I" ) + p.generic_string() );
 		}
 	}
 
-	const std::string tempOSOFileName = ( tempDirectory / ( shaderName + ".oso" ) ).string();
+	const std::string tempOSOFileName = ( tempDirectory / ( shaderName + ".oso" ) ).generic_string();
 	options.push_back( "-o" );
 	options.push_back( tempOSOFileName );
 
@@ -298,7 +306,9 @@ boost::filesystem::path compile( const std::string &shaderName, const std::strin
 	{
 		if( errorHandler.errors().size() )
 		{
-			throw IECore::Exception( errorHandler.errors() );
+			string error = errorHandler.errors();
+			boost::replace_all( error, tempOSLFileName, "code" );
+			throw IECore::Exception( error );
 		}
 		else
 		{
@@ -306,9 +316,25 @@ boost::filesystem::path compile( const std::string &shaderName, const std::strin
 		}
 	}
 
+	if( !std::filesystem::file_size( tempOSLFileName ) )
+	{
+		// Belt and braces. `compiler.compile()` should be reporting all errors,
+		// but on rare occasions we have still seen empty `.oso` files being
+		// produced. Detect this and warn so we can get to the bottom of it.
+		throw IECore::Exception( "Empty file after compilation : \"" + tempOSLFileName + "\"" );
+	}
+
 	// Move temp file where we really want it, and clean up.
 
-	boost::filesystem::rename( tempOSOFileName, osoFileName );
+	std::filesystem::rename( tempOSOFileName, osoFileName );
+
+	if( !std::filesystem::file_size( osoFileName ) )
+	{
+		// Belt and braces. `rename()` should be reporting all errors,
+		// but on rare occasions we have still seen empty `.oso` files being
+		// produced. Detect this and warn so we can get to the bottom of it.
+		throw IECore::Exception( "Empty file after rename : \"" + osoFileName.generic_string() + "\"" );
+	}
 
 	return osoFileName;
 }
@@ -325,8 +351,8 @@ class CompileProcess : public Gaffer::Process
 			{
 				string shaderName;
 				string shaderSource = generate( oslCode, shaderName );
-				boost::filesystem::path shaderFile = compile( shaderName, shaderSource );
-				oslCode->namePlug()->setValue( shaderFile.replace_extension().string() );
+				std::filesystem::path shaderFile = compile( shaderName, shaderSource );
+				oslCode->namePlug()->setValue( shaderFile.replace_extension().generic_string() );
 				oslCode->typePlug()->setValue( "osl:shader" );
 			}
 			catch( ... )
@@ -347,7 +373,7 @@ InternedString CompileProcess::g_type( "oslCode:compile" );
 // OSLCode
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( OSLCode );
+GAFFER_NODE_DEFINE_TYPE( OSLCode );
 
 size_t OSLCode::g_firstPlugIndex;
 
@@ -362,7 +388,7 @@ OSLCode::OSLCode( const std::string &name )
 	/// \todo Rejig the NetworkGenerator so there is a hook for us to do our
 	/// code generation on demand at network generation time, and allow inputs
 	/// again.
-	addChild( new StringPlug( "code", Plug::In, "", Plug::Default & ~Plug::AcceptsInputs ) );
+	addChild( new StringPlug( "code", Plug::In, "", Plug::Default & ~Plug::AcceptsInputs, IECore::StringAlgo::NoSubstitutions ) );
 
 	// Must disable serialisation on the name because the GAFFEROSL_CODE_DIRECTORY
 	// might not be the same when we come to be loaded again.
@@ -461,10 +487,12 @@ void OSLCode::parameterAdded( const Gaffer::GraphComponent *parent, Gaffer::Grap
 		// OSLShaderUI registers a dynamic metadata entry which depends on whether or
 		// not the plug has children, so we must notify the world that the value will
 		// have changed.
-		Metadata::plugValueChangedSignal()( staticTypeId(), "out", "nodule:type", outPlug() );
+		Metadata::plugValueChangedSignal( this )( outPlug(), "nodule:type", Metadata::ValueChangedReason::StaticRegistration );
 	}
 
-	child->nameChangedSignal().connect( boost::bind( &OSLCode::parameterNameChanged, this ) );
+	m_nameChangedConnections[child] = child->nameChangedSignal().connect(
+		boost::bind( &OSLCode::parameterNameChanged, this )
+	);
 	updateShader();
 }
 
@@ -475,10 +503,10 @@ void OSLCode::parameterRemoved( const Gaffer::GraphComponent *parent, Gaffer::Gr
 		// OSLShaderUI registers a dynamic metadata entry which depends on whether or
 		// not the plug has children, so we must notify the world that the value will
 		// have changed.
-		Metadata::plugValueChangedSignal()( staticTypeId(), "out", "nodule:type", outPlug() );
+		Metadata::plugValueChangedSignal( this )( outPlug(), "nodule:type", Metadata::ValueChangedReason::StaticRegistration );
 	}
 
-	child->nameChangedSignal().disconnect( boost::bind( &OSLCode::parameterNameChanged, this ) );
+	m_nameChangedConnections.erase( child );
 	updateShader();
 }
 

@@ -34,14 +34,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_CONTAINER_INL
-#define GAFFER_CONTAINER_INL
+#pragma once
 
 namespace Gaffer
 {
 
 template<typename Base, typename T>
-Container<Base, T>::Container()
+Container<Base, T>::Container( const std::string &name )
+	:	Base( name )
 {
 }
 
@@ -101,5 +101,3 @@ bool Container<Base, T>::acceptsChild( const GraphComponent *potentialChild ) co
 }
 
 } // namespace Gaffer
-
-#endif // GAFFER_CONTAINER_INL

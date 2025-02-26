@@ -41,6 +41,8 @@
 
 #include "OpenImageIO/filter.h"
 
+#include "fmt/format.h"
+
 #include <climits>
 
 
@@ -73,8 +75,7 @@ class SmoothGaussian2D : public OIIO::Filter2D
 
 		float operator()( float x, float y ) const override
 		{
-			return gauss1d( x * m_radiusInverse.x ) *
-			       gauss1d( y * m_radiusInverse.y );
+			return gauss1d( x * m_radiusInverse.x ) * gauss1d( y * m_radiusInverse.y );
 		}
 
 		bool separable() const override
@@ -129,8 +130,7 @@ class FilterCubicSimple2D : public OIIO::Filter2D
 
 		float operator()( float x, float y ) const override
 		{
-			return cubicSimple( x * m_wrad_inv )
-				 * cubicSimple( y * m_hrad_inv );
+			return cubicSimple( x * m_wrad_inv ) * cubicSimple( y * m_hrad_inv );
 		}
 
 		bool separable() const override
@@ -230,7 +230,7 @@ void ensureMinimumParallelogramWidth( V2f &dpdx, V2f &dpdy )
 	}
 }
 
-typedef std::pair<std::string, const OIIO::Filter2D *> FilterPair;
+using FilterPair = std::pair<std::string, const OIIO::Filter2D *>;
 
 tbb::spin_rw_mutex g_filtersInitMutex;
 
@@ -286,7 +286,7 @@ const std::vector<std::string> &GafferImage::FilterAlgo::filterNames()
 
 const OIIO::Filter2D *GafferImage::FilterAlgo::acquireFilter( const std::string &name )
 {
-	typedef std::map<std::string, const OIIO::Filter2D *> FilterMapType;
+	using FilterMapType = std::map<std::string, const OIIO::Filter2D *>;
 	static FilterMapType filterMap;
 
 	{
@@ -311,7 +311,7 @@ const OIIO::Filter2D *GafferImage::FilterAlgo::acquireFilter( const std::string 
 	}
 	else
 	{
-		throw IECore::Exception( boost::str( boost::format( "Unknown filter \"%s\"" ) % name ) );
+		throw IECore::Exception( fmt::format( "Unknown filter \"{}\"", name ) );
 	}
 }
 
@@ -408,35 +408,40 @@ float GafferImage::FilterAlgo::sampleBox( Sampler &sampler, const V2f &p, float 
 			scratchMemory[i] = filter->xfilt( ( (pixelBounds.min.x + i) + 0.5f - p.x ) * xscale );
 		}
 
+		Imath::Box2i visitBounds = pixelBounds;
 		for( int y = pixelBounds.min.y; y < pixelBounds.max.y; y++ )
 		{
+			visitBounds.min.y = y;
+			visitBounds.max.y = y + 1;
 			float yFilterWeight = filter->yfilt( ( y + 0.5f - p.y ) * yscale );
-			for( int x = pixelBounds.min.x; x < pixelBounds.max.x; x++ )
-			{
-				float w = scratchMemory[ x - pixelBounds.min.x ] * yFilterWeight;
+			sampler.visitPixels(
+				visitBounds,
+				[ &totalW, &v, &pixelBounds, &scratchMemory, &yFilterWeight ] ( float value, int x, int y )
+				{
+					float w = scratchMemory[ x - pixelBounds.min.x ] * yFilterWeight;
 
-				// \todo : I can't think of any way to keep this around cleanly for testing, since
-				// it's right down in this inner loop, but replacing the filter with one value for
-				// pixels within the bounding box, and another value for pixels actually touched
-				// by the filter, is a good way to check that the bounding box is correct
-				//w = w != 0.0f ? 1.0f : 0.1f;
+					// \todo : I can't think of any way to keep this around cleanly for testing, since
+					// it's right down in this inner loop, but replacing the filter with one value for
+					// pixels within the bounding box, and another value for pixels actually touched
+					// by the filter, is a good way to check that the bounding box is correct
+					//w = w != 0.0f ? 1.0f : 0.1f;
 
-				totalW += w;
-				v += w * sampler.sample( x, y );
-			}
+					totalW += w;
+					v += w * value;
+				}
+			);
 		}
 	}
 	else
 	{
-		for( int y = pixelBounds.min.y; y < pixelBounds.max.y; y++ )
-		{
-			for( int x = pixelBounds.min.x; x < pixelBounds.max.x; x++ )
+		sampler.visitPixels( pixelBounds,
+			[ &totalW, &v, &p, &xscale, &yscale, &filter ] ( float value, int x, int y )
 			{
 				float w = (*filter)( ( x + 0.5f - p.x ) * xscale, ( y + 0.5f - p.y ) * yscale );
 				totalW += w;
-				v += w * sampler.sample( x, y );
+				v += w * value;
 			}
-		}
+		);
 	}
 
 	if( totalW != 0.0f )

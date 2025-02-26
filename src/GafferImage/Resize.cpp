@@ -45,18 +45,19 @@ using namespace Imath;
 using namespace Gaffer;
 using namespace GafferImage;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Resize );
+GAFFER_NODE_DEFINE_TYPE( Resize );
 
 size_t Resize::g_firstPlugIndex = 0;
 
 Resize::Resize( const std::string &name )
-	:   ImageProcessor( name )
+	: ImageProcessor( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
 	addChild( new FormatPlug( "format" ) );
 	addChild( new IntPlug( "fitMode", Plug::In, Horizontal, Horizontal, Distort ) );
 	addChild( new StringPlug( "filter" ) );
+	addChild( new BoolPlug( "filterDeep" ) );
 	addChild( new M33fPlug( "__matrix", Plug::Out ) );
 	addChild( new ImagePlug( "__resampledIn", Plug::In, Plug::Default & ~Plug::Serialisable ) );
 
@@ -70,14 +71,16 @@ Resize::Resize( const std::string &name )
 	resample->inPlug()->setInput( inPlug() );
 
 	resample->filterPlug()->setInput( filterPlug() );
+	resample->filterDeepPlug()->setInput( filterDeepPlug() );
 	resample->matrixPlug()->setInput( matrixPlug() );
 	resample->boundingModePlug()->setValue( Sampler::Clamp );
 
 	resampledInPlug()->setInput( resample->outPlug() );
 
+	outPlug()->viewNamesPlug()->setInput( inPlug()->viewNamesPlug() );
 	outPlug()->metadataPlug()->setInput( inPlug()->metadataPlug() );
 	outPlug()->channelNamesPlug()->setInput( inPlug()->channelNamesPlug() );
-
+	outPlug()->deepPlug()->setInput( inPlug()->deepPlug() );
 }
 
 Resize::~Resize()
@@ -114,24 +117,34 @@ const Gaffer::StringPlug *Resize::filterPlug() const
 	return getChild<StringPlug>( g_firstPlugIndex + 2 );
 }
 
+Gaffer::BoolPlug *Resize::filterDeepPlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
+const Gaffer::BoolPlug *Resize::filterDeepPlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 3 );
+}
+
 Gaffer::M33fPlug *Resize::matrixPlug()
 {
-	return getChild<M33fPlug>( g_firstPlugIndex + 3 );
+	return getChild<M33fPlug>( g_firstPlugIndex + 4 );
 }
 
 const Gaffer::M33fPlug *Resize::matrixPlug() const
 {
-	return getChild<M33fPlug>( g_firstPlugIndex + 3 );
+	return getChild<M33fPlug>( g_firstPlugIndex + 4 );
 }
 
 ImagePlug *Resize::resampledInPlug()
 {
-	return getChild<ImagePlug>( g_firstPlugIndex + 4 );
+	return getChild<ImagePlug>( g_firstPlugIndex + 5 );
 }
 
 const ImagePlug *Resize::resampledInPlug() const
 {
-	return getChild<ImagePlug>( g_firstPlugIndex + 4 );
+	return getChild<ImagePlug>( g_firstPlugIndex + 5 );
 }
 
 void Resize::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
@@ -155,7 +168,9 @@ void Resize::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs
 
 	if(
 		input == inPlug()->dataWindowPlug() ||
-		input == resampledInPlug()->dataWindowPlug()
+		input == resampledInPlug()->dataWindowPlug() ||
+		input == inPlug()->formatPlug() ||
+		formatPlug()->isAncestorOf( input )
 	)
 	{
 		outputs.push_back( outPlug()->dataWindowPlug() );
@@ -163,10 +178,14 @@ void Resize::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs
 
 	if(
 		input == inPlug()->channelDataPlug() ||
-		input == resampledInPlug()->channelDataPlug()
+		input == resampledInPlug()->channelDataPlug() ||
+		input == resampledInPlug()->sampleOffsetsPlug() ||
+		input == inPlug()->formatPlug() ||
+		formatPlug()->isAncestorOf( input )
 	)
 	{
 		outputs.push_back( outPlug()->channelDataPlug() );
+		outputs.push_back( outPlug()->sampleOffsetsPlug() );
 	}
 }
 
@@ -194,20 +213,26 @@ void Resize::compute( ValuePlug *output, const Context *context ) const
 		const V2f outSize( outFormat.width(), outFormat.height() );
 		const V2f formatScale = outSize / inSize;
 
-		V2f scale( 1 );
-		switch( (FitMode)fitModePlug()->getValue() )
+		const float pixelAspectScale = outFormat.getPixelAspect() / inFormat.getPixelAspect();
+
+		FitMode fitMode = (FitMode)fitModePlug()->getValue();
+		if( fitMode == Fit )
+		{
+			fitMode = formatScale.x * pixelAspectScale < formatScale.y ? Horizontal : Vertical;
+		}
+		else if( fitMode == Fill )
+		{
+			fitMode = formatScale.x * pixelAspectScale < formatScale.y ? Vertical : Horizontal;
+		}
+
+		V2f scale;
+		switch( fitMode )
 		{
 			case Horizontal :
-				scale = V2f( formatScale.x );
+				scale = V2f( formatScale.x, formatScale.x * pixelAspectScale );
 				break;
 			case Vertical :
-				scale = V2f( formatScale.y );
-				break;
-			case Fit :
-				scale = V2f( std::min( formatScale.x, formatScale.y ) );
-				break;
-			case Fill :
-				scale = V2f( std::max( formatScale.x, formatScale.y ) );
+				scale = V2f( formatScale.y / pixelAspectScale, formatScale.y );
 				break;
 			case Distort :
 			default :
@@ -255,6 +280,16 @@ void Resize::hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer
 IECore::ConstFloatVectorDataPtr Resize::computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const
 {
 	return source()->channelDataPlug()->getValue();
+}
+
+void Resize::hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	h = source()->sampleOffsetsPlug()->hash();
+}
+
+IECore::ConstIntVectorDataPtr Resize::computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const
+{
+	return source()->sampleOffsetsPlug()->getValue();
 }
 
 const ImagePlug *Resize::source() const

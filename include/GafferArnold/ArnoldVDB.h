@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDVDB_H
-#define GAFFERARNOLD_ARNOLDVDB_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -50,9 +49,9 @@ class GAFFERARNOLD_API ArnoldVDB : public GafferScene::ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldVDB, ArnoldVDBTypeId, GafferScene::ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldVDB, ArnoldVDBTypeId, GafferScene::ObjectSource );
 
-		ArnoldVDB( const std::string &name=defaultName<ArnoldVDB>() );
+		explicit ArnoldVDB( const std::string &name=defaultName<ArnoldVDB>() );
 		~ArnoldVDB() override;
 
 		Gaffer::StringPlug *fileNamePlug();
@@ -89,5 +88,3 @@ class GAFFERARNOLD_API ArnoldVDB : public GafferScene::ObjectSource
 IE_CORE_DECLAREPTR( ArnoldVDB )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDVDB_H

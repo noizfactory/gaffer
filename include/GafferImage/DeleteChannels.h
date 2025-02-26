@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_DELETECHANNELS_H
-#define GAFFERIMAGE_DELETECHANNELS_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -56,10 +55,10 @@ class GAFFERIMAGE_API DeleteChannels : public ImageProcessor
 			Keep = 1
 		};
 
-		DeleteChannels( const std::string &name=defaultName<DeleteChannels>() );
+		explicit DeleteChannels( const std::string &name=defaultName<DeleteChannels>() );
 		~DeleteChannels() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::DeleteChannels, DeleteChannelsTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::DeleteChannels, DeleteChannelsTypeId, ImageProcessor );
 
 		//! @name Plug Accessors
 		//////////////////////////////////////////////////////////////
@@ -88,5 +87,3 @@ class GAFFERIMAGE_API DeleteChannels : public ImageProcessor
 IE_CORE_DECLAREPTR( DeleteChannels );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_DELETECHANNELS_H

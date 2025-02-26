@@ -38,20 +38,18 @@
 import Gaffer
 import GafferUI
 
+from GafferUI.PlugValueWidget import sole
+
 ## Supported metadata :
 #
 #  "numericPlugValueWidget:fixedCharacterWidth"
-##
-## \todo Maths expressions to modify the existing value
-## \todo Enter names of other plugs to create a connection
-## \todo Reject drag and drop of anything that's not a number
 class NumericPlugValueWidget( GafferUI.PlugValueWidget ) :
 
-	def __init__( self, plug, **kw ) :
+	def __init__( self, plugs, **kw ) :
 
 		self.__numericWidget = GafferUI.NumericWidget( 0 )
 
-		GafferUI.PlugValueWidget.__init__( self, self.__numericWidget, plug, **kw )
+		GafferUI.PlugValueWidget.__init__( self, self.__numericWidget, plugs, **kw )
 
 		self._addPopupMenu( self.__numericWidget )
 
@@ -59,17 +57,8 @@ class NumericPlugValueWidget( GafferUI.PlugValueWidget ) :
 		self.__lastChangedReason = None
 		self.__mergeGroupId = 0
 
-		self.__numericWidget.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
-		self.__valueChangedConnection = self.__numericWidget.valueChangedSignal().connect( Gaffer.WeakMethod( self.__valueChanged ), scoped = False )
-
-		self._updateFromPlug()
-		self.__updateWidth()
-
-	def setPlug( self, plug ) :
-
-		GafferUI.PlugValueWidget.setPlug( self, plug )
-
-		self.__updateWidth()
+		self.__numericWidget.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
+		self.__valueChangedConnection = self.__numericWidget.valueChangedSignal().connect( Gaffer.WeakMethod( self.__valueChanged ) )
 
 	def numericWidget( self ) :
 
@@ -84,39 +73,73 @@ class NumericPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		result = GafferUI.PlugValueWidget.getToolTip( self )
 
-		if self.getPlug() is not None :
+		if self.getPlugs() :
 			if result :
 				result += "\n"
 			result += "## Actions\n"
-			result += " - Cursor up/down to increment/decrement\n"
+			result += " - Cursor up/down or <kbd>Ctrl</kbd> + scroll wheel to increment/decrement\n"
+			result += " - Use `+`, `-`, `*`, `/` and `%` to perform simple maths\n"
 
 		return result
 
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
 
-		plug = self.getPlug()
-		if plug is not None :
+		if len( values ) == 0 and exception is None and self.getPlugs() :
+			# Placeholder update for a pending background compute. If we're animated,
+			# we don't want to use a `---` placeholder because it messes up editing for
+			# the user. Animation is quick enough to compute that there is no need
+			# for a placeholder anyway, so we'll just wait for the final update.
+			if all( Gaffer.Animation.isAnimated( p ) for p in self.getPlugs() ) :
+				return
 
-			with self.getContext() :
-				try :
-					value = plug.getValue()
-				except :
-					value = None
+		# Update value and error state.
 
+		value = sole( values )
+		with Gaffer.Signals.BlockedConnection( self.__valueChangedConnection ) :
+
+			# Always give the widget a value, even if we have multiple, because
+			# the _type_ (int or float) is important, and affects interaction
+			# with the widget.
 			if value is not None :
-				with Gaffer.BlockedConnection( self.__valueChangedConnection ) :
-					self.__numericWidget.setValue( value )
+				self.__numericWidget.setValue( value )
+			elif self.getPlugs() :
+				self.__numericWidget.setValue( next( iter( self.getPlugs() ) ).defaultValue() )
 
-			self.__numericWidget.setErrored( value is None )
+			# But if there are multiple values or an error, clear the actual
+			# display so we don't show anything misleading.
+			if exception is not None or value is None :
+				self.__numericWidget.setText( "" )
+				self.__numericWidget.setPlaceholderText( "---" )
+			else :
+				self.__numericWidget.setPlaceholderText( "" )
 
-			## \todo Perhaps this styling should be provided by the NumericWidget itself?
-			animated = Gaffer.Animation.isAnimated( plug )
-			widgetAnimated = GafferUI._Variant.fromVariant( self.__numericWidget._qtWidget().property( "gafferAnimated" ) ) or False
-			if widgetAnimated != animated :
-				self.__numericWidget._qtWidget().setProperty( "gafferAnimated", GafferUI._Variant.toVariant( bool( animated ) ) )
-				self.__numericWidget._repolish()
+		self.__numericWidget.setErrored( exception is not None )
+
+		# Update animation styling
+
+		animated = any( Gaffer.Animation.isAnimated( p ) for p in self.getPlugs() )
+		## \todo Perhaps this styling should be provided by the NumericWidget itself?
+		widgetAnimated = GafferUI._Variant.fromVariant( self.__numericWidget._qtWidget().property( "gafferAnimated" ) ) or False
+		if widgetAnimated != animated :
+			self.__numericWidget._qtWidget().setProperty( "gafferAnimated", GafferUI._Variant.toVariant( bool( animated ) ) )
+			self.__numericWidget._repolish()
+
+	def _updateFromEditable( self ) :
 
 		self.__numericWidget.setEditable( self._editable( canEditAnimation = True ) )
+
+	def _updateFromMetadata( self ) :
+
+		charWidth = None
+		for plug in self.getPlugs() :
+			plugCharWidth = Gaffer.Metadata.value( plug, "numericPlugValueWidget:fixedCharacterWidth" )
+			if plugCharWidth is None and isinstance( plug, Gaffer.IntPlug ) :
+				if plug.hasMinValue() and plug.hasMaxValue() :
+					plugCharWidth = max( len( str( plug.minValue() ) ), len( str( plug.maxValue() ) ) )
+			if plugCharWidth is not None :
+				charWidth = max( charWidth, plugCharWidth ) if charWidth is not None else plugCharWidth
+
+		self.__numericWidget.setFixedCharacterWidth( charWidth )
 
 	def __keyPress( self, widget, event ) :
 
@@ -127,12 +150,16 @@ class NumericPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		# escape abandons everything
 		if event.key=="Escape" :
-			self._updateFromPlug()
+			self._requestUpdateFromValues()
 			return True
 
 		return False
 
 	def __valueChanged( self, widget, reason ) :
+
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self._requestUpdateFromValues()
+			return
 
 		if self._editable( canEditAnimation = True ) :
 
@@ -140,54 +167,40 @@ class NumericPlugValueWidget( GafferUI.PlugValueWidget ) :
 				self.__mergeGroupId += 1
 			self.__lastChangedReason = reason
 
-			self.__setPlugValue( mergeGroup = "NumericPlugValueWidget%d%d" % ( id( self, ), self.__mergeGroupId ) )
+			self.__setPlugValues( mergeGroup = "NumericPlugValueWidget%d%d" % ( id( self, ), self.__mergeGroupId ) )
 
 		return False
 
-	def __setPlugValue( self, mergeGroup="" ) :
+	def __setPlugValues( self, mergeGroup="" ) :
 
-		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ), mergeGroup=mergeGroup ) :
+		with Gaffer.UndoScope( self.scriptNode(), mergeGroup=mergeGroup ) :
 
-			with Gaffer.BlockedConnection( self._plugConnections() ) :
-				if Gaffer.Animation.isAnimated( self.getPlug() ) :
-					curve = Gaffer.Animation.acquire( self.getPlug() )
-					if self.__numericWidget.getText() != self.__numericWidget.valueToString( curve.evaluate( self.getContext().getTime() ) ) :
-						curve.addKey(
-							Gaffer.Animation.Key(
-								self.getContext().getTime(),
-								self.__numericWidget.getValue(),
-								Gaffer.Animation.Type.Linear
-							)
-						)
-				else :
-					try :
-						self.getPlug().setValue( self.__numericWidget.getValue() )
-					except :
-						pass
+			with self._blockedUpdateFromValues() :
 
-			# now any changes that were made in the numeric widget have been transferred
-			# into the global undo queue, we remove the text editing changes from the
-			# widget's private text editing undo queue. it will then ignore undo shortcuts,
-			# allowing them to fall through to the global undo shortcut.
-			self.__numericWidget.clearUndo()
+				for plug in self.getPlugs() :
 
-			# we always need to update the ui from the plug after trying to set it,
-			# because the plug might clamp the value to something else. furthermore
-			# it might not even emit plugSetSignal if it happens to clamp to the same
-			# value as it had before. we block calls to _updateFromPlug() while setting
-			# the value to avoid having to do the work twice if plugSetSignal is emitted.
-			self._updateFromPlug()
+					if Gaffer.Animation.isAnimated( plug ) :
+						curve = Gaffer.Animation.acquire( plug )
+						if self.__numericWidget.getText() != self.__numericWidget.valueToString( curve.evaluate( self.context().getTime() ) ) :
+							curve.insertKey( self.context().getTime(), self.__numericWidget.getValue() )
+					else :
+						try :
+							plug.setValue( self.__numericWidget.getValue() )
+						except :
+							pass
 
-	def __updateWidth( self ) :
+		# Now any changes that were made in the numeric widget have been transferred
+		# into the global undo queue, we remove the text editing changes from the
+		# widget's private text editing undo queue. It will then ignore undo shortcuts,
+		# allowing them to fall through to the global undo shortcut.
+		self.__numericWidget.clearUndo()
 
-		charWidth = None
-		if self.getPlug() is not None :
-			charWidth = Gaffer.Metadata.value( self.getPlug(), "numericPlugValueWidget:fixedCharacterWidth" )
-
-		if charWidth is None and isinstance( self.getPlug(), Gaffer.IntPlug ) and self.getPlug().hasMaxValue() :
-			charWidth = len( str( self.getPlug().maxValue() ) )
-
-		self.__numericWidget.setFixedCharacterWidth( charWidth )
+		# We always need to update the UI from the plugs after trying to set them,
+		# because the plugs might clamp the value to something else. Furthermore
+		# they might not even emit `plugDirtiedSignal() if they happens to clamp to the same
+		# value as before. We block calls to `_updateFromValues()` while setting
+		# the value to avoid having to do the work twice if `plugDirtiedSignal()` _is_ emitted.
+		self._requestUpdateFromValues()
 
 GafferUI.PlugValueWidget.registerType( Gaffer.FloatPlug, NumericPlugValueWidget )
 GafferUI.PlugValueWidget.registerType( Gaffer.IntPlug, NumericPlugValueWidget )

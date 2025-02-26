@@ -37,6 +37,7 @@
 
 #include "boost/python.hpp"
 
+#include "AnimationGadgetBinding.h"
 #include "ConnectionGadgetBinding.h"
 #include "ContainerGadgetBinding.h"
 #include "EventBinding.h"
@@ -48,6 +49,7 @@
 #include "NameGadgetBinding.h"
 #include "NodeGadgetBinding.h"
 #include "NoduleBinding.h"
+#include "PathColumnBinding.h"
 #include "PathListingWidgetBinding.h"
 #include "PlugAdderBinding.h"
 #include "PlugGadgetBinding.h"
@@ -59,7 +61,6 @@
 #include "ViewBinding.h"
 #include "ViewportGadgetBinding.h"
 #include "WidgetSignalBinding.h"
-#include "AnimationGadgetBinding.h"
 
 using namespace GafferUIModule;
 
@@ -89,5 +90,6 @@ BOOST_PYTHON_MODULE( _GafferUI )
 	bindGLWidget();
 	bindPlugAdder();
 	bindAnimationGadget();
+	bindPathColumn();
 
 }

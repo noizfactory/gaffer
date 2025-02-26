@@ -127,19 +127,19 @@ Gaffer::PlugPtr FilterPlug::createCounterpart( const std::string &name, Directio
 	return new FilterPlug( name, direction, defaultValue(), minValue(), maxValue(), getFlags() );
 }
 
-bool FilterPlug::sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const
+void FilterPlug::sceneAffects( const Gaffer::Plug *scenePlugChild, Gaffer::DependencyNode::AffectedPlugsContainer &outputs ) const
 {
 	const Plug *source = this->source();
 	if( source == this )
 	{
 		// No input
-		return false;
+		return;
 	}
 
 	const Node *sourceNode = source->node();
 	if( const Filter *filter = runTimeCast<const Filter>( sourceNode ) )
 	{
-		return filter->sceneAffectsMatch( scene, child );
+		filter->affects( scenePlugChild, outputs );
 	}
 	else if( const Switch *switchNode = runTimeCast<const Switch>( sourceNode ) )
 	{
@@ -147,20 +147,23 @@ bool FilterPlug::sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValueP
 		{
 			// Switch with context-varying input. Any input branch could be
 			// relevant.
-			for( InputFilterPlugIterator it( switchNode->inPlugs() ); !it.done(); ++it )
+			for( FilterPlug::InputIterator it( switchNode->inPlugs() ); !it.done(); ++it )
 			{
-				if( (*it)->sceneAffectsMatch( scene, child ) )
-				{
-					return true;
-				}
+				(*it)->sceneAffects( scenePlugChild, outputs );
 			}
 		}
 	}
-	return false;
+}
+
+unsigned FilterPlug::match( const ScenePlug *scene ) const
+{
+	FilterPlug::SceneScope scope( Context::current(), scene );
+	return getValue();
 }
 
 FilterPlug::SceneScope::SceneScope( const Gaffer::Context *context, const ScenePlug *scenePlug )
 	:	EditableScope( context )
 {
-	set( inputSceneContextName, (uint64_t)scenePlug );
+	m_scenePlug = scenePlug;
+	set<uint64_t>( inputSceneContextName, (uint64_t*)&m_scenePlug );
 }

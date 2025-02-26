@@ -34,15 +34,15 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_FORMAT_H
-#define GAFFERIMAGE_FORMAT_H
+#pragma once
 
 #include "GafferImage/Export.h"
 
 #include "IECore/Export.h"
+#include "IECore/MurmurHash.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathBox.h"
+#include "Imath/ImathBox.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 #include <string>
@@ -58,21 +58,21 @@ class GAFFERIMAGE_API Format
 
 	public :
 
-		inline Format();
-		inline explicit Format( const Imath::Box2i &displayWindow, double pixelAspect = 1., bool fromEXRSpace = false );
-		inline Format( int width, int height, double pixelAspect = 1. );
+		Format();
+		explicit Format( const Imath::Box2i &displayWindow, double pixelAspect = 1., bool fromEXRSpace = false );
+		Format( int width, int height, double pixelAspect = 1. );
 
-		inline const Imath::Box2i &getDisplayWindow() const;
-		inline void setDisplayWindow( const Imath::Box2i &window );
+		const Imath::Box2i &getDisplayWindow() const;
+		void setDisplayWindow( const Imath::Box2i &window );
 
-		inline int width() const;
-		inline int height() const;
+		int width() const;
+		int height() const;
 
-		inline double getPixelAspect() const;
-		inline void setPixelAspect( double pixelAspect );
+		double getPixelAspect() const;
+		void setPixelAspect( double pixelAspect );
 
-		inline bool operator == ( const Format &rhs ) const;
-		inline bool operator != ( const Format &rhs ) const;
+		bool operator == ( const Format &rhs ) const;
+		bool operator != ( const Format &rhs ) const;
 
 		/// @name Coordinate system conversions.
 		/// The image coordinate system used by Gaffer has the origin at the
@@ -89,14 +89,14 @@ class GAFFERIMAGE_API Format
 		//@{
 		/// Converts from the EXR coordinate space to the internal space of
 		/// the Format.
-		inline int fromEXRSpace( int exrSpace ) const;
-		inline Imath::V2i fromEXRSpace( const Imath::V2i &exrSpace ) const;
-		inline Imath::Box2i fromEXRSpace( const Imath::Box2i &exrSpace ) const;
+		int fromEXRSpace( int exrSpace ) const;
+		Imath::V2i fromEXRSpace( const Imath::V2i &exrSpace ) const;
+		Imath::Box2i fromEXRSpace( const Imath::Box2i &exrSpace ) const;
 		/// Converts from the internal space of the format to the EXR
 		/// coordinate space.
-		inline int toEXRSpace( int internalSpace ) const;
-		inline Imath::V2i toEXRSpace( const Imath::V2i &internalSpace ) const;
-		inline Imath::Box2i toEXRSpace( const Imath::Box2i &internalSpace ) const;
+		int toEXRSpace( int internalSpace ) const;
+		Imath::V2i toEXRSpace( const Imath::V2i &internalSpace ) const;
+		Imath::Box2i toEXRSpace( const Imath::Box2i &internalSpace ) const;
 		//@}
 
 		/// @name Format registry
@@ -130,8 +130,8 @@ class GAFFERIMAGE_API Format
 /// where possible. Note that this is unrelated to Format::name().
 GAFFERIMAGE_API std::ostream & operator << ( std::ostream &os, const GafferImage::Format &format );
 
+void murmurHashAppend( IECore::MurmurHash &h, const GafferImage::Format &data );
+
 } // namespace GafferImage
 
 #include "GafferImage/Format.inl"
-
-#endif // GAFFERIMAGE_FORMAT_H

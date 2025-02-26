@@ -60,16 +60,12 @@ class ConnectionPlugValueWidget( GafferUI.PlugValueWidget ) :
 		row.append( self.__inputLabel, horizontalAlignment = GafferUI.HorizontalAlignment.Center, expand = True )
 		self.__frame.setChild( row )
 
-		self.__connections = [
-			self.__frame.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) ),
-			self.__inputLabel.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) ),
-			self.__frame.enterSignal().connect( functools.partial( GafferUI.Frame.setHighlighted, highlighted=True ) ),
-			self.__frame.leaveSignal().connect( functools.partial( GafferUI.Frame.setHighlighted, highlighted=False ) ),
-		]
+		self.__frame.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) )
+		self.__inputLabel.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) )
+		self.__frame.enterSignal().connect( functools.partial( GafferUI.Frame.setHighlighted, highlighted=True ) )
+		self.__frame.leaveSignal().connect( functools.partial( GafferUI.Frame.setHighlighted, highlighted=False ) )
 
 		self._addPopupMenu( self.__frame )
-
-		self._updateFromPlug()
 
 	def setHighlighted( self, highlighted ) :
 
@@ -95,7 +91,16 @@ class ConnectionPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		return result
 
-	def _updateFromPlug( self ) :
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
+
+		# Avoid unnecessary overhead of computing values, since
+		# we don't use them in `_updateFromValues()`.
+		return [ None for p in plugs ]
+
+	# We don't actually display values, but this is also called whenever the
+	# input changes, which is when we need to update.
+	def _updateFromValues( self, values, exception ) :
 
 		input = self.getPlug().getInput()
 		self.__inputLabel.setGraphComponent( input )

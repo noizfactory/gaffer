@@ -49,6 +49,8 @@
 #include "boost/mpl/for_each.hpp"
 #include "boost/mpl/list.hpp"
 
+#include "fmt/format.h"
+
 using namespace std;
 using namespace Imath;
 using namespace IECoreGLPreview;
@@ -73,7 +75,6 @@ public:
 			{ openvdb::typeNameAsString<int32_t>(), []( GeometryCollector& collector, openvdb::GridBase::ConstPtr grid ) { collector.collectTyped<openvdb::Int32Grid>( grid ); } },
 			{ openvdb::typeNameAsString<int64_t>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::Int64Grid>( grid ); } },
 			{ openvdb::typeNameAsString<openvdb::ValueMask>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::MaskGrid>( grid ); } },
-			{ openvdb::typeNameAsString<std::string>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::StringGrid>( grid ); } },
 			{ openvdb::typeNameAsString<openvdb::Vec3d>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::Vec3DGrid>( grid ); } },
 			{ openvdb::typeNameAsString<openvdb::Vec3i>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::Vec3IGrid>( grid ); } },
 			{ openvdb::typeNameAsString<openvdb::Vec3f>(), []( GeometryCollector& collector , openvdb::GridBase::ConstPtr grid) { collector.collectTyped<openvdb::Vec3SGrid>( grid ); } },
@@ -87,7 +88,7 @@ public:
 		}
 		else
 		{
-			throw IECore::InvalidArgumentException( boost::str( boost::format( "VDBVisualiser: Incompatible Grid found name: '%1%' type: '%2' " ) % grid->valueType() % grid->getName() ) );
+			throw IECore::InvalidArgumentException( fmt::format( "VDBVisualiser: Incompatible Grid found name: '{}' type: '{}' ", grid->valueType(), grid->getName() ) );
 		}
 	}
 
@@ -135,8 +136,8 @@ private:
 		openvdb::Index64 count = openvdb::points::pointCount( pointsGrid->tree() );
 
 		IECore::V3fVectorDataPtr pointData = new IECore::V3fVectorData();
-		auto &points = pointData->writable();
-		points.reserve( count );
+		auto &pts = pointData->writable();
+		pts.reserve( count );
 
 		for (auto leafIter = pointsGrid->tree().cbeginLeaf(); leafIter; ++leafIter) {
 			const openvdb::points::AttributeArray& array =  leafIter->constAttributeArray("P");
@@ -147,7 +148,7 @@ private:
 				openvdb::Vec3f voxelPosition = positionHandle.get( *indexIter );
 				const openvdb::Vec3d xyz = indexIter.getCoord().asVec3d();
 				openvdb::Vec3f worldPosition =  pointsGrid->transform().indexToWorld( voxelPosition + xyz );
-				points.push_back( Imath::Vec3<float>( worldPosition[0], worldPosition[1], worldPosition[2] ) );
+				pts.push_back( Imath::Vec3<float>( worldPosition[0], worldPosition[1], worldPosition[2] ) );
 			}
 		}
 
@@ -275,17 +276,19 @@ class VDBVisualiser : public ObjectVisualiser
 
 	public :
 
-		typedef VDBObject ObjectType;
+		using ObjectType = VDBObject;
 
 		VDBVisualiser()
-			:	m_group( new IECoreGL::Group() )
 		{
 
-			m_group->getState()->add( new IECoreGL::Primitive::DrawWireframe( true ) );
-			m_group->getState()->add( new IECoreGL::Primitive::DrawSolid( false ) );
-			m_group->getState()->add( new IECoreGL::CurvesPrimitive::UseGLLines( true ) );
-			m_group->getState()->add( new IECoreGL::WireframeColorStateComponent( Color4f( 0.06, 0.2, 0.56, 1 ) ) );
-			m_group->getState()->add( new IECoreGL::CurvesPrimitive::GLLineWidth( 2.0f ) );
+			IECoreGL::GroupPtr group = new IECoreGL::Group();
+			m_defaultVisualisations.push_back( Visualisation::createGeometry( group ) );
+
+			group->getState()->add( new IECoreGL::Primitive::DrawWireframe( true ) );
+			group->getState()->add( new IECoreGL::Primitive::DrawSolid( false ) );
+			group->getState()->add( new IECoreGL::CurvesPrimitive::UseGLLines( true ) );
+			group->getState()->add( new IECoreGL::WireframeColorStateComponent( Color4f( 0.06, 0.2, 0.56, 1 ) ) );
+			group->getState()->add( new IECoreGL::CurvesPrimitive::GLLineWidth( 2.0f ) );
 
 			IECore::V3fVectorDataPtr pData = new IECore::V3fVectorData;
 			vector<V3f> &p = pData->writable();
@@ -302,26 +305,26 @@ class VDBVisualiser : public ObjectVisualiser
 
 			IECoreGL::CurvesPrimitivePtr curves = new IECoreGL::CurvesPrimitive( IECore::CubicBasisf::linear(), false, vertsPerCurve );
 			curves->addPrimitiveVariable( "P", IECoreScene::PrimitiveVariable( IECoreScene::PrimitiveVariable::Vertex, pData ) );
-			m_group->addChild( curves );
+			group->addChild( curves );
 		}
 
 		~VDBVisualiser() override
 		{
 		}
 
-		IECoreGL::ConstRenderablePtr visualise( const IECore::Object *object ) const override
+		Visualisations visualise( const IECore::Object *object ) const override
 		{
 			const VDBObject* vdbObject = IECore::runTimeCast<const VDBObject>(object);
 			if ( !vdbObject )
 			{
-				return m_group;
+				return m_defaultVisualisations;
 			}
 
 			// todo which grid should be visualised?
 			std::vector<std::string> names = vdbObject->gridNames();
 			if (names.empty())
 			{
-				return m_group;
+				return m_defaultVisualisations;
 			}
 
 			openvdb::GridBase::ConstPtr grid = vdbObject->findGrid( names[0] );
@@ -370,14 +373,14 @@ class VDBVisualiser : public ObjectVisualiser
 
 			}
 
-			return rootGroup;
+			return { Visualisation::createGeometry( rootGroup ) };
 		}
 
 	protected :
 
 		static ObjectVisualiserDescription<VDBVisualiser> g_visualiserDescription;
 
-		IECoreGL::GroupPtr m_group;
+		Visualisations m_defaultVisualisations;
 
 };
 

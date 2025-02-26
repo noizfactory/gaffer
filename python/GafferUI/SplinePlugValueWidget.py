@@ -35,7 +35,7 @@
 #
 ##########################################################################
 
-import weakref
+import IECore
 
 import Gaffer
 import GafferUI
@@ -50,7 +50,7 @@ class SplinePlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		self.__splineWidget._qtWidget().setFixedHeight( 20 )
 
-		self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ), scoped = False )
+		self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ) )
 
 		self.__editorWindow = None
 
@@ -75,26 +75,31 @@ class SplinePlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		self.splineWidget().setHighlighted( highlighted )
 
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
 
-		plug = self.getPlug()
-		if plug is not None :
-			with self.getContext() :
-				self.__splineWidget.setSpline( plug.getValue().spline() )
+		if values :
+			assert( len( values ) == 1 )
+			self.__splineWidget.setSpline( values[0].spline() )
+		else :
+			self.__splineWidget.setSpline(
+				IECore.Splineff( IECore.CubicBasisf.linear(), [ ( 0, 0.3 ), ( 1, 0.3 ) ] ),
+			)
 
 	def __buttonPress( self, button, event ) :
 
 		if event.buttons & event.Buttons.Left :
 
-			if not self._editable() :
-				return False
-
 			_SplinePlugValueDialogue.acquire( self.getPlug() )
 			return True
 
-GafferUI.PlugValueWidget.registerType( Gaffer.SplineffPlug, SplinePlugValueWidget )
-GafferUI.PlugValueWidget.registerType( Gaffer.SplinefColor3fPlug, SplinePlugValueWidget )
-GafferUI.PlugValueWidget.registerType( Gaffer.SplinefColor4fPlug, SplinePlugValueWidget )
+for plugType in ( Gaffer.SplineffPlug, Gaffer.SplinefColor3fPlug, Gaffer.SplinefColor4fPlug ) :
+
+	GafferUI.PlugValueWidget.registerType( plugType, SplinePlugValueWidget )
+	Gaffer.Metadata.registerValue( plugType, "interpolation", "plugValueWidget:type", "GafferUI.PresetsPlugValueWidget" )
+	for name, value in sorted( Gaffer.SplineDefinitionInterpolation.names.items() ):
+		Gaffer.Metadata.registerValue( plugType, "interpolation", "preset:" + name, value )
+	Gaffer.Metadata.registerValue( plugType, "p[0-9]*.x", "labelPlugValueWidget:showValueChangedIndicator", False )
+	Gaffer.Metadata.registerValue( plugType, "p[0-9]*.y", "labelPlugValueWidget:showValueChangedIndicator", False )
 
 ## \todo See comments for `ColorSwatchPlugValueWidget._ColorPlugValueDialogue`.
 # I think the best approach is probably to move the `acquire()` mechanism to the
@@ -117,8 +122,8 @@ class _SplinePlugValueDialogue( GafferUI.Dialogue ) :
 		# `acquire()` should even be responsible for building the
 		# dialogues, so it's able to build a dialogue around any
 		# PlugValueWidget?
-		plug.parentChangedSignal().connect( Gaffer.WeakMethod( self.__destroy ), scoped = False )
-		plug.node().parentChangedSignal().connect( Gaffer.WeakMethod( self.__destroy ), scoped = False )
+		plug.parentChangedSignal().connect( Gaffer.WeakMethod( self.__destroy ) )
+		plug.node().parentChangedSignal().connect( Gaffer.WeakMethod( self.__destroy ) )
 
 	@classmethod
 	def acquire( cls, plug ) :

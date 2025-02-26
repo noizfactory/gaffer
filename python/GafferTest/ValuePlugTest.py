@@ -36,6 +36,14 @@
 ##########################################################################
 
 import gc
+import inspect
+import os
+import subprocess
+import threading
+import time
+import unittest
+
+import imath
 
 import IECore
 
@@ -58,7 +66,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		# the objects should be one and the same, as the second computation
 		# should have shortcut and returned a cached result.
-		self.failUnless( v1.isSame( v2 ) )
+		self.assertTrue( v1.isSame( v2 ) )
 
 		Gaffer.ValuePlug.setCacheMemoryLimit( 0 )
 
@@ -66,7 +74,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		self.assertEqual( v3, IECore.StringData( "d" ) )
 
 		# the objects should be different, as we cleared the cache.
-		self.failIf( v3.isSame( v2 ) )
+		self.assertFalse( v3.isSame( v2 ) )
 
 		Gaffer.ValuePlug.setCacheMemoryLimit( self.__originalCacheMemoryLimit )
 
@@ -77,27 +85,27 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		self.assertEqual( v1, IECore.StringData( "d" ) )
 
 		# the objects should be one and the same, as we reenabled the cache.
-		self.failUnless( v1.isSame( v2 ) )
+		self.assertTrue( v1.isSame( v2 ) )
 
 		Gaffer.ValuePlug.clearCache()
 		self.assertEqual( Gaffer.ValuePlug.cacheMemoryUsage(), 0 )
 
 		v3 = n["out"].getValue( _copy=False )
-		self.failIf( v3.isSame( v2 ) )
+		self.assertFalse( v3.isSame( v2 ) )
 
 		v4 = n["out"].getValue( _copy=False )
-		self.failUnless( v4.isSame( v3 ) )
+		self.assertTrue( v4.isSame( v3 ) )
 
 	def testSettable( self ) :
 
 		p1 = Gaffer.IntPlug( direction = Gaffer.Plug.Direction.In )
-		self.failUnless( p1.settable() )
+		self.assertTrue( p1.settable() )
 
 		p2 = Gaffer.IntPlug( direction = Gaffer.Plug.Direction.Out )
-		self.failIf( p2.settable() )
+		self.assertFalse( p2.settable() )
 
 		p1.setInput( p2 )
-		self.failIf( p1.settable() )
+		self.assertFalse( p1.settable() )
 
 	def testUncacheabilityPropagates( self ) :
 
@@ -117,7 +125,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		self.assertEqual( o2, IECore.StringData( "pig" ) )
 		self.assertEqual( o3, IECore.StringData( "pig" ) )
-		self.failUnless( o2.isSame( o3 ) ) # they share cache entries
+		self.assertTrue( o2.isSame( o3 ) ) # they share cache entries
 
 		n["out"].setFlags( Gaffer.Plug.Flags.Cacheable, False )
 
@@ -126,7 +134,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		self.assertEqual( o2, IECore.StringData( "pig" ) )
 		self.assertEqual( o3, IECore.StringData( "pig" ) )
-		self.failIf( o2.isSame( o3 ) ) # they shouldn't share cache entries
+		self.assertFalse( o2.isSame( o3 ) ) # they shouldn't share cache entries
 
 	def testSetValueSignalsDirtiness( self ) :
 
@@ -143,6 +151,43 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		n["p"].setValue( 10 )
 
 		self.assertEqual( len( cs ), 1 )
+
+	def testDirtyCountPlug( self ) :
+
+		# The dirtyCount is relative to the current dirtyCountEpoch
+		refPlug = Gaffer.ValuePlug()
+		epoch = refPlug.dirtyCount()
+
+
+		i = Gaffer.IntPlug()
+		self.assertEqual( i.dirtyCount(), epoch + 0 )
+		i.setValue( 10 )
+		self.assertEqual( i.dirtyCount(), epoch + 1 )
+		i.setValue( 20 )
+		self.assertEqual( i.dirtyCount(), epoch + 2 )
+
+		i2 = Gaffer.IntPlug()
+		v = Gaffer.ValuePlug()
+
+		self.assertEqual( i2.dirtyCount(), epoch + 0 )
+		self.assertEqual( v.dirtyCount(), epoch + 0 )
+
+		# Need to parent to a node before dirtying based on plug reparenting will work
+		n = Gaffer.Node()
+		n.addChild( v )
+
+		self.assertEqual( v.dirtyCount(), epoch + 1 )
+		self.assertEqual( i2.dirtyCount(), epoch + 0 )
+
+		# Parenting dirties both parent and child
+		v.addChild( i2 )
+		self.assertEqual( v.dirtyCount(), epoch + 2 )
+		self.assertEqual( i2.dirtyCount(), epoch + 1 )
+
+		# Setting the value of the child should also dirty the parent
+		i2.setValue( 10 )
+		self.assertEqual( v.dirtyCount(), epoch + 3 )
+		self.assertEqual( i2.dirtyCount(), epoch + 2 )
 
 	def testCopyPasteDoesntRetainComputedValues( self ) :
 
@@ -241,22 +286,18 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		self.assertEqual( a1, IECore.StringData( "a" ) )
 		self.assertEqual( n.numHashCalls, 1 )
 
-		# We apply some leeway in our test for how many hash calls are
-		# made - a good ValuePlug implementation will probably avoid
-		# unecessary repeated calls in most cases, but it's not
-		# what this unit test is about.
 		a2 = n["out"].getValue( _copy = False )
 		self.assertTrue( a2.isSame( a1 ) )
-		self.assertTrue( n.numHashCalls == 1 or n.numHashCalls == 2 )
+		self.assertEqual( n.numHashCalls, 1 )
 
 		h = n["out"].hash()
-		self.assertTrue( n.numHashCalls >= 1 and n.numHashCalls <= 3 )
-		numHashCalls = n.numHashCalls
+		self.assertEqual( n.numHashCalls, 1 )
 
-		# What we care about is that calling getValue() with a precomputed hash
-		# definitely doesn't recompute the hash again.
+		# Calling `getValue()` with a precomputed hash shouldn't recompute the
+		# hash again, even if it has been cleared from the cache.
+		Gaffer.ValuePlug.clearHashCache()
 		a3 = n["out"].getValue( _copy = False, _precomputedHash = h )
-		self.assertEqual( n.numHashCalls, numHashCalls )
+		self.assertEqual( n.numHashCalls, 1 )
 		self.assertTrue( a3.isSame( a1 ) )
 
 	def testSerialisationOfChildValues( self ) :
@@ -287,7 +328,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		s.execute( ss )
 
 		self.assertEqual( s["n1"]["p"]["f"].getValue(), 10 )
-		self.failUnless( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
+		self.assertTrue( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
 
 	def testDynamicSerialisation( self ) :
 
@@ -320,21 +361,21 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		n2["c"]["f1"].setInput( n["c"]["f1"] )
 		n2["c"]["f2"].setInput( n["c"]["f2"] )
-		self.failUnless( n2["c"].getInput().isSame( n["c"] ) )
+		self.assertTrue( n2["c"].getInput().isSame( n["c"] ) )
 
 		n2["c"]["f2"].setInput( None )
-		self.failUnless( n2["c"].getInput() is None )
+		self.assertIsNone( n2["c"].getInput() )
 
 		n2["c"]["f2"].setInput( n["c"]["f2"] )
-		self.failUnless( n2["c"].getInput().isSame( n["c"] ) )
+		self.assertTrue( n2["c"].getInput().isSame( n["c"] ) )
 
 		c["f3"] = Gaffer.FloatPlug()
 		c2["f3"] = Gaffer.FloatPlug()
 
-		self.failUnless( n2["c"].getInput() is None )
+		self.assertIsNone( n2["c"].getInput() )
 
 		n2["c"]["f3"].setInput( n["c"]["f3"] )
-		self.failUnless( n2["c"].getInput().isSame( n["c"] ) )
+		self.assertTrue( n2["c"].getInput().isSame( n["c"] ) )
 
 	def testInputChangedCrash( self ) :
 
@@ -367,10 +408,10 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		self.assertEqual( len( dirtyPlugs ), 4 )
 
-		self.failUnless( dirtyPlugs[0][0].isSame( n["p"]["f"] ) )
-		self.failUnless( dirtyPlugs[1][0].isSame( n["p"] ) )
-		self.failUnless( dirtyPlugs[2][0].isSame( n["o"]["f"] ) )
-		self.failUnless( dirtyPlugs[3][0].isSame( n["o"] ) )
+		self.assertTrue( dirtyPlugs[0][0].isSame( n["p"]["f"] ) )
+		self.assertTrue( dirtyPlugs[1][0].isSame( n["p"] ) )
+		self.assertTrue( dirtyPlugs[2][0].isSame( n["o"]["f"] ) )
+		self.assertTrue( dirtyPlugs[3][0].isSame( n["o"] ) )
 
 	def testPlugSetPropagation( self ) :
 
@@ -385,13 +426,13 @@ class ValuePlugTest( GafferTest.TestCase ) :
 			if plug.isSame( c ) :
 				self.set = True
 
-		cn = n.plugSetSignal().connect( setCallback )
+		n.plugSetSignal().connect( setCallback )
 
 		self.set = False
 
 		c["f1"].setValue( 10 )
 
-		self.failUnless( self.set )
+		self.assertTrue( self.set )
 
 	def testMultipleLevelsOfPlugSetPropagation( self ) :
 
@@ -406,13 +447,13 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 			self.setPlugs.append( plug.getName() )
 
-		cn = n.plugSetSignal().connect( setCallback )
+		n.plugSetSignal().connect( setCallback )
 
 		self.setPlugs = []
 
 		c["c1"]["f1"].setValue( 10 )
 
-		self.failUnless( len( self.setPlugs )==3 )
+		self.assertEqual( len( self.setPlugs ), 3 )
 		self.assertEqual( self.setPlugs, [ "f1", "c1", "c" ] )
 
 	def testMultipleLevelsOfPlugSetPropagationWithDifferentParentingOrder( self ) :
@@ -427,16 +468,16 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 			self.setPlugs.append( plug.getName() )
 
-		cn = n.plugSetSignal().connect( setCallback )
+		n.plugSetSignal().connect( setCallback )
 
 		self.setPlugs = []
 
 		n["c"]["c1"]["f1"].setValue( 10 )
 
-		self.failUnless( len( self.setPlugs )==3 )
-		self.failUnless( "c" in self.setPlugs )
-		self.failUnless( "c1" in self.setPlugs )
-		self.failUnless( "f1" in self.setPlugs )
+		self.assertEqual( len( self.setPlugs ), 3 )
+		self.assertIn( "c", self.setPlugs )
+		self.assertIn( "c1", self.setPlugs )
+		self.assertIn( "f1", self.setPlugs )
 
 	def testAcceptsInput( self ) :
 
@@ -447,13 +488,13 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		i.addChild( Gaffer.IntPlug() )
 		o.addChild( Gaffer.IntPlug( direction=Gaffer.Plug.Direction.Out ) )
 
-		self.failUnless( i.acceptsInput( o ) )
-		self.failIf( i.acceptsInput( s ) )
+		self.assertTrue( i.acceptsInput( o ) )
+		self.assertFalse( i.acceptsInput( s ) )
 
 	def testAcceptsNoneInput( self ) :
 
 		p = Gaffer.ValuePlug( "hello" )
-		self.failUnless( p.acceptsInput( None ) )
+		self.assertTrue( p.acceptsInput( None ) )
 
 	def testSerialisationOfMasterConnection( self ) :
 
@@ -462,18 +503,18 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		s["n2"] = GafferTest.CompoundPlugNode()
 
 		s["n1"]["p"].setInput( s["n2"]["p"] )
-		self.failUnless( s["n1"]["p"].getInput().isSame( s["n2"]["p"] ) )
-		self.failUnless( s["n1"]["p"]["f"].getInput().isSame( s["n2"]["p"]["f"] ) )
-		self.failUnless( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
+		self.assertTrue( s["n1"]["p"].getInput().isSame( s["n2"]["p"] ) )
+		self.assertTrue( s["n1"]["p"]["f"].getInput().isSame( s["n2"]["p"]["f"] ) )
+		self.assertTrue( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
 
 		ss = s.serialise()
 
 		s = Gaffer.ScriptNode()
 		s.execute( ss )
 
-		self.failUnless( s["n1"]["p"].getInput().isSame( s["n2"]["p"] ) )
-		self.failUnless( s["n1"]["p"]["f"].getInput().isSame( s["n2"]["p"]["f"] ) )
-		self.failUnless( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
+		self.assertTrue( s["n1"]["p"].getInput().isSame( s["n2"]["p"] ) )
+		self.assertTrue( s["n1"]["p"]["f"].getInput().isSame( s["n2"]["p"]["f"] ) )
+		self.assertTrue( s["n1"]["p"]["s"].getInput().isSame( s["n2"]["p"]["s"] ) )
 
 	def testSetInputShortcut( self ) :
 
@@ -519,8 +560,8 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		n["c1"]["i"].setInput( n["c2"]["i1"] )
 
-		self.failUnless( n["c1"]["i"].getInput().isSame( n["c2"]["i1"] ) )
-		self.failUnless( n["c1"].getInput().isSame( n["c2"] ) )
+		self.assertTrue( n["c1"]["i"].getInput().isSame( n["c2"]["i1"] ) )
+		self.assertTrue( n["c1"].getInput().isSame( n["c2"] ) )
 
 	def testSerialisationOfDynamicPlugsOnNondynamicParent( self ) :
 
@@ -562,7 +603,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 
 		class TestValuePlug( Gaffer.ValuePlug ) :
 
-			def __init__( self, name = "TestValuePlug", direction = Gaffer.Plug.Direction.In, flags = Gaffer.Plug.Flags.None ) :
+			def __init__( self, name = "TestValuePlug", direction = Gaffer.Plug.Direction.In, flags = Gaffer.Plug.Flags.None_ ) :
 
 				Gaffer.ValuePlug.__init__( self, name, direction, flags )
 
@@ -580,7 +621,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		p = TestValuePlug()
 		self.assertEqual( p.getName(), "TestValuePlug" )
 		self.assertEqual( p.direction(), Gaffer.Plug.Direction.In )
-		self.assertEqual( p.getFlags(), Gaffer.Plug.Flags.None )
+		self.assertEqual( p.getFlags(), Gaffer.Plug.Flags.None_ )
 
 		p = TestValuePlug( name = "p", direction = Gaffer.Plug.Direction.Out, flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
 		self.assertEqual( p.getName(), "p" )
@@ -601,7 +642,7 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		n = Gaffer.Node()
 		n["p"] = p
 
-		self.failUnless( n["p"] is p )
+		self.assertTrue( n["p"] is p )
 
 	def testNullInputPropagatesToChildren( self ) :
 
@@ -617,9 +658,61 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		self.assertTrue( n["user"]["c"]["i"].getInput() is None )
 
 	@GafferTest.TestRunner.PerformanceTestMethod()
-	def testContentionForOneItem( self ) :
+	def testCacheOverhead( self ) :
 
-		GafferTest.testValuePlugContentionForOneItem()
+		m = GafferTest.MultiplyNode()
+		m["product"].getValue()
+
+		# This should be about the fastest we can pull an item from the cache - a single float that is already cached
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.repeatGetValue( m["product"], 5000000 )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testHashCacheOverhead( self ) :
+
+		m = GafferTest.MultiplyNode()
+		m["product"].getValue()
+
+		# As for `testCacheOverhead`, but with an additional context variable, so
+		# that we have to redo the hash before getting the cached value for the
+		# compute.
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.repeatGetValue( m["product"], 2000000, "unusedContextVariable" )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContentionForOneItem( self ) :
+		m = GafferTest.MultiplyNode()
+		m["product"].getValue()
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.parallelGetValue( m["product"], 10000000 )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testStaticNumericValuePerformance( self ) :
+
+		node = Gaffer.Node()
+		node["plug"] = Gaffer.IntPlug()
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.parallelGetValue( node["plug"], 10000000 )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testStaticStringValuePerformance( self ) :
+
+		node = Gaffer.Node()
+		node["plug"] = Gaffer.StringPlug()
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.parallelGetValue( node["plug"], 10000000 )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testStaticObjectValuePerformance( self ) :
+
+		node = Gaffer.Node()
+		node["plug"] = Gaffer.ObjectPlug( defaultValue = IECore.IntVectorData() )
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			GafferTest.parallelGetValue( node["plug"], 10000000 )
 
 	def testIsSetToDefault( self ) :
 
@@ -658,6 +751,321 @@ class ValuePlugTest( GafferTest.TestCase ) :
 		# to be equal in this context.
 		self.assertFalse( n2["op2"].isSetToDefault() )
 		self.assertEqual( n2["op2"].getValue(), n2["op2"].defaultValue() )
+
+	def testCancellationDuringCompute( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( inspect.cleandoc(
+			"""
+			IECore.Canceller.check( context.canceller() )
+			parent['n']['op1'] = 40
+			"""
+		) )
+
+		canceller = IECore.Canceller()
+		canceller.cancel()
+
+		with Gaffer.Context( s.context(), canceller ) :
+			with self.assertRaises( IECore.Cancelled ) :
+				s["n"]["sum"].getValue()
+
+		canceller = IECore.Canceller()
+
+		with Gaffer.Context( s.context(), canceller ) :
+			self.assertEqual( s["n"]["sum"].getValue(), 40 )
+
+	def testClearHashCache( self ) :
+
+		node = GafferTest.AddNode()
+		node["sum"].getValue()
+
+		with Gaffer.PerformanceMonitor() as m :
+			node["sum"].getValue()
+		self.assertEqual( m.plugStatistics( node["sum"] ).hashCount, 0 )
+
+		Gaffer.ValuePlug.clearHashCache()
+		with Gaffer.PerformanceMonitor() as m :
+			node["sum"].getValue()
+		self.assertEqual( m.plugStatistics( node["sum"] ).hashCount, 1 )
+
+	def testResetDefault( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["node"] = Gaffer.Node()
+		script["node"]["user"]["i"] = Gaffer.IntPlug( defaultValue = 1, flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["node"]["user"]["v"] = Gaffer.V3iPlug( defaultValue = imath.V3i( 1, 2, 3 ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		def assertPreconditions( script ) :
+
+			self.assertTrue( script["node"]["user"]["i"].isSetToDefault() )
+			self.assertEqual( script["node"]["user"]["i"].defaultValue(), 1 )
+			self.assertEqual( script["node"]["user"]["i"].getValue(), 1 )
+
+			self.assertTrue( script["node"]["user"]["v"].isSetToDefault() )
+			self.assertEqual( script["node"]["user"]["v"].defaultValue(), imath.V3i( 1, 2, 3 ) )
+			self.assertEqual( script["node"]["user"]["v"].getValue(), imath.V3i( 1, 2, 3 ) )
+
+		assertPreconditions( script )
+
+		with Gaffer.UndoScope( script ) :
+
+			script["node"]["user"]["i"].setValue( 2 )
+			script["node"]["user"]["i"].resetDefault()
+
+			script["node"]["user"]["v"].setValue( imath.V3i( 10, 11, 12 ) )
+			script["node"]["user"]["v"].resetDefault()
+
+		def assertPostconditions( script ) :
+
+			self.assertTrue( script["node"]["user"]["i"].isSetToDefault() )
+			self.assertEqual( script["node"]["user"]["i"].defaultValue(), 2 )
+			self.assertEqual( script["node"]["user"]["i"].getValue(), 2 )
+
+			self.assertTrue( script["node"]["user"]["v"].isSetToDefault() )
+			self.assertEqual( script["node"]["user"]["v"].defaultValue(), imath.V3i( 10, 11, 12 ) )
+			self.assertEqual( script["node"]["user"]["v"].getValue(), imath.V3i( 10, 11, 12 ) )
+
+		script.undo()
+		assertPreconditions( script )
+
+		script.redo()
+		assertPostconditions( script )
+
+		script.undo()
+		assertPreconditions( script )
+
+		script.redo()
+		assertPostconditions( script )
+
+		script2 = Gaffer.ScriptNode()
+		script2.execute( script.serialise() )
+		assertPostconditions( script2 )
+
+	def testCacheValidation( self ) :
+
+		defaultHashCacheMode = Gaffer.ValuePlug.getHashCacheMode()
+		Gaffer.ValuePlug.setHashCacheMode( Gaffer.ValuePlug.HashCacheMode.Checked )
+		try:
+
+			m = GafferTest.MultiplyNode( "test", True )
+			m["op1"].setValue( 2 )
+			m["op2"].setValue( 3 )
+			self.assertEqual( m["product"].getValue(), 6 )
+
+			m["op2"].setValue( 4 )
+			exception = None
+			try:
+				m["product"].getValue()
+			except Exception as e:
+				exception = e
+
+			self.assertEqual( type( exception ), Gaffer.ProcessException )
+			self.assertEqual( str( exception ), "test.product : Detected undeclared dependency. Fix DependencyNode::affects() implementation." )
+
+			# Make sure the plug with the actual issue is reported, when queried from a downstream network
+			m2 = GafferTest.MultiplyNode( "second" )
+			m2["op1"].setInput( m["product"] )
+			m2["op2"].setValue( 5 )
+
+			exception = None
+			try:
+				m2["product"].getValue()
+			except Exception as e:
+				exception = e
+
+			self.assertEqual( type( exception ), Gaffer.ProcessException )
+			self.assertEqual( str( exception ), "test.product : Detected undeclared dependency. Fix DependencyNode::affects() implementation." )
+
+		finally:
+			Gaffer.ValuePlug.setHashCacheMode( defaultHashCacheMode )
+
+	def testDefaultHash( self ) :
+
+		# Plug with single value
+
+		self.assertNotEqual( Gaffer.IntPlug().defaultHash(), IECore.MurmurHash() )
+		self.assertEqual( Gaffer.IntPlug().defaultHash(), Gaffer.IntPlug().defaultHash() )
+		self.assertNotEqual( Gaffer.IntPlug().defaultHash(), Gaffer.IntPlug( defaultValue = 2 ).defaultHash() )
+		self.assertEqual( Gaffer.IntPlug().defaultHash(), Gaffer.IntPlug().hash() )
+
+		# Compound plugs
+
+		self.assertNotEqual( Gaffer.V2iPlug().defaultHash(), IECore.MurmurHash() )
+		self.assertEqual( Gaffer.V2iPlug().defaultHash(), Gaffer.V2iPlug().defaultHash() )
+		self.assertNotEqual( Gaffer.V2iPlug().defaultHash(), Gaffer.V2iPlug( defaultValue = imath.V2i( 0, 1 ) ).defaultHash() )
+		self.assertNotEqual( Gaffer.V2iPlug().defaultHash(), Gaffer.V3iPlug().defaultHash() )
+		self.assertEqual( Gaffer.V2iPlug().defaultHash(), Gaffer.V2iPlug().hash() )
+
+	def testExceptionDuringParallelEval( self ) :
+
+		# This only caused a problem when using GAFFER_PYTHONEXPRESSION_CACHEPOLICY=TaskCollaboration
+		# with a TaskMutex without a properly isolated task_group so that exceptions in one thread
+		# can cancel the other.  We're adding a more specific test for this to TaskMutex, so we're not
+		# expecting this to catch anything, but it's still a valid test
+
+		m = GafferTest.MultiplyNode()
+
+		m["e"] = Gaffer.Expression()
+		m["e"].setExpression( inspect.cleandoc(
+			"""
+			if context["testVar"]%10 == 9:
+				raise BaseException( "Foo" )
+			parent['op1'] = 1
+			"""
+		) )
+
+		with self.assertRaisesRegex( BaseException, "Foo" ):
+			GafferTest.parallelGetValue( m["product"], 10000, "testVar" )
+
+
+	def testCancellationOfSecondGetValueCall( self ) :
+
+		if IECore.tbb_global_control.active_value( IECore.tbb_global_control.parameter.max_allowed_parallelism ) < 3 :
+			# This test requires at least 3 TBB threads (including the main
+			# thread), because we need the second enqueued BackgroundTask to
+			# start execution before the first one has completed. If we have
+			# insufficient threads then we end up in deadlock, so in this case
+			# we skip the test.
+			#
+			# Note : deadlock only ensues because the first task will never
+			# return without cancellation. This is an artificial situation, not
+			# one that would occur in practical usage of Gaffer itself.
+			self.skipTest( "Not enough worker threads" )
+
+		class InfiniteLoop( Gaffer.ComputeNode ) :
+
+			def __init__( self, name = "InfiniteLoop", cachePolicy = Gaffer.ValuePlug.CachePolicy.Standard ) :
+
+				Gaffer.ComputeNode.__init__( self, name )
+
+				self.computeStartedCondition = threading.Condition()
+				self.__cachePolicy = cachePolicy
+				self["out"] = Gaffer.IntPlug( direction = Gaffer.Plug.Direction.Out )
+
+			# No need to implement `hash()` - because our result is constant (or
+			# non-existent), the default hash is sufficient.
+
+			def compute( self, output, context ) :
+
+				with self.computeStartedCondition :
+					self.computeStartedCondition.notify()
+
+				if output == self["out"] :
+					while True :
+						IECore.Canceller.check( context.canceller() )
+
+			def computeCachePolicy( self, output ) :
+
+				return self.__cachePolicy
+
+		IECore.registerRunTimeTyped( InfiniteLoop )
+
+		for cachePolicy in (
+			Gaffer.ValuePlug.CachePolicy.Default,
+			# Omitting TaskCollaboration, because if our second compute joins as
+			# a worker, there is currently no way we can recall it. This is not
+			# ideal as it means the UI stalls if one UI element is waiting to
+			# cancel an operation, but its tasks have been "captured" by
+			# collaboration on a compute started by another UI element (which
+			# hasn't requested cancellation).
+			#
+			## \todo Improve this situation. Possibilities include :
+			#
+			# 1. Only collaborating on work if our canceller matches the one used
+			#    by the original caller. This would cause redundant computes in
+			#    the UI though.
+			# 2. Finding a way to join the cancellers so that cancellation on the
+			#    second one triggers cancellation on the first.
+			# 3. Finding a way for the second canceller to trigger a call to
+			#   `task_group::cancel()`.
+			# 4. Getting the two UI elements to use the same canceller in the first
+			#    place. Perhaps this is the most promising avenue? Making their
+			#    combined fates explicit in the API might not be a bad thing, and if
+			#    we combined this with #1, a third UI element would have the option
+			#    of doing its own compute with its own canceller, making it safe
+			#    from combined cancellation.
+		) :
+
+			script = Gaffer.ScriptNode()
+			script["node"] = InfiniteLoop( cachePolicy = cachePolicy )
+
+			# Launch a compute in the background, and wait for it to start.
+
+			with script["node"].computeStartedCondition :
+				backgroundTask1 = Gaffer.ParallelAlgo.callOnBackgroundThread( script["node"]["out"], lambda : script["node"]["out"].getValue() )
+				script["node"].computeStartedCondition.wait()
+
+			# Launch a second compute in the background, wait for it to start, and
+			# then make sure we can cancel it even though the compute is already in
+			# progress on another thread.
+
+			startedCondition = threading.Condition()
+
+			def getValueExpectingCancellation() :
+
+				with startedCondition :
+					startedCondition.notify()
+
+				with self.assertRaises( IECore.Cancelled ) :
+					script["node"]["out"].getValue()
+
+			with startedCondition :
+				backgroundTask2 = Gaffer.ParallelAlgo.callOnBackgroundThread( script["node"]["out"], getValueExpectingCancellation )
+				startedCondition.wait()
+
+			backgroundTask2.cancelAndWait()
+			backgroundTask1.cancelAndWait()
+
+	# A node that inherits from ComputeNode, but doesn't implement a compute.
+	# We would expect the cache policies to never be evaluated
+	class NoComputeNode( Gaffer.ComputeNode ) :
+
+		def __init__( self, name="NoComputeNode" ) :
+
+			Gaffer.ComputeNode.__init__( self, name )
+
+			self["in"] = Gaffer.BoolPlug()
+
+		def computeCachePolicy( self, plug ) :
+
+			raise IECore.Exception( "Cache policy should not be called" )
+
+		def hashCachePolicy( self, plug ) :
+
+			raise IECore.Exception( "Hash cache policy should not be called" )
+
+	IECore.registerRunTimeTyped( NoComputeNode )
+
+	def testNoCachePolicyForConversions( self ) :
+
+		m = GafferTest.MultiplyNode()
+		n = self.NoComputeNode()
+
+		# Make sure that the conversion triggered by connecting a float plug to a bool plug
+		# does not use the nodes cache policies
+		n["in"].setInput( m["product"] )
+
+		n["in"].hash()
+		self.assertEqual( n["in"].getValue(), False )
+
+	def testOutputPlugWithConvertingInput( self ) :
+
+		for nodeType in ( Gaffer.Node, Gaffer.ComputeNode ) :
+			with self.subTest( nodeType = nodeType ) :
+
+				node = nodeType()
+				node["in"] = Gaffer.IntPlug()
+				node["out"] = Gaffer.FloatPlug( direction = Gaffer.Plug.Direction.Out )
+				node["out"].setInput( node["in"] )
+
+				for i in range( 0, 10 ) :
+
+					node["in"].setValue( i )
+					self.assertEqual( node["out"].getValue(), i )
 
 	def setUp( self ) :
 

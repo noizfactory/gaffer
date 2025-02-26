@@ -35,7 +35,9 @@
 #
 ##########################################################################
 
-import os, sys, traceback
+import sys
+import pathlib
+import traceback
 
 import imath
 
@@ -99,8 +101,8 @@ class execute( Gaffer.Application ) :
 
 				IECore.StringVectorParameter(
 					name = "context",
-					description = "The context used during execution. Note that the frames "
-						"parameter will be used to vary the context frame entry.",
+					description = "The Context used during execution. Note that the frames "
+						"parameter will be used to vary the Context frame entry.",
 					defaultValue = IECore.StringVectorData( [] ),
 					userData = {
 						"parser" : {
@@ -122,7 +124,7 @@ class execute( Gaffer.Application ) :
 	def _run( self, args ) :
 
 		scriptNode = Gaffer.ScriptNode()
-		scriptNode["fileName"].setValue( os.path.abspath( args["script"].value ) )
+		scriptNode["fileName"].setValue( pathlib.Path( args["script"].value ).absolute() )
 		try :
 			scriptNode.load( continueOnError = args["ignoreScriptLoadErrors"].value )
 		except Exception as exception :
@@ -169,14 +171,14 @@ class execute( Gaffer.Application ) :
 
 		with context :
 			for node in nodes :
-				errorConnection = node.errorSignal().connect( Gaffer.WeakMethod( self.__error ) )
+				node.errorSignal().connect( Gaffer.WeakMethod( self.__error ) )
 				try :
 					node["task"].executeSequence( frames )
 				except Exception as exception :
 					IECore.msg(
 						IECore.Msg.Level.Debug,
 						"gaffer execute : executing %s" % node.relativeName( scriptNode ),
-						"".join( traceback.format_exception( *sys.exc_info() ) ),
+						traceback.format_exc().strip(),
 					)
 					IECore.msg(
 						IECore.Msg.Level.Error,

@@ -51,13 +51,13 @@ class ScaleToolTest( GafferUITest.TestCase ) :
 
 		script["plane"] = GafferScene.Plane()
 
-		view = GafferSceneUI.SceneView()
+		view = GafferSceneUI.SceneView( script )
 		view["in"].setInput( script["plane"]["out"] )
 
 		tool = GafferSceneUI.ScaleTool( view )
 		tool["active"].setValue( True )
 
-		GafferSceneUI.ContextAlgo.setSelectedPaths( view.getContext(), IECore.PathMatcher( [ "/plane" ] ) )
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/plane" ] ) )
 
 		with Gaffer.UndoScope( script ) :
 			tool.scale( imath.V3f( 2, 1, 1 ) )
@@ -74,6 +74,149 @@ class ScaleToolTest( GafferUITest.TestCase ) :
 
 		script.undo()
 		self.assertEqual( script["plane"]["transform"]["scale"].getValue(), imath.V3f( 1, 1, 1 ) )
+
+	def testHandles( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["plane"] = GafferScene.Plane()
+
+		view = GafferSceneUI.SceneView( script )
+		view["in"].setInput( script["plane"]["out"] )
+
+		tool = GafferSceneUI.ScaleTool( view )
+		tool["active"].setValue( True )
+
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/plane" ] ) )
+		self.assertEqual( tool.handlesTransform(), imath.M44f() )
+
+		script["plane"]["transform"]["pivot"].setValue( imath.V3f( 1, 0, 0 ) )
+		self.assertEqual(
+			tool.handlesTransform(),
+			imath.M44f().translate( imath.V3f( 1, 0, 0 ) )
+		)
+
+		script["plane"]["transform"]["translate"].setValue( imath.V3f( 0, 1, 0 ) )
+		self.assertEqual(
+			tool.handlesTransform(),
+			imath.M44f().translate( imath.V3f( 1, 1, 0 ) )
+		)
+
+		script["plane"]["transform"]["scale"].setValue( imath.V3f( 1, -2, 3 ) )
+		self.assertTrue(
+			tool.handlesTransform().equalWithAbsError(
+				imath.M44f().translate( imath.V3f( 1, 1, 0 ) ).scale( imath.V3f( 1, -1, 1 ) ),
+				0.000001
+			)
+		)
+
+	def testEditScopes( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["sphere"] = GafferScene.Sphere()
+		script["sphere"]["transform"]["translate"].setValue( imath.V3f( 1, 0, 0 ) )
+
+		script["editScope"] = Gaffer.EditScope()
+		script["editScope"].setup( script["sphere"]["out"] )
+		script["editScope"]["in"].setInput( script["sphere"]["out"] )
+
+		view = GafferSceneUI.SceneView( script )
+		view["in"].setInput( script["editScope"]["out"] )
+		view["editScope"].setInput( script["editScope"]["out"] )
+
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		tool = GafferSceneUI.ScaleTool( view )
+		tool["active"].setValue( True )
+
+		self.assertEqual( tool.handlesTransform(), imath.M44f().translate( imath.V3f( 1, 0, 0 ) ) )
+		self.assertEqual( len( tool.selection() ), 1 )
+		self.assertTrue( tool.selection()[0].editable() )
+		self.assertFalse( GafferScene.EditScopeAlgo.hasTransformEdit( script["editScope"], "/sphere" ) )
+		self.assertEqual( script["editScope"]["out"].transform( "/sphere" ), imath.M44f().translate( imath.V3f( 1, 0, 0 ) ) )
+
+		tool.scale( imath.V3f( 2, 2, 2 ) )
+		self.assertEqual( tool.handlesTransform(), imath.M44f().translate( imath.V3f( 1, 0, 0 ) ) )
+		self.assertEqual( len( tool.selection() ), 1 )
+		self.assertTrue( tool.selection()[0].editable() )
+		self.assertTrue( GafferScene.EditScopeAlgo.hasTransformEdit( script["editScope"], "/sphere" ) )
+		self.assertEqual( script["editScope"]["out"].transform( "/sphere" ), imath.M44f().translate( imath.V3f( 1, 0, 0 ) ).scale( imath.V3f( 2, 2, 2 ) ) )
+
+	def testHandleOriginsRespectPointConstraint( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["sphere"] = GafferScene.Sphere()
+
+		cubeTranslate = imath.V3f( 5, 5, 0 )
+		script["cube"] = GafferScene.Cube()
+		script["cube"]["transform"]["translate"].setValue( cubeTranslate )
+
+		script["parent"] = GafferScene.Parent()
+		script["parent"]["in"].setInput( script["sphere"]["out"] )
+		script["parent"]["children"][0].setInput( script["cube"]["out"] )
+		script["parent"]["parent"].setValue( "/" )
+
+		script["sphereFilter"] = GafferScene.PathFilter()
+		script["sphereFilter"]["paths"].setValue( IECore.StringVectorData( [ "/sphere" ] ) )
+
+		script["constraint"] = GafferScene.PointConstraint()
+		script["constraint"]["in"].setInput( script["parent"]["out"] )
+		script["constraint"]["filter"].setInput( script["sphereFilter"]["out"] )
+		script["constraint"]["target"].setValue( "/cube" )
+
+		view = GafferSceneUI.SceneView( script )
+		view["in"].setInput( script["constraint"]["out"] )
+
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		tool = GafferSceneUI.ScaleTool( view )
+		tool["active"].setValue( True )
+
+		self.assertEqual( tool.handlesTransform(), imath.M44f().translate( cubeTranslate ) )
+
+	def testEditIndividualPromotedAxis( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["box"] = Gaffer.Box()
+
+		script["box"]["sphere"] = GafferScene.Sphere()
+		promoted = Gaffer.PlugAlgo.promote( script["box"]["sphere"]["transform"]["scale"]["y"] )
+
+		view = GafferSceneUI.SceneView( script )
+		view["in"].setInput( script["box"]["sphere"]["out"] )
+
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		tool = GafferSceneUI.ScaleTool( view )
+		tool["active"].setValue( True )
+
+		tool.scale( imath.V3f( 10 ) )
+		self.assertEqual( script["box"]["sphere"]["transform"]["scale"].getValue(), imath.V3f( 10 ) )
+		self.assertEqual( promoted.getValue(), 10 )
+
+	def testGangedPlugs( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["sphere"] = GafferScene.Sphere()
+		script["sphere"]["transform"]["scale"].gang()
+
+		view = GafferSceneUI.SceneView( script )
+		view["in"].setInput( script["sphere"]["out"] )
+
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( script, IECore.PathMatcher( [ "/sphere" ] ) )
+
+		tool = GafferSceneUI.ScaleTool( view )
+		tool["active"].setValue( True )
+
+		self.assertEqual( tool.handlesTransform(), imath.M44f() )
+		self.assertTrue( view.viewportGadget()["HandlesGadget"]["x"].getEnabled() )
+		self.assertFalse( view.viewportGadget()["HandlesGadget"]["y"].getEnabled() )
+		self.assertFalse( view.viewportGadget()["HandlesGadget"]["z"].getEnabled() )
+
+		tool.scale( imath.V3f( 10 ) )
+		self.assertEqual( script["sphere"]["transform"]["scale"].getValue(), imath.V3f( 10 ) )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -50,7 +50,7 @@ class ScenePlugTest( GafferSceneTest.SceneTestCase ) :
 
 		p = GafferScene.ScenePlug()
 
-		self.failUnless( p.isInstanceOf( Gaffer.ValuePlug.staticTypeId() ) )
+		self.assertTrue( p.isInstanceOf( Gaffer.ValuePlug.staticTypeId() ) )
 		self.assertEqual( IECore.RunTimeTyped.baseTypeId( p.typeId() ), Gaffer.ValuePlug.staticTypeId() )
 
 	def testDynamicSerialisation( self ) :
@@ -114,8 +114,8 @@ class ScenePlugTest( GafferSceneTest.SceneTestCase ) :
 						"children" : {
 							"ball" : {
 								"attributes" : {
-									 "b" : IECore.StringData( "bOverride" ),
-									 "c" : IECore.StringData( "c" ),
+									"b" : IECore.StringData( "bOverride" ),
+									"c" : IECore.StringData( "c" ),
 								 },
 							}
 						}
@@ -168,6 +168,20 @@ class ScenePlugTest( GafferSceneTest.SceneTestCase ) :
 
 		self.assertRaises( TypeError, p["out"].boundHash, 10 )
 
+		self.assertEqual( p["out"].attributes( [ "plane" ] ), p["out"].attributes( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].transform( [ "plane" ] ), p["out"].transform( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].object( [ "plane" ] ), p["out"].object( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].bound( [ "plane" ] ), p["out"].bound( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].childNames( [ "plane" ] ), p["out"].childNames( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+
+		self.assertEqual( p["out"].attributesHash( [ "plane" ] ), p["out"].attributesHash( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].transformHash( [ "plane" ] ), p["out"].transformHash( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].objectHash( [ "plane" ] ), p["out"].objectHash( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].boundHash( [ "plane" ] ), p["out"].boundHash( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+		self.assertEqual( p["out"].childNamesHash( [ "plane" ] ), p["out"].childNamesHash( IECore.InternedStringVectorData( [ "plane" ] ) ) )
+
+		self.assertRaises( TypeError, p["out"].boundHash, [ 1 ] )
+
 	def testBoxPromotion( self ) :
 
 		b = Gaffer.Box()
@@ -201,6 +215,10 @@ class ScenePlugTest( GafferSceneTest.SceneTestCase ) :
 		self.assertEqual( GafferScene.ScenePlug.stringToPath( "//a//b//" ), IECore.InternedStringVectorData( [ "a", "b" ] ) )
 		self.assertEqual( GafferScene.ScenePlug.stringToPath( "/foo/bar/" ), IECore.InternedStringVectorData( [ "foo", "bar" ] ) )
 		self.assertEqual( GafferScene.ScenePlug.stringToPath( "foo/bar/" ), IECore.InternedStringVectorData( [ "foo", "bar" ] ) )
+		self.assertEqual( GafferScene.ScenePlug.stringToPath( "foo/bar/.." ), IECore.InternedStringVectorData( [ "foo" ] ) )
+		self.assertEqual( GafferScene.ScenePlug.stringToPath( "foo/bar/../.." ), IECore.InternedStringVectorData( [] ) )
+		self.assertEqual( GafferScene.ScenePlug.stringToPath( "foo/bar/../../.." ), IECore.InternedStringVectorData( [] ) )
+		self.assertEqual( GafferScene.ScenePlug.stringToPath( "foo/bar/../toto" ), IECore.InternedStringVectorData( [ "foo", "toto" ] ) )
 
 	def testPathToString( self ) :
 

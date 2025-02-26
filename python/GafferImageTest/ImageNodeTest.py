@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import inspect
 import unittest
 import threading
 import imath
@@ -56,7 +56,7 @@ class ImageNodeTest( GafferImageTest.ImageTestCase ) :
 		g["in"].setInput( c["out"] )
 		g["multiply"].setValue( imath.Color3f( 0.4, 0.5, 0.6 ) )
 
-		gradedImage = g["out"].image()
+		gradedImage = GafferImage.ImageAlgo.image( g["out"] )
 
 		# not enough for both images - will cause cache thrashing
 		Gaffer.ValuePlug.setCacheMemoryLimit( 2 * g["out"].channelData( "R", imath.V2i( 0 ) ).memoryUsage() )
@@ -66,15 +66,15 @@ class ImageNodeTest( GafferImageTest.ImageTestCase ) :
 		def grader() :
 
 			try :
-				images.append( g["out"].image() )
-			except Exception, e :
+				images.append( GafferImage.ImageAlgo.image( g["out"], viewName = "default" ) )
+			except Exception as e :
 				exceptions.append( e )
 
 		def processer() :
 
 			try :
 				GafferImageTest.processTiles( g["out"] )
-			except Exception, e :
+			except Exception as e :
 				exceptions.append( e )
 
 		graderThreads = []
@@ -106,15 +106,53 @@ class ImageNodeTest( GafferImageTest.ImageTestCase ) :
 		self.assertNodesConstructWithDefaultValues( GafferImage )
 		self.assertNodesConstructWithDefaultValues( GafferImageTest )
 
+	def testMetadataExpression( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["checker"] = GafferImage.Checkerboard()
+
+		script["metadata"] = GafferImage.ImageMetadata()
+		script["metadata"]["in"].setInput( script["checker"]["out"] )
+		script["metadata"]["metadata"].addChild( Gaffer.NameValuePlug( "test", "testValue", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+
+		script["dot"] = Gaffer.Dot()
+		script["dot"].setup( script["metadata"]["out"] )
+		script["dot"]["in"].setInput( script["metadata"]["out"] )
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			m = parent["metadata"]["out"]["metadata"]
+			m["test"] = m["test"].value + "Modified"
+			parent["dot"]["in"]["metadata"] = m
+			"""
+		) )
+
+		def assertExpectedImage( image ) :
+
+			self.assertImagesEqual( image, script["metadata"]["out"], ignoreMetadata = True )
+			self.assertEqual( image.metadata()["test"], IECore.StringData( "testValueModified" ) )
+
+		assertExpectedImage( script["dot"]["out"] )
+
+		script2 = Gaffer.ScriptNode()
+		script2.execute( script.serialise() )
+
+		print( script2["dot"]["out"]["dataWindow"].source().fullName() )
+
+		assertExpectedImage( script2["dot"]["out"] )
+		self.assertEqual( script2["expression"].getExpression(), script["expression"].getExpression() )
+
 	def setUp( self ) :
 
-		GafferTest.TestCase.setUp( self )
+		GafferImageTest.ImageTestCase.setUp( self )
 
 		self.__previousCacheMemoryLimit = Gaffer.ValuePlug.getCacheMemoryLimit()
 
 	def tearDown( self ) :
 
-		GafferTest.TestCase.tearDown( self )
+		GafferImageTest.ImageTestCase.tearDown( self )
 
 		Gaffer.ValuePlug.setCacheMemoryLimit( self.__previousCacheMemoryLimit )
 

@@ -40,10 +40,7 @@
 
 #include "GafferTest/Assert.h"
 
-#include "Gaffer/Private/IECorePreview/ParallelAlgo.h"
 #include "Gaffer/Private/IECorePreview/TaskMutex.h"
-
-#include "boost/make_unique.hpp"
 
 #include "tbb/enumerable_thread_specific.h"
 #include "tbb/parallel_for.h"
@@ -77,12 +74,12 @@ void testTaskMutex()
 		TaskMutex::ScopedLock lock( mutex, /* write = */ false );
 		gotLock.local() = true;
 
-		GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Read )
+		GAFFERTEST_ASSERT( !lock.isWriter() )
 
 		if( !initialised )
 		{
 			lock.upgradeToWriter();
-			GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Write );
+			GAFFERTEST_ASSERT( lock.isWriter() );
 
 			if( !initialised ) // Check again, because upgrading to writer may lose the lock temporarily.
 			{
@@ -134,17 +131,17 @@ void testTaskMutexWithinIsolate()
 
 	auto getMutexWithinIsolate = [&mutex]() {
 
-		ParallelAlgo::isolate(
+		tbb::this_task_arena::isolate(
 			[&mutex]() {
 				TaskMutex::ScopedLock lock( mutex );
-				GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Write )
+				GAFFERTEST_ASSERT( lock.isWriter() );
 				std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
 			}
 		);
 
 	};
 
-	ParallelAlgo::isolate(
+	tbb::this_task_arena::isolate(
 		[&]() {
 			tbb::parallel_for(
 				tbb::blocked_range<size_t>( 0, 1000000 ),
@@ -178,7 +175,7 @@ void testTaskMutexJoiningOuterTasks()
 
 		TaskMutex::ScopedLock lock( mutex );
 		gotLock.local() = true;
-		GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Write )
+		GAFFERTEST_ASSERT( lock.isWriter() )
 
 		if( !initialised )
 		{
@@ -207,7 +204,7 @@ void testTaskMutexJoiningOuterTasks()
 	std::vector<TaskMutexPtr> independentTasks;
 	for( size_t i = 0; i < tbb::tbb_thread::hardware_concurrency() * 1000; ++i )
 	{
-		independentTasks.push_back( boost::make_unique<TaskMutex>() );
+		independentTasks.push_back( std::make_unique<TaskMutex>() );
 	}
 
 	tbb::parallel_for(
@@ -216,7 +213,7 @@ void testTaskMutexJoiningOuterTasks()
 			for( size_t i = r.begin(); i < r.end(); ++i )
 			{
 				TaskMutex::ScopedLock lock( *independentTasks[i] );
-				GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Write )
+				GAFFERTEST_ASSERT( lock.isWriter() )
 				lock.execute(
 					[&]() {
 						initialise();
@@ -250,54 +247,11 @@ void testTaskMutexHeavyContention( bool acceptWork )
 			for( size_t i = r.begin(); i < r.end(); ++i )
 			{
 				TaskMutex::ScopedLock lock( mutex, /* write = */ false, acceptWork );
-				GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::Read );
+				GAFFERTEST_ASSERT( !lock.isWriter() );
 				GAFFERTEST_ASSERTEQUAL( initialised, true );
 			}
 		}
 	);
-}
-
-void testTaskMutexWorkerRecursion()
-{
-	TaskMutex mutex;
-	tbb::enumerable_thread_specific<int> gotLock;
-
-	std::function<void ( int )> recurse;
-	recurse = [&mutex, &gotLock, &recurse] ( int depth ) {
-
-		TaskMutex::ScopedLock lock;
-		const bool acquired = lock.acquireOr(
-			mutex, TaskMutex::ScopedLock::LockType::WorkerRead,
-			[]( bool workAvailable ) { return true; }
-		);
-
-		GAFFERTEST_ASSERT( acquired );
-		GAFFERTEST_ASSERT( lock.lockType() == TaskMutex::ScopedLock::LockType::WorkerRead );
-
-		gotLock.local() = true;
-
-		if( depth > 4 )
-		{
-			std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
-		}
-		else
-		{
-			tbb::parallel_for(
-				0, 4,
-				[&recurse, depth] ( int i ) {
-					recurse( depth + 1 );
-				}
-			);
-		}
-
-	};
-
-	TaskMutex::ScopedLock lock( mutex );
-	lock.execute(
-		[&recurse] { recurse( 0 ); }
-	);
-
-	GAFFERTEST_ASSERTEQUAL( gotLock.size(), tbb::tbb_thread::hardware_concurrency() );
 }
 
 void testTaskMutexAcquireOr()
@@ -308,7 +262,7 @@ void testTaskMutexAcquireOr()
 	TaskMutex::ScopedLock lock2;
 	bool workAvailable = true;
 	const bool acquired = lock2.acquireOr(
-		mutex, TaskMutex::ScopedLock::LockType::Write,
+		mutex, /* write = */ true,
 		[&workAvailable] ( bool wa ) { workAvailable = wa; return true; }
 	);
 
@@ -424,6 +378,99 @@ void testTaskMutexWorkerExceptions()
 
 }
 
+void testTaskMutexDontSilentlyCancel()
+{
+	struct TestCancelled
+	{
+	};
+
+	std::atomic_bool incorrectlyCancelled( false );
+
+	auto runOrThrow = [&]( bool error ) {
+
+		std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+
+		if( error )
+		{
+			throw TestCancelled();
+		}
+
+		bool completed = false;
+
+		// This lock.execute should simply run the functor, since we're creating a fresh
+		// mutex that can't possibly have any contention.  But the tbb machinery we're
+		// using implicitly does a check if the task group has been cancelled, which
+		// means that if one of the other tasks in the parallel_for has thrown an
+		// exception, the task group may have been cancelled, and this will not actually
+		// execute the functor.  It should, in that case, throw IECore::Cancelled.
+		TaskMutex mutex;
+		TaskMutex::ScopedLock lock( mutex );
+		lock.execute(
+			[&]() {
+				completed = true;
+			}
+		);
+
+		// If we haven't thrown an exception yet, then the function should have run
+		// A cancellation of the parent task shouldn't silently halt the lock.execute
+		if( !completed )
+		{
+			incorrectlyCancelled = true;
+		}
+	};
+
+	try
+	{
+		tbb::parallel_for(
+			0, 1000,
+			[&runOrThrow] ( int i ) {
+				runOrThrow( ( i % 10 ) == 9 );
+			}
+		);
+	}
+	catch( TestCancelled & )
+	{
+	}
+
+	GAFFERTEST_ASSERT( !incorrectlyCancelled.load() );
+}
+
+void testTaskMutexCancellation()
+{
+	TaskMutex mutex;
+
+	auto executeWithLock = [&mutex] () {
+
+		TaskMutex::ScopedLock lock( mutex );
+		lock.execute(
+			[] () { std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) ); }
+		);
+
+	};
+
+	// Launch many tasks that all acquire the same mutex and call `execute()`.
+
+	tbb::task_group_context context;
+	tbb::parallel_for(
+		0, 10000,
+		[&executeWithLock, &context] ( int i ) {
+			executeWithLock();
+			if( i % 10 == 9 )
+			{
+				// Once a few tasks are launched, cancel the execution
+				// of the `parallel_for()`. This will cause TBB to cancel
+				// calls to `execute()` so that they don't run the functor.
+				// This exposed a bug whereby cancellation left the TaskMutex
+				// in an invalid state, triggering a debug assertion in
+				// `execute()`.
+				context.cancel_group_execution();
+			}
+		},
+		context
+	);
+
+}
+
 } // namespace
 
 void GafferTestModule::bindTaskMutexTest()
@@ -432,8 +479,9 @@ void GafferTestModule::bindTaskMutexTest()
 	def( "testTaskMutexWithinIsolate", &testTaskMutexWithinIsolate );
 	def( "testTaskMutexJoiningOuterTasks", &testTaskMutexJoiningOuterTasks );
 	def( "testTaskMutexHeavyContention", &testTaskMutexHeavyContention );
-	def( "testTaskMutexWorkerRecursion", &testTaskMutexWorkerRecursion );
 	def( "testTaskMutexAcquireOr", &testTaskMutexAcquireOr );
 	def( "testTaskMutexExceptions", &testTaskMutexExceptions );
 	def( "testTaskMutexWorkerExceptions", &testTaskMutexWorkerExceptions );
+	def( "testTaskMutexDontSilentlyCancel", &testTaskMutexDontSilentlyCancel );
+	def( "testTaskMutexCancellation", &testTaskMutexCancellation );
 }

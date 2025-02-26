@@ -38,7 +38,8 @@
 #include "Gaffer/TypedPlug.h"
 
 #include "Gaffer/NumericPlug.h"
-#include "Gaffer/TypedPlug.inl"
+#include "Gaffer/StringPlug.h"
+#include "Gaffer/TypedPlugImplementation.h"
 
 namespace Gaffer
 {
@@ -50,7 +51,7 @@ GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::AtomicBox2fPlug, AtomicBox2fPlugTypeId
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::AtomicBox3fPlug, AtomicBox3fPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::AtomicBox2iPlug, AtomicBox2iPlugTypeId )
 
-// specialise BoolPlug to accept connections from NumericPlugs
+// Specialise BoolPlug to accept connections from NumericPlugs and StringPlugs
 
 template<>
 bool BoolPlug::acceptsInput( const Plug *input ) const
@@ -61,9 +62,12 @@ bool BoolPlug::acceptsInput( const Plug *input ) const
 	}
 	if( input )
 	{
-		return input->isInstanceOf( staticTypeId() ) ||
-		       input->isInstanceOf( IntPlug::staticTypeId() ) ||
-		       input->isInstanceOf( FloatPlug::staticTypeId() );
+		return
+			input->isInstanceOf( staticTypeId() ) ||
+			input->isInstanceOf( IntPlug::staticTypeId() ) ||
+			input->isInstanceOf( FloatPlug::staticTypeId() ) ||
+			input->isInstanceOf( StringPlug::staticTypeId() )
+		;
 	}
 	return true;
 }
@@ -81,6 +85,9 @@ void BoolPlug::setFrom( const ValuePlug *other )
 			break;
 		case IntPlugTypeId :
 			setValue( static_cast<const IntPlug *>( other )->getValue() );
+			break;
+		case StringPlugTypeId :
+			setValue( static_cast<const StringPlug *>( other )->getValue().size() );
 			break;
 		default :
 			throw IECore::Exception( "Unsupported plug type" );

@@ -42,14 +42,17 @@ using namespace Gaffer;
 namespace GafferImage
 {
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( MetadataProcessor );
+GAFFER_NODE_DEFINE_TYPE( MetadataProcessor );
 
 MetadataProcessor::MetadataProcessor( const std::string &name )
 	:	ImageProcessor( name )
 {
 	// Direct pass-through for the things we don't ever change.
+	outPlug()->viewNamesPlug()->setInput( inPlug()->viewNamesPlug() );
 	outPlug()->formatPlug()->setInput( inPlug()->formatPlug() );
 	outPlug()->dataWindowPlug()->setInput( inPlug()->dataWindowPlug() );
+	outPlug()->deepPlug()->setInput( inPlug()->deepPlug() );
+	outPlug()->sampleOffsetsPlug()->setInput( inPlug()->sampleOffsetsPlug() );
 	outPlug()->channelNamesPlug()->setInput( inPlug()->channelNamesPlug() );
 	outPlug()->channelDataPlug()->setInput( inPlug()->channelDataPlug() );
 }

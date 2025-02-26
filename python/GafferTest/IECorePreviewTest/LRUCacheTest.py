@@ -106,14 +106,29 @@ class LRUCacheTest( GafferTest.TestCase ) :
 		GafferTest.testLRUCacheContentionForOneItem( "serial" )
 
 	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContentionForOneItemSerialWithCanceller( self ) :
+
+		GafferTest.testLRUCacheContentionForOneItem( "serial", withCanceller = True )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
 	def testContentionForOneItemParallel( self ) :
 
 		GafferTest.testLRUCacheContentionForOneItem( "parallel" )
 
 	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContentionForOneItemParallelWithCanceller( self ) :
+
+		GafferTest.testLRUCacheContentionForOneItem( "parallel", withCanceller = True )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
 	def testContentionForOneItemTaskParallel( self ) :
 
 		GafferTest.testLRUCacheContentionForOneItem( "taskParallel" )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContentionForOneItemTaskParallelWithCanceller( self ) :
+
+		GafferTest.testLRUCacheContentionForOneItem( "taskParallel", withCanceller = True )
 
 	def testRecursionSerial( self ) :
 
@@ -139,14 +154,6 @@ class LRUCacheTest( GafferTest.TestCase ) :
 
 		GafferTest.testLRUCacheRecursion( "taskParallel", numIterations = 100000, numValues = 1000, maxCost = 100 )
 
-	def testRecursionOnOneItemSerial( self ) :
-
-		GafferTest.testLRUCacheRecursionOnOneItem( "serial" )
-
-	def testRecursionOnOneItemTaskParallel( self ) :
-
-		GafferTest.testLRUCacheRecursionOnOneItem( "taskParallel" )
-
 	def testClearFromGetSerial( self ) :
 
 		GafferTest.testLRUCacheClearFromGet( "serial" )
@@ -170,6 +177,56 @@ class LRUCacheTest( GafferTest.TestCase ) :
 	def testExceptionsTaskParallel( self ) :
 
 		GafferTest.testLRUCacheExceptions( "taskParallel" )
+
+	def testCancellationSerial( self ) :
+
+		GafferTest.testLRUCacheCancellation( "serial" )
+
+	def testCancellationParallel( self ) :
+
+		GafferTest.testLRUCacheCancellation( "parallel" )
+
+	def testCancellationTaskParallel( self ) :
+
+		GafferTest.testLRUCacheCancellation( "taskParallel" )
+
+	def testCancellationOfSecondGetParallel( self ) :
+
+		GafferTest.testLRUCacheCancellationOfSecondGet( "parallel" )
+
+	def testCancellationOfSecondGetTaskParallel( self ) :
+
+		GafferTest.testLRUCacheCancellationOfSecondGet( "taskParallel" )
+
+	def testUncacheableItemSerial( self ) :
+
+		GafferTest.testLRUCacheUncacheableItem( "serial" )
+
+	def testUncacheableItemParallel( self ) :
+
+		GafferTest.testLRUCacheUncacheableItem( "parallel" )
+
+	def testUncacheableItemTaskParallel( self ) :
+
+		GafferTest.testLRUCacheUncacheableItem( "taskParallel" )
+
+	def testGetIfCachedSerial( self ) :
+
+		GafferTest.testLRUCacheGetIfCached( "serial" )
+
+	def testGetIfCachedParallel( self ) :
+
+		GafferTest.testLRUCacheGetIfCached( "parallel" )
+
+	def testGetIfCachedTaskParallel( self ) :
+
+		GafferTest.testLRUCacheGetIfCached( "taskParallel" )
+
+	def testSetIfUncached( self ) :
+
+		for policy in [ "serial", "parallel", "taskParallel" ] :
+			with self.subTest( policy = policy ) :
+				GafferTest.testLRUCacheSetIfUncached( policy )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -35,23 +35,12 @@
 #
 ##########################################################################
 
-from _GafferTest import *
+__import__( "Gaffer" )
+
+from ._GafferTest import *
 
 import os
 import unittest
-
-# workaround lack of expectedFailure decorator for
-# python < 2.7.
-try :
-	expectedFailure = unittest.expectedFailure
-except AttributeError :
-	def expectedFailure( f ) :
-		def wrapper( self ) :
-			try :
-				f( self )
-			except :
-				print "Expected failure"
-		return wrapper
 
 ## Determines if the tests are running in a Continuous Integration
 # environment.
@@ -61,7 +50,8 @@ def inCI( platforms = set() ) :
 		# There isn't a specific 'We're on Azure' var (other than some azure specific
 		# vars that are set that would be 'magic words'), so we set our own in our
 		# azure-pipelines.yaml
-		'azure' : 'AZURE'
+		"azure" : "AZURE",
+		"github" : "CI",
 	}
 
 	targets = platforms or platformVars.keys()
@@ -71,97 +61,110 @@ def inCI( platforms = set() ) :
 
 	return False
 
-from TestCase import TestCase
-from TestRunner import TestRunner
-from AddNode import AddNode
-from SignalsTest import SignalsTest
-from GraphComponentTest import GraphComponentTest
-from FrameNode import FrameNode
-from CachingTestNode import CachingTestNode
-from NodeTest import NodeTest
-from PlugTest import PlugTest
-from NumericPlugTest import NumericPlugTest
-from TypedPlugTest import TypedPlugTest
-from ScriptNodeTest import ScriptNodeTest
-from StandardSetTest import StandardSetTest
-from FileSystemPathTest import FileSystemPathTest
-from PathTest import PathTest
-from PathFilterTest import PathFilterTest
-from UndoTest import UndoTest
-from KeywordPlugNode import KeywordPlugNode
-from CompoundNumericPlugTest import CompoundNumericPlugTest
-from CompoundNumericNode import CompoundNumericNode
-from CompoundPlugNode import CompoundPlugNode
-from TypedObjectPlugTest import TypedObjectPlugTest
-from SplinePlugTest import SplinePlugTest
-from AboutTest import AboutTest
-from ChildSetTest import ChildSetTest
-from PythonApplicationTest import PythonApplicationTest
-from ApplicationRootTest import ApplicationRootTest
-from ContextTest import ContextTest
-from CompoundPathFilterTest import CompoundPathFilterTest
-from BadNode import BadNode
-from CapturingSlot import CapturingSlot
-from LazyModuleTest import LazyModuleTest
-from NodeBindingTest import NodeBindingTest
-from DictPathTest import DictPathTest
-from ExpressionTest import ExpressionTest
-from BlockedConnectionTest import BlockedConnectionTest
-from TimeWarpTest import TimeWarpTest
-from TransformPlugTest import TransformPlugTest
-from Transform2DPlugTest import Transform2DPlugTest
-from SequencePathTest import SequencePathTest
-from WeakMethodTest import WeakMethodTest
-from StringInOutNode import StringInOutNode
-from StringPlugTest import StringPlugTest
-from ContextVariablesTest import ContextVariablesTest
-from DeleteContextVariablesTest import DeleteContextVariablesTest
-from ValuePlugTest import ValuePlugTest
-from RandomTest import RandomTest
-from CompoundDataPlugTest import CompoundDataPlugTest
-from DependencyNodeTest import DependencyNodeTest
-from ComputeNodeTest import ComputeNodeTest
-from BoxPlugTest import BoxPlugTest
-from BoxTest import BoxTest
-from OutputRedirectionTest import OutputRedirectionTest
-from RecursiveChildIteratorTest import RecursiveChildIteratorTest
-from FilteredRecursiveChildIteratorTest import FilteredRecursiveChildIteratorTest
-from ReferenceTest import ReferenceTest
-from GraphComponentPathTest import GraphComponentPathTest
-from ArrayPlugNode import ArrayPlugNode
-from ArrayPlugTest import ArrayPlugTest
-from SerialisationTest import SerialisationTest
-from SwitchTest import SwitchTest
-from MetadataTest import MetadataTest
-from NodeAlgoTest import NodeAlgoTest
-from DotTest import DotTest
-from ApplicationTest import ApplicationTest
-from LeafPathFilterTest import LeafPathFilterTest
-from MatchPatternPathFilterTest import MatchPatternPathFilterTest
-from LoopTest import LoopTest
-from SubGraphTest import SubGraphTest
-from FileSequencePathFilterTest import FileSequencePathFilterTest
-from AnimationTest import AnimationTest
-from StatsApplicationTest import StatsApplicationTest
-from DownstreamIteratorTest import DownstreamIteratorTest
-from PerformanceMonitorTest import PerformanceMonitorTest
-from MetadataAlgoTest import MetadataAlgoTest
-from ContextMonitorTest import ContextMonitorTest
-from PlugAlgoTest import PlugAlgoTest
-from BoxInTest import BoxInTest
-from BoxOutTest import BoxOutTest
-from DirtyPropagationScopeTest import DirtyPropagationScopeTest
-from BoxIOTest import BoxIOTest
-from ParallelAlgoTest import ParallelAlgoTest
-from BackgroundTaskTest import BackgroundTaskTest
-from ProcessMessageHandlerTest import ProcessMessageHandlerTest
-from MonitorAlgoTest import MonitorAlgoTest
-from NameValuePlugTest import NameValuePlugTest
-from ExtensionAlgoTest import ExtensionAlgoTest
-from ModuleTest import ModuleTest
-from NumericBookmarkSetTest import NumericBookmarkSetTest
+from .TestCase import TestCase
+from .TestRunner import TestRunner
+from .AddNode import AddNode
+from .SignalsTest import SignalsTest
+from .GraphComponentTest import GraphComponentTest
+from .FrameNode import FrameNode
+from .CachingTestNode import CachingTestNode
+from .NodeTest import NodeTest
+from .PlugTest import PlugTest
+from .NumericPlugTest import NumericPlugTest
+from .TypedPlugTest import TypedPlugTest
+from .ScriptNodeTest import ScriptNodeTest
+from .StandardSetTest import StandardSetTest
+from .FileSystemPathTest import FileSystemPathTest
+from .PathTest import PathTest
+from .PathFilterTest import PathFilterTest
+from .UndoTest import UndoTest
+from .KeywordPlugNode import KeywordPlugNode
+from .CompoundNumericPlugTest import CompoundNumericPlugTest
+from .CompoundNumericNode import CompoundNumericNode
+from .CompoundPlugNode import CompoundPlugNode
+from .TypedObjectPlugTest import TypedObjectPlugTest
+from .SplinePlugTest import SplinePlugTest
+from .AboutTest import AboutTest
+from .ChildSetTest import ChildSetTest
+from .PythonApplicationTest import PythonApplicationTest
+from .ApplicationRootTest import ApplicationRootTest
+from .ContextTest import ContextTest
+from .CompoundPathFilterTest import CompoundPathFilterTest
+from .BadNode import BadNode
+from .CapturingSlot import CapturingSlot
+from .NodeBindingTest import NodeBindingTest
+from .DictPathTest import DictPathTest
+from .ExpressionTest import ExpressionTest
+from .BlockedConnectionTest import BlockedConnectionTest
+from .TimeWarpTest import TimeWarpTest
+from .TransformPlugTest import TransformPlugTest
+from .Transform2DPlugTest import Transform2DPlugTest
+from .SequencePathTest import SequencePathTest
+from .WeakMethodTest import WeakMethodTest
+from .StringInOutNode import StringInOutNode
+from .StringPlugTest import StringPlugTest
+from .ContextVariablesTest import ContextVariablesTest
+from .DeleteContextVariablesTest import DeleteContextVariablesTest
+from .ValuePlugTest import ValuePlugTest
+from .RandomTest import RandomTest
+from .CompoundDataPlugTest import CompoundDataPlugTest
+from .DependencyNodeTest import DependencyNodeTest
+from .ComputeNodeTest import ComputeNodeTest
+from .BoxPlugTest import BoxPlugTest
+from .BoxTest import BoxTest
+from .OutputRedirectionTest import OutputRedirectionTest
+from .RecursiveChildIteratorTest import RecursiveChildIteratorTest
+from .FilteredRecursiveChildIteratorTest import FilteredRecursiveChildIteratorTest
+from .ReferenceTest import ReferenceTest
+from .GraphComponentPathTest import GraphComponentPathTest
+from .ArrayPlugNode import ArrayPlugNode
+from .ArrayPlugTest import ArrayPlugTest
+from .SerialisationTest import SerialisationTest
+from .SwitchTest import SwitchTest
+from .MetadataTest import MetadataTest
+from .NodeAlgoTest import NodeAlgoTest
+from .DotTest import DotTest
+from .ApplicationTest import ApplicationTest
+from .LeafPathFilterTest import LeafPathFilterTest
+from .MatchPatternPathFilterTest import MatchPatternPathFilterTest
+from .LoopTest import LoopTest
+from .SubGraphTest import SubGraphTest
+from .FileSequencePathFilterTest import FileSequencePathFilterTest
+from .AnimationTest import AnimationTest
+from .StatsApplicationTest import StatsApplicationTest
+from .DownstreamIteratorTest import DownstreamIteratorTest
+from .PerformanceMonitorTest import PerformanceMonitorTest
+from .MetadataAlgoTest import MetadataAlgoTest
+from .ContextMonitorTest import ContextMonitorTest
+from .PlugAlgoTest import PlugAlgoTest
+from .BoxInTest import BoxInTest
+from .BoxOutTest import BoxOutTest
+from .DirtyPropagationScopeTest import DirtyPropagationScopeTest
+from .BoxIOTest import BoxIOTest
+from .ParallelAlgoTest import ParallelAlgoTest
+from .BackgroundTaskTest import BackgroundTaskTest
+from .ProcessMessageHandlerTest import ProcessMessageHandlerTest
+from .MonitorAlgoTest import MonitorAlgoTest
+from .NameValuePlugTest import NameValuePlugTest
+from .ExtensionAlgoTest import ExtensionAlgoTest
+from .ModuleTest import ModuleTest
+from .NumericBookmarkSetTest import NumericBookmarkSetTest
+from .NameSwitchTest import NameSwitchTest
+from .SpreadsheetTest import SpreadsheetTest
+from .ShufflePlugTest import ShufflePlugTest
+from .EditScopeTest import EditScopeTest
+from .RandomChoiceTest import RandomChoiceTest
+from .ContextQueryTest import ContextQueryTest
+from .TweakPlugTest import TweakPlugTest
+from .HiddenFilePathFilterTest import HiddenFilePathFilterTest
+from .ContextVariableTweaksTest import ContextVariableTweaksTest
+from .OptionalValuePlugTest import OptionalValuePlugTest
+from .ThreadMonitorTest import ThreadMonitorTest
+from .CollectTest import CollectTest
+from .ProcessTest import ProcessTest
+from .PatternMatchTest import PatternMatchTest
 
-from IECorePreviewTest import *
+from .IECorePreviewTest import *
 
 if __name__ == "__main__":
 	import unittest

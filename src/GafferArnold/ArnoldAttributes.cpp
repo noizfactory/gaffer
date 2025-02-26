@@ -43,7 +43,7 @@ using namespace Imath;
 using namespace Gaffer;
 using namespace GafferArnold;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ArnoldAttributes );
+GAFFER_NODE_DEFINE_TYPE( ArnoldAttributes );
 
 ArnoldAttributes::ArnoldAttributes( const std::string &name )
 	:	GafferScene::Attributes( name )
@@ -62,6 +62,18 @@ ArnoldAttributes::ArnoldAttributes( const std::string &name )
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:visibility:volume", new IECore::BoolData( true ), false, "volumeVisibility" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:visibility:subsurface", new IECore::BoolData( true ), false, "subsurfaceVisibility" ) );
 
+	// Displacement parameters
+
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:disp_autobump", new IECore::BoolData( false ), false, "autoBump" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:camera", new IECore::BoolData( true ), false, "cameraAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:shadow", new IECore::BoolData( false ), false, "shadowAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:diffuse_reflect", new IECore::BoolData( false ), false, "diffuseReflectionAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:specular_reflect", new IECore::BoolData( false ), false, "specularReflectionAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:diffuse_transmit", new IECore::BoolData( false ), false, "diffuseTransmissionAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:specular_transmit", new IECore::BoolData( false ), false, "specularTransmissionAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:volume", new IECore::BoolData( false ), false, "volumeAutoBumpVisibility" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:autobump_visibility:subsurface", new IECore::BoolData( false ), false, "subsurfaceAutoBumpVisibility" ) );
+
 	// Transform parameters
 
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:transform_type", new StringPlug( "value", Plug::In, "rotate_about_center" ), false, "transformType" ) );
@@ -76,18 +88,23 @@ ArnoldAttributes::ArnoldAttributes( const std::string &name )
 
 	// Subdivision parameters
 
-	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_iterations", new IntPlug( "value", Plug::In, 1, 1 ), false, "subdivIterations" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_iterations", new IntPlug( "value", Plug::In, 1, 0 ), false, "subdivIterations" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_adaptive_error", new FloatPlug( "value", Plug::In, 0.0f, 0.0f ), false, "subdivAdaptiveError" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_adaptive_metric", new StringPlug( "value", Plug::In, "auto" ), false, "subdivAdaptiveMetric" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_adaptive_space", new StringPlug( "value", Plug::In, "raster" ), false, "subdivAdaptiveSpace" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_uv_smoothing", new StringPlug( "value", Plug::In, "pin_corners" ), false, "subdivUVSmoothing" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_smooth_derivs", new BoolPlug( "value" ), false, "subdivSmoothDerivs" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdiv_frustum_ignore", new BoolPlug( "value" ), false, "subdivFrustumIgnore" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:polymesh:subdivide_polygons", new BoolPlug( "value" ), false, "subdividePolygons" ) );
 
 	// Curves parameters
 
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:curves:mode", new StringPlug( "value", Plug::In, "ribbon" ), false, "curvesMode" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:curves:min_pixel_width", new FloatPlug( "value", Plug::In, 0.0f, 0.0f ), false, "curvesMinPixelWidth" ) );
+
+	// Points parameters
+
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:points:min_pixel_width", new FloatPlug( "value", Plug::In, 0.0f, 0.0f ), false, "pointsMinPixelWidth" ) );
 
 	// Volume parameters
 
@@ -101,6 +118,8 @@ ArnoldAttributes::ArnoldAttributes( const std::string &name )
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:volume:velocity_scale", new FloatPlug( "value", Plug::In, 1.0f, 0.0f ), false, "velocityScale" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:volume:velocity_fps", new FloatPlug( "value", Plug::In, 24.0f, 0.0f ), false, "velocityFPS" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "ai:volume:velocity_outlier_threshold", new FloatPlug( "value", Plug::In, 0.001f, 0.0f ), false, "velocityOutlierThreshold" ) );
+
+	attributes->addChild( new Gaffer::NameValuePlug( "ai:toon_id", new StringPlug( "value", Plug::In ), false, "toonId" ) );
 
 }
 

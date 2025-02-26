@@ -43,15 +43,18 @@
 #include "Gaffer/Metadata.h"
 #include "Gaffer/ScriptNode.h"
 
+#include "Gaffer/Private/ScopedAssignment.h"
+
 #include "IECore/Exception.h"
 
-#include "boost/bind.hpp"
-#include "boost/format.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/graph/adjacency_list.hpp"
 #include "boost/graph/depth_first_search.hpp"
 #include "boost/unordered_map.hpp"
 
 #include "tbb/enumerable_thread_specific.h"
+
+#include "fmt/format.h"
 
 using namespace boost;
 using namespace Gaffer;
@@ -63,34 +66,9 @@ using namespace Gaffer;
 namespace
 {
 
-/// Assigns a value to something, reassigning the original
-/// value when it goes out of scope.
-template<typename T>
-class ScopedAssignment : boost::noncopyable
-{
-	public :
-
-		ScopedAssignment( T &target, const T &value )
-			:	m_target( target ), m_originalValue( target )
-		{
-			m_target = value;
-		}
-
-		~ScopedAssignment()
-		{
-			m_target = m_originalValue;
-		}
-
-	private :
-
-		T &m_target;
-		T m_originalValue;
-
-};
-
 bool allDescendantInputsAreNull( const Plug *plug )
 {
-	for( RecursivePlugIterator it( plug ); !it.done(); ++it )
+	for( Plug::RecursiveIterator it( plug ); !it.done(); ++it )
 	{
 		if( (*it)->getInput() )
 		{
@@ -119,13 +97,13 @@ Plug::~Plug()
 	setInputInternal( nullptr, false );
 	for( OutputContainer::iterator it=m_outputs.begin(); it!=m_outputs.end(); )
 	{
-	 	// get the next iterator now, as the call to setInputInternal invalidates
+		// get the next iterator now, as the call to setInputInternal invalidates
 		// the current iterator.
 		OutputContainer::iterator next = it; next++;
 		(*it)->setInputInternal( nullptr, true );
 		it = next;
 	}
-	Metadata::clearInstanceMetadata( this );
+	Metadata::instanceDestroyed( this );
 }
 
 bool Plug::acceptsChild( const GraphComponent *potentialChild ) const
@@ -156,21 +134,6 @@ bool Plug::acceptsParent( const GraphComponent *potentialParent ) const
 		return false;
 	}
 	return potentialParent->isInstanceOf( (IECore::TypeId)NodeTypeId ) || potentialParent->isInstanceOf( Plug::staticTypeId() );
-}
-
-Node *Plug::node()
-{
-	return ancestor<Node>();
-}
-
-const Node *Plug::node() const
-{
-	return ancestor<Node>();
-}
-
-Plug::Direction Plug::direction() const
-{
-	return m_direction;
 }
 
 unsigned Plug::getFlags() const
@@ -220,11 +183,6 @@ void Plug::setFlags( unsigned flags, bool enable )
 void Plug::setFlagsInternal( unsigned flags )
 {
 	m_flags = flags;
-
-	if( Node *n = node() )
-	{
-		n->plugFlagsChangedSignal()( this );
-	}
 }
 
 // The implementation of acceptsInputInternal() checks
@@ -245,8 +203,8 @@ class Plug::AcceptsInputCache
 	private :
 
 		struct ThreadData;
-		typedef std::pair<const Plug *, const Plug *> PlugPair;
-		typedef boost::unordered_map<PlugPair, bool> ResultMap;
+		using PlugPair = std::pair<const Plug *, const Plug *>;
+		using ResultMap = boost::unordered_map<PlugPair, bool>;
 
 	public :
 
@@ -360,7 +318,7 @@ bool Plug::acceptsInputInternal( const Plug *input ) const
 	{
 		return false;
 	}
-	for( PlugIterator it1( this ), it2( input ); !it1.done(); ++it1, ++it2 )
+	for( Plug::Iterator it1( this ), it2( input ); !it1.done(); ++it1, ++it2 )
 	{
 		if( !( *it1 )->acceptsInput( it2->get() ) )
 		{
@@ -404,12 +362,10 @@ void Plug::setInput( PlugPtr input, bool setChildInputs, bool updateParentInput 
 
 	if( input && !acceptsInput( input.get() ) )
 	{
-		std::string what = boost::str(
-			boost::format( "Plug \"%s\" rejects input \"%s\"." )
-			% fullName()
-			% input->fullName()
-		);
-		throw IECore::Exception( what );
+		throw IECore::Exception( fmt::format(
+			"Plug \"{}\" rejects input \"{}\".",
+			fullName(), input->fullName()
+		) );
 	}
 
 	// Connect our children first.
@@ -422,14 +378,14 @@ void Plug::setInput( PlugPtr input, bool setChildInputs, bool updateParentInput 
 	{
 		if( !input )
 		{
-			for( PlugIterator it( this ); !it.done(); ++it )
+			for( Plug::Iterator it( this ); !it.done(); ++it )
 			{
 				(*it)->setInput( nullptr, /* setChildInputs = */ true, /* updateParentInput = */ false );
 			}
 		}
 		else
 		{
-			for( PlugIterator it1( this ), it2( input.get() ); !it1.done(); ++it1, ++it2 )
+			for( Plug::Iterator it1( this ), it2( input.get() ); !it1.done(); ++it1, ++it2 )
 			{
 				(*it1)->setInput( *it2, /* setChildInputs = */ true, /* updateParentInput = */ false );
 			}
@@ -554,7 +510,7 @@ void Plug::updateInputFromChildInputs( Plug *checkFirst )
 		return;
 	}
 
-	for( PlugIterator it1( this ), it2( candidateInput ); !it1.done(); ++it1, ++it2 )
+	for( Plug::Iterator it1( this ), it2( candidateInput ); !it1.done(); ++it1, ++it2 )
 	{
 		if( (*it1)->getInput() != it2->get() )
 		{
@@ -573,6 +529,10 @@ void Plug::removeOutputs()
 		Plug *p = *it++;
 		p->setInput( nullptr );
 	}
+	for( auto &child : Range( *this ) )
+	{
+		child->removeOutputs();
+	}
 }
 
 const Plug::OutputContainer &Plug::outputs() const
@@ -583,32 +543,31 @@ const Plug::OutputContainer &Plug::outputs() const
 PlugPtr Plug::createCounterpart( const std::string &name, Direction direction ) const
 {
 	PlugPtr result = new Plug( name, direction, getFlags() );
-	for( PlugIterator it( this ); !it.done(); ++it )
+	for( Plug::Iterator it( this ); !it.done(); ++it )
 	{
 		result->addChild( (*it)->createCounterpart( (*it)->getName(), direction ) );
 	}
 	return result;
 }
 
+void Plug::nameChanged( IECore::InternedString oldName )
+{
+	GraphComponent::nameChanged( oldName );
+	propagateDirtinessAtLeaves( this );
+}
+
 void Plug::parentChanging( Gaffer::GraphComponent *newParent )
 {
-	if( getFlags( Dynamic ) )
+	// When a plug is removed from a node, we need to propagate dirtiness for
+	// it. We must call `DependencyNode::affects()` now, while the plug is still
+	// a child of the node.
+	//
+	// Before calling `parentChanging()`, GraphComponent has scoped a
+	// DirtyPropagationScope so that the emission of `plugDirtiedSignal()` is
+	// deferred until after `parentChanged()`, when the operation is complete.
+	if( node() )
 	{
-		// When a dynamic plug is removed from a node, we
-		// need to propagate dirtiness based on that. We
-		// must call DependencyNode::affects() now, while the
-		// plug is still a child of the node, but we push
-		// scope so that the emission of plugDirtiedSignal()
-		// is deferred until parentChanged() when the operation
-		// is complete. It is essential that exceptions don't
-		// prevent us getting to parentChanged() where we pop
-		// scope, so propateDirtiness() takes care of handling
-		// exceptions thrown by DependencyNode::affects().
-		pushDirtyPropagationScope();
-		if( node() )
-		{
-			propagateDirtinessForParentChange( this );
-		}
+		propagateDirtinessAtLeaves( this );
 	}
 
 	// This method manages the connections between plugs when
@@ -648,7 +607,7 @@ void Plug::parentChanging( Gaffer::GraphComponent *newParent )
 					// We're removing the child precisely so that the parent connection
 					// remains valid, so we can block its updateInputFromChildInputs() call.
 					assert( outputParent->m_skipNextUpdateInputFromChildInputs == false );
-					ScopedAssignment<bool> blocker( outputParent->m_skipNextUpdateInputFromChildInputs, true );
+					Private::ScopedAssignment<bool> blocker( outputParent->m_skipNextUpdateInputFromChildInputs, true );
 					outputParent->removeChild( output );
 				}
 			}
@@ -677,7 +636,7 @@ void Plug::parentChanging( Gaffer::GraphComponent *newParent )
 					// block the call to updateInputFromChildInputs() to keep the parent
 					// connection intact.
 					assert( output->m_skipNextUpdateInputFromChildInputs == false );
-					ScopedAssignment<bool> blocker( output->m_skipNextUpdateInputFromChildInputs, true );
+					Private::ScopedAssignment<bool> blocker( output->m_skipNextUpdateInputFromChildInputs, true );
 					output->addChild( outputChildPlug );
 				}
 				outputChildPlug->setInput( this, /* setChildInputs = */ true, /* updateParentInput = */ false );
@@ -691,29 +650,59 @@ void Plug::parentChanged( Gaffer::GraphComponent *oldParent )
 {
 	GraphComponent::parentChanged( oldParent );
 
-	if( getFlags( Dynamic ) )
+	if( node() )
 	{
-		if( node() )
-		{
-			// If a dynamic plug has been added to a
-			// node, we need to propagate dirtiness.
-			propagateDirtinessForParentChange( this );
-		}
-		// Pop the scope pushed in parentChanging().
-		popDirtyPropagationScope();
+		// If a plug has been added to a node, we need to
+		// propagate dirtiness.
+		propagateDirtinessAtLeaves( this );
 	}
 }
 
-void Plug::propagateDirtinessForParentChange( Plug *plugToDirty )
+void Plug::childrenReordered( const std::vector<size_t> &oldIndices )
+{
+	// Reorder the children of our outputs to match our new order. We disable
+	// undo while we do this, because `childrenReordered()` will be called again
+	// when the original action is undone anyway.
+	UndoScope undoDisabler( ancestor<ScriptNode>(), UndoScope::Disabled );
+	for( auto output : m_outputs )
+	{
+		if( output->children().size() != oldIndices.size() )
+		{
+			IECore::msg(
+				IECore::Msg::Warning, "Plug::childrenReordered",
+				fmt::format( "Not reordering output \"{}\" because its size doesn't match the input", output->fullName() )
+			);
+			continue;
+		}
+		GraphComponent::ChildContainer children; children.reserve( oldIndices.size() );
+		for( auto i : oldIndices )
+		{
+			children.push_back( output->getChild( i ) );
+		}
+		output->reorderChildren( children );
+	}
+
+	// Propagate dirtiness, because some nodes are sensitive
+	// to the ordering of plugs.
+	for( const auto &child : RecursiveRange( *this ) )
+	{
+		if( child->children().empty() )
+		{
+			propagateDirtiness( child.get() );
+		}
+	}
+}
+
+void Plug::propagateDirtinessAtLeaves( Plug *plugToDirty )
 {
 	// When a plug is reparented, we need to take into account
 	// all the descendants it brings with it, so we recurse to
 	// find them, propagating dirtiness at the leaves.
 	if( plugToDirty->children().size() )
 	{
-		for( PlugIterator it( plugToDirty ); !it.done(); ++it )
+		for( Plug::Iterator it( plugToDirty ); !it.done(); ++it )
 		{
-			propagateDirtinessForParentChange( it->get() );
+			propagateDirtinessAtLeaves( it->get() );
 		}
 	}
 	else
@@ -756,6 +745,8 @@ class Plug::DirtyPlugs
 				return;
 			}
 
+			m_flushPending = true;
+
 			if( !insertVertex( plugToDirty ).second )
 			{
 				// Previously inserted, so we'll already
@@ -765,12 +756,15 @@ class Plug::DirtyPlugs
 
 			for( DownstreamIterator it( plugToDirty ); !it.done(); ++it )
 			{
-				InsertedVertex v = insertVertex( &*it );
+				// The `const_casts()` are harmless because we're starting iteration from
+				// a non-const plug. But they are necessary because DownstreamIterator
+				// doesn't currently have a non-const form, and always yields const plugs.
+				InsertedVertex v = insertVertex( const_cast<Plug *>( &*it ) );
 				if( !it->getFlags( Plug::AcceptsDependencyCycles ) )
 				{
 					add_edge(
 						v.first,
-						insertVertex( it.upstream() ).first,
+						insertVertex( const_cast<Plug *>( it.upstream() ) ).first,
 						m_graph
 					);
 				}
@@ -796,8 +790,22 @@ class Plug::DirtyPlugs
 			{
 				if( !m_emitting ) // see comment in emit()
 				{
+					flush();
 					emit();
 				}
+			}
+		}
+
+		void flush()
+		{
+			if( !m_flushPending )
+			{
+				return;
+			}
+			m_flushPending = false;
+			for( const auto &[ plug, vertex ] : m_plugs )
+			{
+				plug->dirty();
 			}
 		}
 
@@ -816,19 +824,19 @@ class Plug::DirtyPlugs
 		// on the graph to give us an appropriate order to emit the dirty
 		// signals in, so that dirtiness is only signalled for an affected plug
 		// after it has been signalled for all upstream dirty plugs.
-		typedef boost::adjacency_list<vecS, vecS, directedS, PlugPtr> Graph;
-		typedef Graph::vertex_descriptor VertexDescriptor;
-		typedef Graph::edge_descriptor EdgeDescriptor;
+		using Graph = boost::adjacency_list<vecS, vecS, directedS, PlugPtr>;
+		using VertexDescriptor = Graph::vertex_descriptor;
+		using EdgeDescriptor = Graph::edge_descriptor;
 
-		typedef std::map<const Plug *, VertexDescriptor> PlugMap;
+		using PlugMap = std::unordered_map<Plug *, VertexDescriptor>;
 
 		// Equivalent to the return type for map::insert - the first
 		// field is the vertex descriptor, and the second field is
 		// false if the vertex was already there, true if it was
 		// inserted.
-		typedef std::pair<VertexDescriptor, bool> InsertedVertex;
+		using InsertedVertex = std::pair<VertexDescriptor, bool>;
 
-		InsertedVertex insertVertex( const Plug *plug )
+		InsertedVertex insertVertex( Plug *plug )
 		{
 			// We need to hold a reference to the plug, because otherwise
 			// it might be deleted between now and emit(). But if there is
@@ -845,11 +853,11 @@ class Plug::DirtyPlugs
 			}
 
 			VertexDescriptor result = add_vertex( m_graph );
-			m_graph[result] = const_cast<Plug *>( plug );
+			m_graph[result] = plug;
 			m_plugs[plug] = result;
 
 			// Insert parent plug.
-			if( const Plug *parent = plug->parent<Plug>() )
+			if( auto parent = plug->parent<Plug>() )
 			{
 				if( parent->refCount() )
 				{
@@ -876,17 +884,19 @@ class Plug::DirtyPlugs
 
 			void back_edge( const EdgeDescriptor &e, const Graph &graph )
 			{
-				throw IECore::Exception( boost::str(
-					boost::format( "Cycle detected between %1% and %2%" ) %
-					graph[boost::target( e, graph )]->fullName() %
-					graph[boost::source( e, graph )]->fullName()
-				) );
+				IECore::msg(
+					IECore::Msg::Error, "Plug dirty propagation",
+					fmt::format(
+						"Cycle detected between {} and {}",
+						graph[boost::target( e, graph )]->fullName(),
+						graph[boost::source( e, graph )]->fullName()
+					)
+				);
 			}
 
 			void finish_vertex( const VertexDescriptor &u, const Graph &graph )
 			{
 				Plug *plug = graph[u].get();
-				plug->dirty();
 				if( Node *node = plug->node() )
 				{
 					node->plugDirtiedSignal()( plug );
@@ -917,7 +927,7 @@ class Plug::DirtyPlugs
 			// secondary propagations during emit(), since they're not
 			// needed, and can cause crashes.
 
-			ScopedAssignment<bool> scopedAssignment( m_emitting, true );
+			Private::ScopedAssignment<bool> scopedAssignment( m_emitting, true );
 
 			try
 			{
@@ -929,12 +939,30 @@ class Plug::DirtyPlugs
 			}
 
 			m_graph.clear();
-			m_plugs.clear();
+			// Using swap instead of `clear()` because libstdc++'s `clear()`
+			// method is linear in the number of buckets, _not_ in `size()` as
+			// required by the standard :
+			//
+			// - https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67922
+			// - https://cplusplus.github.io/LWG/issue2550
+			//
+			// This caused severe performance regressions when making many
+			// small calls to `emit()` after previously growing `m_plugs` to
+			// a large size.
+			//
+			/// \todo Consider `m_plugs.erase( m_plugs.begin(), m_plugs.end() )`
+			/// as an alternative. This appears to be slightly slower for the
+			/// many-small-emits case, but may provide benefits through reduced
+			/// allocation for several large emissions. Also investigate the
+			/// root causes of the many-small-emits cases.
+			PlugMap emptyPlugs;
+			m_plugs.swap( emptyPlugs );
 		}
 
 		Graph m_graph;
 		PlugMap m_plugs;
 		size_t m_scopeCount;
+		bool m_flushPending;
 		bool m_emitting;
 
 };
@@ -953,6 +981,11 @@ void Plug::pushDirtyPropagationScope()
 void Plug::popDirtyPropagationScope()
 {
 	DirtyPlugs::local().popScope();
+}
+
+void Plug::flushDirtyPropagationScope()
+{
+	DirtyPlugs::local().flush();
 }
 
 void Plug::dirty()

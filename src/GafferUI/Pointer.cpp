@@ -38,62 +38,58 @@
 
 #include "IECore/CachedReader.h"
 
+#include "fmt/format.h"
+
 using namespace GafferUI;
+
+namespace
+{
 
 static ConstPointerPtr g_current;
 
-typedef std::map<std::string, ConstPointerPtr> Registry;
+using Registry = std::map<std::string, ConstPointerPtr>;
 static Registry &registry()
 {
 	static Registry r;
 	if( !r.size() )
 	{
 		// register standard pointers
-		r["moveDiagonallyUp"] = new Pointer( "moveDiagonallyUp.png", Imath::V2i( 7 ) );
-		r["moveDiagonallyDown"] = new Pointer( "moveDiagonallyDown.png", Imath::V2i( 7 ) );
-		r["moveHorizontally"] = new Pointer( "moveHorizontally.png", Imath::V2i( 9, 5 ) );
-		r["moveVertically"] = new Pointer( "moveVertically.png", Imath::V2i( 5, 9 ) );
-		r["nodes"] = new Pointer( "nodes.png", Imath::V2i( 11, 8 ) );
-		r["objects"] = new Pointer( "objects.png", Imath::V2i( 18 ) );
-		r["plug"] = new Pointer( "plug.png", Imath::V2i( 9 ) );
-		r["rgba"] = new Pointer( "rgba.png", Imath::V2i( 12, 7 ) );
-		r["values"] = new Pointer( "values.png", Imath::V2i( 19, 14 ) );
-		r["paths"] = new Pointer( "paths.png", Imath::V2i( 8 ) );
+		r["move"] = new Pointer( "move.png", Imath::V2i( 10 ) );
+		r["moveDiagonallyUp"] = new Pointer( "moveDiagonallyUp.png", Imath::V2i( 10 ) );
+		r["moveDiagonallyDown"] = new Pointer( "moveDiagonallyDown.png", Imath::V2i( 10 ) );
+		r["moveHorizontally"] = new Pointer( "moveHorizontally.png", Imath::V2i( 10 ) );
+		r["moveVertically"] = new Pointer( "moveVertically.png", Imath::V2i( 10 ) );
+		r["nodes"] = new Pointer( "nodes.png", Imath::V2i( 10, 5 ) );
+		r["objects"] = new Pointer( "objects.png", Imath::V2i( 53, 14 ) );
+		r["plug"] = new Pointer( "plug.png", Imath::V2i( 8, 7 ) );
+		r["rgba"] = new Pointer( "rgba.png", Imath::V2i( 11, 5 ) );
+		r["values"] = new Pointer( "values.png", Imath::V2i( 18, 11 ) );
+		r["paths"] = new Pointer( "paths.png", Imath::V2i( 7, 6 ) );
 		r["contextMenu"] = new Pointer( "pointerContextMenu.png", Imath::V2i( 1 ) );
-		r["tab"] = new Pointer( "pointerTab.png", Imath::V2i( 12, 15 ) );
-		r["detachedPanel"] = new Pointer( "pointerDetachedPanel.png", Imath::V2i( 12, 15 ) );
+		r["tab"] = new Pointer( "pointerTab.png", Imath::V2i( 12, 13 ) );
+		r["detachedPanel"] = new Pointer( "pointerDetachedPanel.png", Imath::V2i( 12, 13 ) );
+		r["target"] = new Pointer( "pointerTarget.png", Imath::V2i( 14 ) );
+		r["crossHair"] = new Pointer( "pointerCrossHair.png", Imath::V2i( 14 ) );
+		r["add"] = new Pointer( "pointerAdd.png", Imath::V2i( 18, 11 ) );
+		r["remove"] = new Pointer( "pointerRemove.png", Imath::V2i( 18, 11 ) );
+		r["rotate"] = new Pointer( "pointerRotate.png", Imath::V2i( 10 ) );
+		r["pivot"] = new Pointer( "pointerPivot.png", Imath::V2i( 13, 0 ) );
+		r["cut"] = new Pointer( "pointerCut.png", Imath::V2i( 11, 7 ) );
+		r["notEditable"] = new Pointer( "pointerNotEditable.png", Imath::V2i( 10 ) );
 	}
 	return r;
 }
 
-Pointer::Pointer( const IECoreImage::ImagePrimitive *image, const Imath::V2i &hotspot )
-	:	m_image( image->copy() ), m_hotspot( hotspot )
-{
-}
+} // namespace
 
 Pointer::Pointer( const std::string &fileName, const Imath::V2i &hotspot )
-	:	m_image( nullptr ), m_hotspot( hotspot )
+	:	m_fileName( fileName ), m_hotspot( hotspot )
 {
-	static IECore::CachedReaderPtr g_reader;
-	if( !g_reader )
-	{
-		const char *sp = getenv( "GAFFERUI_IMAGE_PATHS" );
-		sp = sp ? sp : "";
-		g_reader = new IECore::CachedReader( IECore::SearchPath( sp ) );
-	}
-
-	m_image = IECore::runTimeCast<const IECoreImage::ImagePrimitive>( g_reader->read( fileName ) );
-	if( !m_image )
-	{
-		throw IECore::Exception(
-			boost::str( boost::format( "File \"%s\" does not contain an image." ) % fileName )
-		);
-	}
 }
 
-const IECoreImage::ImagePrimitive *Pointer::image() const
+const std::string &Pointer::fileName() const
 {
-	return m_image.get();
+	return m_fileName;
 }
 
 const Imath::V2i &Pointer::hotspot() const
@@ -107,9 +103,10 @@ void Pointer::setCurrent( ConstPointerPtr pointer )
 	{
 		return;
 	}
-	if( pointer && g_current &&
-	    pointer->image()->isEqualTo( g_current->image() ) &&
-	    pointer->hotspot() == g_current->hotspot()
+	if(
+		pointer && g_current &&
+		pointer->fileName() ==  g_current->fileName() &&
+		pointer->hotspot() == g_current->hotspot()
 	)
 	{
 		return;
@@ -131,7 +128,7 @@ void Pointer::setCurrent( const std::string &name )
 	Registry::const_iterator it = r.find( name );
 	if( it == r.end() )
 	{
-		throw IECore::Exception( boost::str( boost::format( "Pointer \"%s\" does not exist" ) % name ) );
+		throw IECore::Exception( fmt::format( "Pointer \"{}\" does not exist", name ) );
 	}
 
 	setCurrent( it->second );
@@ -149,6 +146,6 @@ void Pointer::registerPointer( const std::string &name, ConstPointerPtr pointer 
 
 Pointer::ChangedSignal &Pointer::changedSignal()
 {
-	static ChangedSignal s;
-	return s;
+	static ChangedSignal *s = new ChangedSignal;
+	return *s;
 }

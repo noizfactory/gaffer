@@ -38,6 +38,7 @@
 import glob
 import os
 import sys
+import warnings
 
 import IECore
 import Gaffer
@@ -92,9 +93,23 @@ class test( Gaffer.Application ) :
 					defaultValue = 1,
 				),
 
+				## \todo Rename to `categories` (breaking change).
+				IECore.StringParameter(
+					name = "category",
+					description = "Only runs tests matching certain categories. Accepts a space-separated list of categories, optionally containing wildcards. "
+						"Use `-showCategories` to see a list of available categories. Use the `TestRunner.Categories` decorator to assign categories.",
+					defaultValue = "*",
+				),
+
+				IECore.StringParameter(
+					name = "excludedCategories",
+					description = "Excludes tests matching certain categories. Accepts a space-separated list of categories, optionally containing wildcards.",
+					defaultValue = "",
+				),
+
 				IECore.BoolParameter(
-					name = "performanceOnly",
-					description = "Skips tests that don't compute performance metrics.",
+					name = "showCategories",
+					description = "Prints a list of available test categories to `stdout`.",
 					defaultValue = False,
 				),
 
@@ -113,6 +128,12 @@ class test( Gaffer.Application ) :
 					defaultValue = "",
 					allowEmptyString = True,
 					extensions = "json",
+				),
+
+				IECore.BoolParameter(
+					name = "stopOnFailure",
+					description = "Stops on the first failure, instead of running the remaining tests.",
+					defaultValue = False,
 				)
 			]
 
@@ -128,18 +149,26 @@ class test( Gaffer.Application ) :
 
 		import unittest
 
-		testSuite = unittest.TestSuite()
-		for name in args["testCases"] :
-			testCase = unittest.defaultTestLoader.loadTestsFromName( name )
-			testSuite.addTest( testCase )
-
-		if args["performanceOnly"].value :
-			GafferTest.TestRunner.filterPerformanceTests( testSuite )
-
 		for i in range( 0, args["repeat"].value ) :
 
+			testSuite = unittest.TestSuite()
+			for name in args["testCases"] :
+				testCase = unittest.defaultTestLoader.loadTestsFromName( name )
+				testSuite.addTest( testCase )
+
+			if args["showCategories"].value :
+				print( " ".join( sorted( GafferTest.TestRunner.categories( testSuite ) ) ) )
+				return 0
+
+			GafferTest.TestRunner.filterCategories( testSuite, args["category"].value, args["excludedCategories"].value )
+
 			testRunner = GafferTest.TestRunner( previousResultsFile = args["previousOutputFile"].value )
-			testResult = testRunner.run( testSuite )
+			if args["stopOnFailure"].value :
+				testRunner.failfast = True
+
+			with warnings.catch_warnings() :
+				warnings.simplefilter( "error", DeprecationWarning )
+				testResult = testRunner.run( testSuite )
 
 			if args["outputFile"].value :
 				testResult.save( args["outputFile"].value )
@@ -154,7 +183,8 @@ class test( Gaffer.Application ) :
 
 		result = set()
 		for path in sys.path :
-			for m in glob.glob( os.path.join( path, "Gaffer*Test" ) ) :
+			modules = glob.glob( os.path.join( path, "Gaffer*Test" ) ) + glob.glob( os.path.join( path, "IECore*Test" ) )
+			for m in modules :
 				result.add( os.path.basename( m ) )
 
 		return sorted( result )

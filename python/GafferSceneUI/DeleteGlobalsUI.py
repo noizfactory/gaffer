@@ -107,7 +107,7 @@ def __namesPopupMenu( menuDefinition, plugValueWidget ) :
 	if plug != node["names"] :
 		return
 
-	with plugValueWidget.getContext() :
+	with plugValueWidget.context() :
 		globals = node["in"]["globals"].getValue()
 		currentNames = set( node["names"].getValue().split() )
 
@@ -125,9 +125,9 @@ def __namesPopupMenu( menuDefinition, plugValueWidget ) :
 			menuPrefix + nameWithoutPrefix,
 			{
 				"command" : functools.partial( __toggleName, plug, nameWithoutPrefix ),
-				"active" : plug.settable() and not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ),
+				"active" : plug.settable() and not Gaffer.MetadataAlgo.readOnly( plug ),
 				"checkBox" : nameWithoutPrefix in currentNames,
 			}
 		)
 
-__namesPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __namesPopupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __namesPopupMenu )

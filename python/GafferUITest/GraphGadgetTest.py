@@ -38,6 +38,8 @@
 import unittest
 import threading
 import imath
+import inspect
+import time
 
 import IECore
 
@@ -65,11 +67,11 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		n = GafferTest.AddNode()
 		s["add1"] = n
 
-		self.failUnless( g.nodeGadget( n ) is not None )
+		self.assertIsNotNone( g.nodeGadget( n ) )
 
 		s.deleteNodes( filter = Gaffer.StandardSet( [ n ] ) )
 
-		self.failUnless( g.nodeGadget( n ) is None )
+		self.assertIsNone( g.nodeGadget( n ) )
 
 	def testRemovedNodesDontHaveConnections( self ) :
 
@@ -85,7 +87,7 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		s.deleteNodes( filter = Gaffer.StandardSet( [ s["add1"] ] ) )
 
-		self.failIf( g.connectionGadget( n["op1"] ) )
+		self.assertIsNone( g.connectionGadget( n["op1"] ) )
 
 	def testCreateWithFilter( self ) :
 
@@ -98,8 +100,8 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 	def testEditFilter( self ) :
 
@@ -112,28 +114,28 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.remove( script["add1"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.remove( script["add2"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.add( script["add1"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.add( script["add2"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 	def testUnhidingConnectedDstNodes( self ) :
 
@@ -147,15 +149,15 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( [ script["add1"] ] )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
-		self.failIf( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 		nodeFilter.add( script["add2"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
-		self.failUnless( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 	def testCreatingWithHiddenSrcNodes( self ) :
 
@@ -170,13 +172,13 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
+		self.assertIsNotNone( c )
 
-		self.failUnless( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
+		self.assertTrue( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
 		self.assertEqual( c.srcNodule(), None )
 
 	def testHidingConnectedDstNodes( self ) :
@@ -191,15 +193,15 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( script.children() )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
-		self.failUnless( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 		nodeFilter.remove( script["add2"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
-		self.failIf( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 	def testHidingConnectedSrcNodes( self ) :
 
@@ -214,23 +216,23 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
+		self.assertIsNotNone( c )
 
-		self.failUnless( c.srcNodule().plug().isSame( script["add1"]["sum"] ) )
-		self.failUnless( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
+		self.assertTrue( c.srcNodule().plug().isSame( script["add1"]["sum"] ) )
+		self.assertTrue( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
 
 		nodeFilter.remove( script["add1"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule() is None )
-		self.failUnless( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
+		self.assertIsNotNone( c )
+		self.assertIsNone( c.srcNodule() )
+		self.assertTrue( c.dstNodule().plug().isSame( script["add2"]["op1"] ) )
 
 	def testConnectingInvisibleDstNodes( self ) :
 
@@ -242,14 +244,14 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( [ script["add1"] ] )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		script["add2"]["op1"].setInput( script["add1"]["sum"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
-		self.failIf( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 	def testConnectingHiddenDstNodes( self ) :
 
@@ -261,19 +263,19 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( script.children() )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.remove( script["add2"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		script["add2"]["op1"].setInput( script["add1"]["sum"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
-		self.failIf( g.connectionGadget( script["add2"]["op1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.connectionGadget( script["add2"]["op1"] ) )
 
 	def testConnectingHiddenSrcNodes( self ) :
 
@@ -285,17 +287,17 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( [ script["add2"] ] )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		script["add2"]["op1"].setInput( script["add1"]["sum"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule() is None )
+		self.assertIsNotNone( c )
+		self.assertIsNone( c.srcNodule() )
 
 	def testConnectingHiddenSrcNodesAndReshowing( self ) :
 
@@ -307,26 +309,26 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( [ script["add2"] ] )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		script["add2"]["op1"].setInput( script["add1"]["sum"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule() is None )
+		self.assertIsNotNone( c )
+		self.assertIsNone( c.srcNodule() )
 
 		nodeFilter.add( script["add1"] )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		c = g.connectionGadget( script["add2"]["op1"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule().plug().isSame( script["add1"]["sum"] ) )
+		self.assertIsNotNone( c )
+		self.assertTrue( c.srcNodule().plug().isSame( script["add1"]["sum"] ) )
 
 	def testChangingFilter( self ) :
 
@@ -338,14 +340,14 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet( [ script["add1"] ] )
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failUnless( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter2 = Gaffer.StandardSet( [ script["add2"] ] )
 		g.setFilter( nodeFilter2 )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 	def testChangingFilterAndEditingOriginal( self ) :
 
@@ -357,19 +359,19 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		nodeFilter = Gaffer.StandardSet()
 		g = GafferUI.GraphGadget( script, nodeFilter )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failIf( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter2 = Gaffer.StandardSet( [ script["add2"] ] )
 		g.setFilter( nodeFilter2 )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 		nodeFilter.add( script["add1"] )
 
-		self.failIf( g.nodeGadget( script["add1"] ) )
-		self.failUnless( g.nodeGadget( script["add2"] ) )
+		self.assertIsNone( g.nodeGadget( script["add1"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["add2"] ) )
 
 	def testConnectionsForNestedPlugs( self ) :
 
@@ -389,42 +391,42 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		g = GafferUI.GraphGadget( script, s )
 
 		c = g.connectionGadget( script["n"]["c"]["i"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
-		self.failUnless( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
+		self.assertIsNotNone( c )
+		self.assertTrue( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
+		self.assertTrue( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
 
 		s.remove( script["n2"] )
 
-		self.failUnless( g.nodeGadget( script["n2"] ) is None )
+		self.assertIsNone( g.nodeGadget( script["n2"] ) )
 
 		c = g.connectionGadget( script["n"]["c"]["i"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule() is None )
-		self.failUnless( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
+		self.assertIsNotNone( c )
+		self.assertIsNone( c.srcNodule() )
+		self.assertTrue( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
 
 		s.add( script["n2"] )
 
-		self.failUnless( g.nodeGadget( script["n2"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["n2"] ) )
 
 		c = g.connectionGadget( script["n"]["c"]["i"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
-		self.failUnless( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
+		self.assertIsNotNone( c )
+		self.assertTrue( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
+		self.assertTrue( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
 
 		s.remove( script["n"] )
 
-		self.failUnless( g.nodeGadget( script["n"] ) is None )
+		self.assertIsNone( g.nodeGadget( script["n"] ) )
 
-		self.failUnless( g.connectionGadget( script["n"]["c"]["i"] ) is None )
+		self.assertIsNone( g.connectionGadget( script["n"]["c"]["i"] ) )
 
 		s.add( script["n"] )
 
-		self.failUnless( g.nodeGadget( script["n"] ) )
+		self.assertIsNotNone( g.nodeGadget( script["n"] ) )
 
 		c = g.connectionGadget( script["n"]["c"]["i"] )
-		self.failUnless( c )
-		self.failUnless( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
-		self.failUnless( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
+		self.assertIsNotNone( c )
+		self.assertTrue( c.srcNodule().plug().isSame( script["n2"]["c"]["o"] ) )
+		self.assertTrue( c.dstNodule().plug().isSame( script["n"]["c"]["i"] ) )
 
 	def testRemovePlugWithInputConnection( self ) :
 
@@ -440,18 +442,18 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script )
 
-		self.failUnless( g.connectionGadget( script["n2"]["i"] ) is not None )
+		self.assertIsNotNone( g.connectionGadget( script["n2"]["i"] ) )
 
 		with Gaffer.UndoScope( script ) :
 
 			removedPlug = script["n2"]["i"]
 			del script["n2"]["i"]
 
-		self.failUnless( g.connectionGadget( removedPlug ) is None )
+		self.assertIsNone( g.connectionGadget( removedPlug ) )
 
 		script.undo()
 
-		self.failUnless( g.connectionGadget( script["n2"]["i"] ) is not None )
+		self.assertIsNotNone( g.connectionGadget( script["n2"]["i"] ) )
 
 	def testRemovePlugWithOutputConnection( self ) :
 
@@ -467,17 +469,17 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.GraphGadget( script )
 
-		self.failUnless( g.connectionGadget( script["n2"]["i"] ) is not None )
+		self.assertIsNotNone( g.connectionGadget( script["n2"]["i"] ) )
 
 		with Gaffer.UndoScope( script ) :
 
 			del script["n1"]["o"]
 
-		self.failUnless( g.connectionGadget( script["n2"]["i"] ) is None )
+		self.assertIsNone( g.connectionGadget( script["n2"]["i"] ) )
 
 		script.undo()
 
-		self.failUnless( g.connectionGadget( script["n2"]["i"] ) is not None )
+		self.assertIsNotNone( g.connectionGadget( script["n2"]["i"] ) )
 
 	def testConnectionBound( self ) :
 
@@ -503,9 +505,9 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 			gb.setMax( gb.max() + imath.V3f( 10 ) )
 
 			b = c.bound()
-			self.failIf( b.isEmpty() )
+			self.assertFalse( b.isEmpty() )
 
-			self.failUnless( IECore.BoxAlgo.contains( gb, b ) )
+			self.assertTrue( IECore.BoxAlgo.contains( gb, b ) )
 
 	def testNoFilter( self ) :
 
@@ -564,12 +566,12 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		previousRoots = []
 		def f( gg, previousRoot ) :
 
-			self.failUnless( gg.isSame( g ) )
+			self.assertTrue( gg.isSame( g ) )
 			roots.append( gg.getRoot() )
 			previousRoots.append( previousRoot )
 
 		g = GafferUI.GraphGadget( s )
-		c = g.rootChangedSignal().connect( f )
+		g.rootChangedSignal().connect( f )
 
 		self.assertEqual( len( roots ), 0 )
 		self.assertEqual( len( previousRoots ), 0 )
@@ -1392,6 +1394,61 @@ class GraphGadgetTest( GafferUITest.TestCase ) :
 		self.assertEqual( len( c ), 1 )
 		self.assertEqual( c[0].dstNodule(), g.nodeGadget( s["n2"] ).nodule( s["n2"]["c"]["r"] ) )
 		self.assertIsNone( c[0].srcNodule() )
+
+	def testChangeNodeGadgetForUnviewedNode( self ) :
+
+		s = Gaffer.ScriptNode()
+		s["b"] = Gaffer.Box()
+		s["b"]["n"] = Gaffer.Node()
+
+		g = GafferUI.GraphGadget( s )
+		self.assertIsNotNone( g.nodeGadget( s["b"] ) )
+		self.assertIsNone( g.nodeGadget( s["b"]["n"] ) )
+
+		Gaffer.Metadata.registerValue( s["b"]["n"], "nodeGadget:type", "GafferUI::AuxiliaryNodeGadget" )
+		self.assertIsNone( g.nodeGadget( s["b"]["n"] ) )
+
+	def assertHighlighting( self, graphGadget, expectedState ) :
+
+		# Highlighting is performed as a background task, so we have
+		# to wait for it to finish.
+		contextTracker = GafferUI.ContextTracker.acquireForFocus( graphGadget.getRoot().scriptNode() )
+		if contextTracker.updatePending() :
+			with GafferTest.ParallelAlgoTest.UIThreadCallHandler() as uiCallHandler :
+				self.waitForIdle()
+				uiCallHandler.assertCalled()
+
+		actualState = {
+			k : not graphGadget.nodeGadget( graphGadget.getRoot()[k] ).getContents().getDimmed()
+			for k in expectedState.keys()
+		}
+		self.assertEqual( actualState, expectedState )
+
+	def testDirtyTrackingForInitialFocusNode( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["add1"] = GafferTest.AddNode()
+		script["add2"] = GafferTest.AddNode()
+
+		script["switch"] = Gaffer.Switch()
+		script["switch"].setup( script["add1"]["op1"] )
+		script["switch"]["in"][0].setInput( script["add1"]["sum"] )
+		script["switch"]["in"][1].setInput( script["add2"]["sum"] )
+
+		script.setFocus( script["switch"] )
+
+		graphGadget = GafferUI.GraphGadget( script )
+
+		# Initially we expect the left branch of the switch to be highlighted.
+
+		self.assertHighlighting( graphGadget, { "switch" : True, "add1" : True, "add2" : False } )
+
+		# If we switch to the right branch, we expect the highlighting to
+		# follow suit.
+
+		script["switch"]["index"].setValue( 1 )
+		self.assertHighlighting( graphGadget, { "switch" : True, "add1" : False, "add2" : True } )
 
 if __name__ == "__main__":
 	unittest.main()

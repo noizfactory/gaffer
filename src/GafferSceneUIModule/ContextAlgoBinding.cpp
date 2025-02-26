@@ -59,6 +59,12 @@ void setExpandedPathsWrapper( Context &context, const IECore::PathMatcher &paths
 	setExpandedPaths( &context, paths );
 }
 
+void setVisibleSetWrapper( Context &context, const GafferScene::VisibleSet &visibleSet )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	setVisibleSet( &context, visibleSet );
+}
+
 void expandWrapper( Context &context, const IECore::PathMatcher &paths, bool expandAncestors )
 {
 	IECorePython::ScopedGILRelease gilRelease;
@@ -113,11 +119,14 @@ void GafferSceneUIModule::bindContextAlgo()
 	def( "setExpandedPaths", &setExpandedPathsWrapper );
 	def( "getExpandedPaths", &getExpandedPaths );
 	def( "affectsExpandedPaths", &affectsExpandedPaths );
+	def( "setVisibleSet", &setVisibleSetWrapper );
+	def( "getVisibleSet", &getVisibleSet );
+	def( "affectsVisibleSet", &affectsVisibleSet );
 	def( "setLastSelectedPath", &setLastSelectedPathWrapper );
 	def( "getLastSelectedPath", &getLastSelectedPathWrapper );
 	def( "affectsLastSelectedPath", &affectsLastSelectedPath );
 	def( "expand", &expandWrapper, ( arg( "expandAncestors" ) = true ) );
-	def( "expandDescendants", &expandDescendantsWrapper, ( arg( "context" ), arg( "paths" ), arg( "scene" ), arg( "depth" ) = Imath::limits<int>::max() ) );
+	def( "expandDescendants", &expandDescendantsWrapper, ( arg( "context" ), arg( "paths" ), arg( "scene" ), arg( "depth" ) = std::numeric_limits<int>::max() ) );
 	def( "clearExpansion", &clearExpansionWrapper );
 	def( "setSelectedPaths", &setSelectedPathsWrapper );
 	def( "getSelectedPaths", &getSelectedPaths );

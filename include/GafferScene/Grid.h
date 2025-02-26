@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_GRID_H
-#define GAFFERSCENE_GRID_H
+#pragma once
 
 #include "GafferScene/SceneNode.h"
 
@@ -56,9 +55,9 @@ class GAFFERSCENE_API Grid : public SceneNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Grid, GridTypeId, SceneNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Grid, GridTypeId, SceneNode );
 
-		Grid( const std::string &name=defaultName<Grid>() );
+		explicit Grid( const std::string &name=defaultName<Grid>() );
 		~Grid() override;
 
 		Gaffer::StringPlug *namePlug();
@@ -122,5 +121,3 @@ class GAFFERSCENE_API Grid : public SceneNode
 IE_CORE_DECLAREPTR( Grid );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_GRID_H

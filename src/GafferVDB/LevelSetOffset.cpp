@@ -36,12 +36,16 @@
 
 #include "GafferVDB/LevelSetOffset.h"
 
+#include "GafferVDB/Interrupter.h"
+
 #include "IECoreVDB/VDBObject.h"
 
 #include "Gaffer/StringPlug.h"
 
 #include "openvdb/openvdb.h"
 #include "openvdb/tools/LevelSetFilter.h"
+
+#include "fmt/format.h"
 
 using namespace std;
 using namespace Imath;
@@ -50,12 +54,12 @@ using namespace IECoreVDB;
 using namespace Gaffer;
 using namespace GafferVDB;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( LevelSetOffset );
+GAFFER_NODE_DEFINE_TYPE( LevelSetOffset );
 
 size_t LevelSetOffset::g_firstPlugIndex = 0;
 
 LevelSetOffset::LevelSetOffset( const std::string &name )
-	:	SceneElementProcessor( name, IECore::PathMatcher::NoMatch )
+	:	Deformer( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
@@ -87,33 +91,26 @@ const Gaffer::FloatPlug *LevelSetOffset::offsetPlug() const
 	return  getChild<FloatPlug>( g_firstPlugIndex + 1 );
 }
 
-void LevelSetOffset::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+bool LevelSetOffset::affectsProcessedObject( const Gaffer::Plug *input ) const
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if( input == gridPlug() || input == offsetPlug() )
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-		outputs.push_back( outPlug()->boundPlug() );
-	}
-}
-
-bool LevelSetOffset::processesObject() const
-{
-	return true;
+	return
+		Deformer::affectsProcessedObject( input ) ||
+		input == gridPlug() ||
+		input == offsetPlug()
+	;
 }
 
 void LevelSetOffset::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	SceneElementProcessor::hashProcessedObject( path, context, h );
+	Deformer::hashProcessedObject( path, context, h );
 
 	gridPlug()->hash( h );
 	offsetPlug()->hash( h );
 }
 
-IECore::ConstObjectPtr LevelSetOffset::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr LevelSetOffset::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
-	const VDBObject *vdbObject = runTimeCast<const VDBObject>(inputObject.get());
+	const VDBObject *vdbObject = runTimeCast<const VDBObject>( inputObject );
 	if( !vdbObject )
 	{
 		return inputObject;
@@ -129,25 +126,30 @@ IECore::ConstObjectPtr LevelSetOffset::computeProcessedObject( const ScenePath &
 	}
 
 	openvdb::GridBase::Ptr newGrid;
+	Interrupter interrupter( context->canceller() );
 
 	if ( openvdb::FloatGrid::ConstPtr floatGrid = openvdb::GridBase::constGrid<openvdb::FloatGrid>( gridBase ) )
 	{
 		openvdb::FloatGrid::Ptr newFloatGrid = openvdb::GridBase::grid<openvdb::FloatGrid> ( floatGrid->deepCopyGrid() );
 		newGrid = newFloatGrid;
-		openvdb::tools::LevelSetFilter <openvdb::FloatGrid> filter( *newFloatGrid );
+		openvdb::tools::LevelSetFilter<openvdb::FloatGrid, openvdb::FloatGrid, Interrupter> filter( *newFloatGrid, &interrupter );
 		filter.offset( offsetPlug()->getValue() );
 	}
 	else if ( openvdb::DoubleGrid::ConstPtr doubleGrid = openvdb::GridBase::constGrid<openvdb::DoubleGrid>( newGrid ) )
 	{
 		openvdb::DoubleGrid::Ptr newDoubleGrid = openvdb::GridBase::grid<openvdb::DoubleGrid>( doubleGrid->deepCopyGrid() );
 		newGrid = newDoubleGrid;
-		openvdb::tools::LevelSetFilter <openvdb::DoubleGrid> filter( *newDoubleGrid );
+		openvdb::tools::LevelSetFilter<openvdb::DoubleGrid, openvdb::DoubleGrid, Interrupter> filter( *newDoubleGrid, &interrupter );
 		filter.offset( offsetPlug()->getValue() );
 	}
 	else
 	{
-		throw IECore::Exception( boost::str( boost::format( "Unable to Offset LevelSet grid: '%1%' with type: %2% " ) % gridName % newGrid->type()) );
+		throw IECore::Exception( fmt::format( "Unable to Offset LevelSet grid: '{}' with type: {}", gridName, newGrid->type() ) );
 	}
+
+	// If the interrupter has stopped the VDB operation, throw
+	// so that we don't return a partial result.
+	Canceller::check( context->canceller() );
 
 	VDBObjectPtr newVDBObject = vdbObject->copy();
 
@@ -156,23 +158,31 @@ IECore::ConstObjectPtr LevelSetOffset::computeProcessedObject( const ScenePath &
 	return newVDBObject;
 }
 
-
-bool LevelSetOffset::processesBound() const
+Gaffer::ValuePlug::CachePolicy LevelSetOffset::processedObjectComputeCachePolicy() const
 {
-	return true;
+	return ValuePlug::CachePolicy::TaskCollaboration;
 }
 
-void LevelSetOffset::hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+bool LevelSetOffset::affectsProcessedObjectBound( const Gaffer::Plug *input ) const
 {
-	SceneElementProcessor::hashProcessedBound( path, context, h );
+	return
+		input == inPlug()->boundPlug() ||
+		input == offsetPlug()
+	;
+}
 
-	gridPlug()->hash( h );
+void LevelSetOffset::hashProcessedObjectBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	inPlug()->boundPlug()->hash( h );
 	offsetPlug()->hash( h );
 }
 
-Imath::Box3f LevelSetOffset::computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const
+Imath::Box3f LevelSetOffset::computeProcessedObjectBound( const ScenePath &path, const Gaffer::Context *context ) const
 {
-	Imath::Box3f newBound = inputBound;
+	/// \todo `in.bound` includes the child bounds. Ideally we
+	/// would have a separate `in.objectBound` with just the bounds
+	/// of the input object.
+	Imath::Box3f newBound = inPlug()->boundPlug()->getValue();
 	float offset = -offsetPlug()->getValue();
 
 	newBound.min -= Imath::V3f(offset, offset, offset);

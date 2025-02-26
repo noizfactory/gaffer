@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_EXTERNALPROCEDURAL_H
-#define GAFFERSCENE_EXTERNALPROCEDURAL_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -49,9 +48,9 @@ class GAFFERSCENE_API ExternalProcedural : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ExternalProcedural, ExternalProceduralTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ExternalProcedural, ExternalProceduralTypeId, ObjectSource );
 
-		ExternalProcedural( const std::string &name=defaultName<ExternalProcedural>() );
+		explicit ExternalProcedural( const std::string &name=defaultName<ExternalProcedural>() );
 		~ExternalProcedural() override;
 
 		Gaffer::StringPlug *fileNamePlug();
@@ -79,5 +78,3 @@ class GAFFERSCENE_API ExternalProcedural : public ObjectSource
 IE_CORE_DECLAREPTR( ExternalProcedural )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_EXTERNALPROCEDURAL_H

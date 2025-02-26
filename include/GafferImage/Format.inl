@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_FORMAT_INL
-#define GAFFERIMAGE_FORMAT_INL
+#pragma once
 
 #include "GafferImage/BufferAlgo.h"
 
@@ -161,6 +160,10 @@ inline Imath::Box2i Format::toEXRSpace( const Imath::Box2i &internalSpace ) cons
 	);
 }
 
-} // namespace GafferImage
+inline void murmurHashAppend( IECore::MurmurHash &h, const GafferImage::Format &data )
+{
+	h.append( data.getDisplayWindow() );
+	h.append( data.getPixelAspect() );
+}
 
-#endif // GAFFERIMAGE_FORMAT_INL
+} // namespace GafferImage

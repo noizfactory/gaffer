@@ -43,6 +43,8 @@ import IECoreScene
 import Gaffer
 import GafferUI
 
+from GafferUI.PlugValueWidget import sole
+
 import GafferScene
 import GafferSceneUI
 
@@ -135,7 +137,7 @@ class OutputsPlugValueWidget( GafferUI.PlugValueWidget ) :
 			# now we just need a little footer with a button for adding new outputs
 			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
 
-				GafferUI.MenuButton(
+				self.__addButton = GafferUI.MenuButton(
 					image="plus.png", hasFrame=False, menu = GafferUI.Menu( Gaffer.WeakMethod( self.__addMenuDefinition ) )
 				)
 
@@ -145,9 +147,9 @@ class OutputsPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		return True
 
-	def _updateFromPlug( self ) :
+	def _updateFromEditable( self ) :
 
-		pass
+		self.__addButton.setEnabled( not Gaffer.MetadataAlgo.readOnly( self.getPlug() ) )
 
 	def __addMenuDefinition( self ) :
 
@@ -164,7 +166,7 @@ class OutputsPlugValueWidget( GafferUI.PlugValueWidget ) :
 			m.append(
 				menuPath,
 				{
-					"command" : functools.partial( node.addOutput, name ),
+					"command" : functools.partial( Gaffer.WeakMethod( self.__addOutput ), name ),
 					"active" : name not in currentNames
 				}
 			)
@@ -175,6 +177,11 @@ class OutputsPlugValueWidget( GafferUI.PlugValueWidget ) :
 		m.append( "/Blank", { "command" : functools.partial( node.addOutput, "", IECoreScene.Output( "", "", "" ) ) } )
 
 		return m
+
+	def __addOutput( self, name ) :
+
+		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+			self.getPlug().node().addOutput( name )
 
 # A widget for representing an individual output.
 class ChildPlugValueWidget( GafferUI.PlugValueWidget ) :
@@ -189,61 +196,54 @@ class ChildPlugValueWidget( GafferUI.PlugValueWidget ) :
 			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing=4 ) as header :
 
 				collapseButton = GafferUI.Button( image = "collapsibleArrowRight.png", hasFrame=False )
-				collapseButton.clickedSignal().connect( Gaffer.WeakMethod( self.__collapseButtonClicked ), scoped = False )
+				collapseButton.clickedSignal().connect( Gaffer.WeakMethod( self.__collapseButtonClicked ) )
 
 				GafferUI.PlugValueWidget.create( childPlug["active"] )
-				self.__label = GafferUI.Label( self.__namePlug().getValue() )
+				self.__label = GafferUI.Label( childPlug["name"].getValue() )
 
 				GafferUI.Spacer( imath.V2i( 1 ), maximumSize = imath.V2i( 100000, 1 ), parenting = { "expand" : True } )
 
 				self.__deleteButton = GafferUI.Button( image = "delete.png", hasFrame=False )
-				self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ), scoped = False )
+				self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ) )
 				self.__deleteButton.setVisible( False )
 
-			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing= 4 ) as self.__detailsColumn :
-
-				GafferUI.PlugWidget( self.__namePlug() )
-				GafferUI.PlugWidget( self.__fileNamePlug() )
-				GafferUI.PlugWidget( childPlug["type"] )
-				GafferUI.PlugWidget( childPlug["data"] )
-				GafferUI.CompoundDataPlugValueWidget( childPlug["parameters"] )
-
-				GafferUI.Divider( GafferUI.Divider.Orientation.Horizontal )
-
+			self.__detailsColumn = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 4 )
 			self.__detailsColumn.setVisible( False )
 
-			header.enterSignal().connect( Gaffer.WeakMethod( self.__enter ), scoped = False )
-			header.leaveSignal().connect( Gaffer.WeakMethod( self.__leave ), scoped = False )
+			header.enterSignal().connect( Gaffer.WeakMethod( self.__enter ) )
+			header.leaveSignal().connect( Gaffer.WeakMethod( self.__leave ) )
 
 	def hasLabel( self ) :
 
 		return True
 
-	def _updateFromPlug( self ) :
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
 
-		with self.getContext() :
+		return [
+			{
+				"enabled" : plug["active"].getValue(),
+				"name" : plug["name"].getValue(),
+			}
+			for plug in plugs
+		]
 
-			enabled = self.getPlug()["active"].getValue()
+	def _updateFromValues( self, values, exception ) :
+
+		if values :
+			enabled = all( v["enabled"] for v in values )
 			self.__label.setEnabled( enabled )
 			self.__detailsColumn.setEnabled( enabled )
+			self.__label.setText( sole( v["name"] for v in values ) )
 
-			self.__label.setText( self.__namePlug().getValue() )
+	def _updateFromEditable( self ) :
 
-	def __namePlug( self ) :
-
-		plug = self.getPlug()
-		# backwards compatibility with old plug layout
-		return plug.getChild( "label" ) or plug.getChild( "name" )
-
-	def __fileNamePlug( self ) :
-
-		plug = self.getPlug()
-		# backwards compatibility with old plug layout
-		return plug.getChild( "fileName" ) or plug.getChild( "name" )
+		self.__deleteButton.setEnabled( self._editable() )
 
 	def __enter( self, widget ) :
 
-		self.__deleteButton.setVisible( True )
+		if self._editable() :
+			self.__deleteButton.setVisible( True )
 
 	def __leave( self, widget ) :
 
@@ -252,6 +252,18 @@ class ChildPlugValueWidget( GafferUI.PlugValueWidget ) :
 	def __collapseButtonClicked( self, button ) :
 
 		visible = not self.__detailsColumn.getVisible()
+
+		if visible and not len( self.__detailsColumn ) :
+			# Build details section the first time it is shown,
+			# to avoid excessive overhead in the initial UI build.
+			with self.__detailsColumn :
+				GafferUI.PlugWidget( self.getPlug()["name"] )
+				GafferUI.PlugWidget( self.getPlug()["fileName"] )
+				GafferUI.PlugWidget( self.getPlug()["type"] )
+				GafferUI.PlugWidget( self.getPlug()["data"] )
+				GafferUI.CompoundDataPlugValueWidget( self.getPlug()["parameters"] )
+				GafferUI.Divider( GafferUI.Divider.Orientation.Horizontal )
+
 		self.__detailsColumn.setVisible( visible )
 		button.setImage( "collapsibleArrowDown.png" if visible else "collapsibleArrowRight.png" )
 

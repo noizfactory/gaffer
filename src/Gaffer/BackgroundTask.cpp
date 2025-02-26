@@ -35,6 +35,8 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "Gaffer/BackgroundTask.h"
+
+#include "Gaffer/ApplicationRoot.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/ThreadState.h"
 
@@ -44,7 +46,11 @@
 #include "boost/multi_index/hashed_index.hpp"
 #include "boost/multi_index_container.hpp"
 
-#include "tbb/task.h"
+#include "tbb/task_arena.h"
+
+#include "fmt/format.h"
+
+#include <thread>
 
 using namespace IECore;
 using namespace Gaffer;
@@ -56,31 +62,10 @@ using namespace Gaffer;
 namespace
 {
 
-class FunctionTask : public tbb::task
-{
-	public :
-
-		typedef std::function<void ()> Function;
-
-		FunctionTask( const Function &f )
-			: m_f( f )
-		{
-		}
-
-		tbb::task *execute() override
-		{
-			m_f();
-			return nullptr;
-		}
-
-	private :
-
-		Function m_f;
-
-};
-
 const ScriptNode *scriptNode( const GraphComponent *subject )
 {
+	// Simple cases - there is no subject, or it is part of a script.
+
 	if( !subject )
 	{
 		return nullptr;
@@ -93,22 +78,41 @@ const ScriptNode *scriptNode( const GraphComponent *subject )
 	{
 		return s;
 	}
-	else
+
+	// Special cases to accommodate the UI.
+
+	// UI classes often house their own internal plugs which receive their input
+	// from nodes in the graph. Follow the inputs to see if we can find the
+	// graph.
+	if( auto p = runTimeCast<const Plug>( subject ) )
 	{
-		// Unfortunately the GafferUI::View classes house internal
-		// nodes which live outside any ScriptNode, but must still
-		// take part in cancellation. This hack recovers the ScriptNode
-		// for the node the view is currently connected to.
-		while( subject )
+		if( auto s = scriptNode( p->getInput() ) )
 		{
-			if( subject->isInstanceOf( "GafferUI::View" ) )
-			{
-				return scriptNode( subject->getChild<Plug>( "in" )->getInput() );
-			}
-			subject = subject->parent();
+			return s;
 		}
-		return nullptr;
 	}
+
+	// The `GafferUI::View` and `GafferUI.Editor` classes house internal nodes
+	// which might not be directly connected to the graph. This hack recovers
+	// the ScriptNode from such classes.
+	while( subject )
+	{
+		if( subject->isInstanceOf( "GafferUI::View" ) || subject->isInstanceOf( "GafferUI::Editor::Settings" ) )
+		{
+			if( !subject->refCount() )
+			{
+				// View or Settings still in construction, and therefore can't
+				// be accessed by any background tasks. No need to cancel anything.
+				return nullptr;
+			}
+			if( auto scriptPlug = subject->getChild<Plug>( "__scriptNode" ) )
+			{
+				return scriptNode( scriptPlug->getInput() );
+			}
+		}
+		subject = subject->parent();
+	}
+	return nullptr;
 }
 
 struct ActiveTask
@@ -119,7 +123,7 @@ struct ActiveTask
 	ConstScriptNodePtr subject;
 };
 
-typedef boost::multi_index::multi_index_container<
+using ActiveTasks = boost::multi_index::multi_index_container<
 	ActiveTask,
 	boost::multi_index::indexed_by<
 		boost::multi_index::hashed_unique<
@@ -129,7 +133,7 @@ typedef boost::multi_index::multi_index_container<
 			boost::multi_index::member<ActiveTask, ConstScriptNodePtr, &ActiveTask::subject>
 		>
 	>
-> ActiveTasks;
+>;
 
 ActiveTasks &activeTasks()
 {
@@ -152,19 +156,26 @@ struct BackgroundTask::TaskData : public boost::noncopyable
 
 	Function *function;
 	IECore::Canceller canceller;
-	std::mutex mutex; // Protects `conditionVariable` and `status`
+	std::mutex mutex; // Protects `conditionVariable`, `status` and `threadID`
 	std::condition_variable conditionVariable;
 	Status status;
+	std::thread::id threadId; // Thread that is executing `function`, if any
 };
 
 BackgroundTask::BackgroundTask( const Plug *subject, const Function &function )
 	:	m_function( function ), m_taskData( std::make_shared<TaskData>( &m_function ) )
 {
-	activeTasks().insert( ActiveTask{ this, scriptNode( subject ) } );
+	const ScriptNode *s = scriptNode( subject );
+	if( subject && !s )
+	{
+		IECore::msg( IECore::Msg::Level::Warning, "BackgroundTask", fmt::format( "Unable to find ScriptNode for {}", subject->fullName() ) );
+	}
 
-	auto taskData = m_taskData;
-	tbb::task *functionTask = new( tbb::task::allocate_root() ) FunctionTask(
-		[taskData] {
+	activeTasks().insert( ActiveTask{ this, s } );
+
+	// Enqueue task into current arena.
+	tbb::task_arena( tbb::task_arena::attach() ).enqueue(
+		[taskData = m_taskData] {
 
 			// Early out if we were cancelled before the task
 			// even started.
@@ -177,6 +188,7 @@ BackgroundTask::BackgroundTask( const Plug *subject, const Function &function )
 			// Otherwise do the work.
 
 			taskData->status = Running;
+			taskData->threadId = std::this_thread::get_id();
 			lock.unlock();
 
 			// Reset thread state rather then inherit the random
@@ -199,7 +211,7 @@ BackgroundTask::BackgroundTask( const Plug *subject, const Function &function )
 				);
 				status = Errored;
 			}
-			catch( const IECore::Cancelled &e )
+			catch( const IECore::Cancelled & )
 			{
 				// No need to do anything
 				status = Cancelled;
@@ -216,10 +228,10 @@ BackgroundTask::BackgroundTask( const Plug *subject, const Function &function )
 
 			lock.lock();
 			taskData->status = status;
+			taskData->threadId = std::thread::id();
 			taskData->conditionVariable.notify_one();
 		}
 	);
-	tbb::task::enqueue( *functionTask );
 }
 
 BackgroundTask::~BackgroundTask()
@@ -240,6 +252,11 @@ void BackgroundTask::cancel()
 void BackgroundTask::wait()
 {
 	std::unique_lock<std::mutex> lock( m_taskData->mutex );
+	if( m_taskData->threadId == std::this_thread::get_id() )
+	{
+		IECore::msg( IECore::Msg::Error, "BackgroundTask::wait", "Deadlock detected : Task is attempting to wait for itself. Please provide stack trace in bug report." );
+	}
+
 	m_taskData->conditionVariable.wait(
 		lock,
 		[this]{
@@ -318,6 +335,21 @@ void BackgroundTask::cancelAffectedTasks( const GraphComponent *actionSubject )
 	/// \todo Investigate fancier approaches.
 
 	const ScriptNode *s = scriptNode( actionSubject );
+	if( !s )
+	{
+		if( auto application = actionSubject->ancestor<ApplicationRoot>() )
+		{
+			// No ScriptNode, but still under an ApplicationRoot, most likely
+			// on the Preferences node. Cancel _everything_, so that preferences
+			// plugs can be used as inputs to other nodes.
+			for( const auto &s : ScriptNode::Range( *application->scripts() ) )
+			{
+				cancelAffectedTasks( s.get() );
+			}
+		}
+		return;
+	}
+
 	auto range = a.get<1>().equal_range( s );
 
 	// Call cancel for everything first.

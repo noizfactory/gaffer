@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_TYPEIDS_H
-#define GAFFERIMAGE_TYPEIDS_H
+#pragma once
 
 namespace GafferImage
 {
@@ -46,20 +45,20 @@ enum TypeId
 	ImagePlugTypeId = 110750,
 	ImageNodeTypeId = 110751,
 	ImageReaderTypeId = 110752,
-	ImagePrimitiveNodeTypeId = 110753,
+	OpenColorIOContextTypeId = 110753,
 	DisplayTypeId = 110754,
 	GafferDisplayDriverTypeId = 110755,
 	ImageProcessorTypeId = 110756,
 	ChannelDataProcessorTypeId = 110757,
 	ColorSpaceTypeId = 110758,
-	ObjectToImageTypeId = 110759,
+	LookTransformTypeId = 110759,
 	FormatDataTypeId = 110760,
 	AtomicFormatPlugTypeId = 110761,
 	MergeTypeId = 110762,
 	GradeTypeId = 110763,
 	ShuffleTypeId = 110764,
 	ConstantTypeId = 110765,
-	ShuffleChannelPlugTypeId = 110766,
+	ShuffleChannelPlugTypeId = 110766, // Obsolete - available for reuse
 	ChannelMaskPlugTypeId = 110767,
 	WarpTypeId = 110768,
 	VectorWarpTypeId = 110769,
@@ -68,13 +67,13 @@ enum TypeId
 	CatalogueTypeId = 110772,
 	CatalogueImageTypeId = 110773,
 	CheckerboardTypeId = 110774,
-	SplineFilterTypeId = 110775, // Obsolete - available for reuse
-	BSplineFilterTypeId = 110776, // Obsolete - available for reuse
-	HermiteFilterTypeId = 110777, // Obsolete - available for reuse
-	CubicFilterTypeId = 110778, // Obsolete - available for reuse
-	MitchellFilterTypeId = 110779, // Obsolete - available for reuse
-	CatmullRomFilterTypeId = 110780, // Obsolete - available for reuse
-	SincFilterTypeId = 110781, // Obsolete - available for reuse
+	FlatImageSourceTypeId = 110775,
+	CreateViewsTypeId = 110776,
+	SelectViewTypeId = 110777,
+	DeleteViewsTypeId = 110778,
+	CopyViewsTypeId = 110779,
+	OpenColorIOConfigPlugTypeId = 110780,
+	ContactSheetCoreTypeId = 110781,
 	LanczosFilterTypeId = 110782, // Obsolete - available for reuse
 	ImageStatsTypeId = 110783,
 	ImageTransformImplementationTypeId = 110784, // Obsolete - available for reuse
@@ -102,7 +101,7 @@ enum TypeId
 	DisplayTransformTypeId = 110806,
 	FormatPlugTypeId = 110807,
 	OffsetTypeId = 110808,
-	ImagePrimitiveProcessorTypeId = 110809,
+	FormatQueryTypeId = 110809,
 	BlurTypeId = 110810,
 	ShapeTypeId = 110811,
 	TextTypeId = 110812,
@@ -118,10 +117,20 @@ enum TypeId
 	DilateTypeId = 110822,
 	RampTypeId = 110823,
 	RectangleTypeId = 110824,
+	FlatToDeepTypeId = 110825,
+	DeepMergeTypeId = 110826,
+	DeepStateTypeId = 110827,
+	EmptyTypeId = 110828,
+	FlatImageProcessorTypeId = 110829,
+	DeepSampleCountsTypeId = 110830,
+	DeepSamplerTypeId = 110831,
+	DeepToFlatTypeId = 110832,
+	DeepHoldoutTypeId = 110833,
+	DeepRecolorTypeId = 110834,
+	SaturationTypeId = 110835,
+	DeepSliceTypeId = 110836,
 
 	LastTypeId = 110849
 };
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_TYPEIDS_H

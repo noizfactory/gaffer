@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_WIREFRAME_H
-#define GAFFERSCENE_WIREFRAME_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/Deformer.h"
 
 namespace Gaffer
 {
@@ -49,15 +48,15 @@ IE_CORE_FORWARDDECLARE( StringPlug )
 namespace GafferScene
 {
 
-class GAFFERSCENE_API Wireframe : public SceneElementProcessor
+class GAFFERSCENE_API Wireframe : public Deformer
 {
 
 	public :
 
-		Wireframe( const std::string &name=defaultName<Wireframe>() );
+		explicit Wireframe( const std::string &name=defaultName<Wireframe>() );
 		~Wireframe() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Wireframe, WireframeTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Wireframe, WireframeTypeId, Deformer );
 
 		Gaffer::StringPlug *positionPlug();
 		const Gaffer::StringPlug *positionPlug() const;
@@ -65,17 +64,12 @@ class GAFFERSCENE_API Wireframe : public SceneElementProcessor
 		Gaffer::FloatPlug *widthPlug();
 		const Gaffer::FloatPlug *widthPlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
-
 	protected :
 
-		bool processesBound() const override;
-		void hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::Box3f computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const override;
-
-		bool processesObject() const override;
+		bool affectsProcessedObject( const Gaffer::Plug *input ) const override;
 		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const override;
+		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const override;
+		bool adjustBounds() const override;
 
 	private :
 
@@ -86,5 +80,3 @@ class GAFFERSCENE_API Wireframe : public SceneElementProcessor
 IE_CORE_DECLAREPTR( Wireframe )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_WIREFRAME_H

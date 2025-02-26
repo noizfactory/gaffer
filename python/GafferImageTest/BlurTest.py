@@ -36,11 +36,11 @@
 
 import unittest
 import imath
+import pathlib
 
 import IECore
 
 import Gaffer
-import GafferTest
 import GafferImage
 import GafferImageTest
 import os
@@ -57,6 +57,13 @@ class BlurTest( GafferImageTest.ImageTestCase ) :
 
 		self.assertImageHashesEqual( c["out"], b["out"] )
 		self.assertImagesEqual( c["out"], b["out"] )
+
+	def testNonFlatThrows( self ) :
+
+		blur = GafferImage.Blur()
+		blur["radius"].setValue( imath.V2f( 1 ) )
+
+		self.assertRaisesDeepNotSupported( blur )
 
 	def testExpandDataWindow( self ) :
 
@@ -187,7 +194,7 @@ class BlurTest( GafferImageTest.ImageTestCase ) :
 			testWriter["task"].execute()
 
 		expectedReader = GafferImage.ImageReader()
-		expectedReader["fileName"].setValue( os.path.dirname( __file__ ) + "/images/blurRange.exr" )
+		expectedReader["fileName"].setValue( pathlib.Path( __file__ ).parent / "images" / "blurRange.exr" )
 
 		self.assertImagesEqual( finalCrop["out"], expectedReader["out"], maxDifference = 0.00001, ignoreMetadata = True )
 

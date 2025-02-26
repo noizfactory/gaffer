@@ -96,9 +96,8 @@ Gaffer.Metadata.registerNode(
 			""",
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
-			## \todo: is there a way to query the TransformDirection enum from OpenColorIO directly?
-			"preset:Forward", 1,
-			"preset:Inverse", 2,
+			"preset:Forward", GafferImage.OpenColorIOTransform.Direction.Forward,
+			"preset:Inverse", GafferImage.OpenColorIOTransform.Direction.Inverse,
 
 		],
 

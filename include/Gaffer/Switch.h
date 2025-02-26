@@ -34,24 +34,25 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_SWITCH_H
-#define GAFFER_SWITCH_H
+#pragma once
 
 #include "Gaffer/ArrayPlug.h"
 #include "Gaffer/ComputeNode.h"
 #include "Gaffer/NumericPlug.h"
+#include "Gaffer/StringPlug.h"
+#include "Gaffer/TypedObjectPlug.h"
 
 namespace Gaffer
 {
 
-class IECORE_EXPORT Switch : public ComputeNode
+class GAFFER_API Switch : public ComputeNode
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Switch, SwitchTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Switch, SwitchTypeId, ComputeNode );
 
-		Switch( const std::string &name=GraphComponent::defaultName<Switch>() );
+		explicit Switch( const std::string &name=GraphComponent::defaultName<Switch>() );
 		~Switch() override;
 
 		/// Sets up the switch to work with the specified plug type.
@@ -72,14 +73,27 @@ class IECORE_EXPORT Switch : public ComputeNode
 
 		/// Returns the input plug which will be passed through
 		/// by the switch in the current context.
+		/// \todo Remove, and add `nullptr` default to the version
+		/// below.
 		Plug *activeInPlug();
 		const Plug *activeInPlug() const;
+		/// Returns the input plug which will be passed through
+		/// by the switch when evaluating `outPlug` in the
+		/// current context.
+		Plug *activeInPlug( const Plug *outPlug );
+		const Plug *activeInPlug( const Plug *outPlug ) const;
 
 		IntPlug *indexPlug();
 		const IntPlug *indexPlug() const;
 
 		BoolPlug *enabledPlug() override;
 		const BoolPlug *enabledPlug() const override;
+
+		StringPlug *deleteContextVariablesPlug();
+		const StringPlug *deleteContextVariablesPlug() const;
+
+		IntVectorDataPlug *connectedInputsPlug();
+		const IntVectorDataPlug *connectedInputsPlug() const;
 
 		Plug *correspondingInput( const Plug *output ) override;
 		const Plug *correspondingInput( const Plug *output ) const override;
@@ -100,18 +114,14 @@ class IECORE_EXPORT Switch : public ComputeNode
 
 	private :
 
-		void init( bool expectBaseClassPlugs );
-
 		void childAdded( GraphComponent *child );
 		void plugSet( Plug *plug );
 		void plugInputChanged( Plug *plug );
-		size_t inputIndex( const Context *context = nullptr ) const;
+		size_t inputIndex( const Context *context ) const;
 
 		// Returns the input corresponding to the output and vice versa. Returns null
 		// if plug is not meaningful to the switching process.
-		const Plug *oppositePlug( const Plug *plug, size_t inputIndex = 0 ) const;
-
-		bool variesWithContext( const Plug *plug ) const;
+		const Plug *oppositePlug( const Plug *plug, const Context *context = nullptr ) const;
 
 		void updateInternalConnection();
 
@@ -121,10 +131,8 @@ class IECORE_EXPORT Switch : public ComputeNode
 
 IE_CORE_DECLAREPTR( Switch );
 
-typedef Switch SwitchComputeNode;
-typedef SwitchPtr SwitchComputeNodePtr;
-typedef ConstSwitchPtr ConstSwitchComputeNodePtr;
+using SwitchComputeNode = Switch;
+using SwitchComputeNodePtr = SwitchPtr;
+using ConstSwitchComputeNodePtr = ConstSwitchPtr;
 
 } // namespace Gaffer
-
-#endif // GAFFER_SWITCH_H

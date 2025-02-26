@@ -36,6 +36,7 @@
 
 #include "GafferScene/SetFilter.h"
 
+#include "GafferScene/SceneAlgo.h"
 #include "GafferScene/ScenePlug.h"
 #include "GafferScene/SetAlgo.h"
 
@@ -47,7 +48,7 @@ using namespace Gaffer;
 using namespace IECore;
 using namespace std;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SetFilter );
+GAFFER_NODE_DEFINE_TYPE( SetFilter );
 
 size_t SetFilter::g_firstPlugIndex = 0;
 
@@ -88,7 +89,10 @@ void SetFilter::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outp
 {
 	Filter::affects( input, outputs );
 
-	if( input == setExpressionPlug() )
+	if(
+		input == setExpressionPlug() ||
+		( input->parent<ScenePlug>() && SetAlgo::affectsSetExpression( input ) )
+	)
 	{
 		outputs.push_back( expressionResultPlug() );
 	}
@@ -100,25 +104,15 @@ void SetFilter::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outp
 
 }
 
-bool SetFilter::sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const
-{
-	if( Filter::sceneAffectsMatch( scene, child ) )
-	{
-		return true;
-	}
-
-	return child == scene->setPlug();
-}
-
 void SetFilter::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
 	Filter::hash( output, context, h );
 
 	if( output == expressionResultPlug() )
 	{
+		ScenePlug::GlobalScope globalScope( context ); // Removes `scene:filter:inputScene`
 		SetAlgo::setExpressionHash( setExpressionPlug()->getValue(), getInputScene( context ), h );
 	}
-
 }
 
 void SetFilter::compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const
@@ -127,6 +121,7 @@ void SetFilter::compute( Gaffer::ValuePlug *output, const Gaffer::Context *conte
 
 	if( output == expressionResultPlug() )
 	{
+		ScenePlug::GlobalScope globalScope( context ); // Removes `scene:filter:inputScene`
 		PathMatcherDataPtr data = new PathMatcherData( SetAlgo::evaluateSetExpression( setExpressionPlug()->getValue(), getInputScene( context ) ) );
 		static_cast<PathMatcherDataPlug *>( output )->setValue( data );
 	}
@@ -150,13 +145,7 @@ void SetFilter::hashMatch( const ScenePlug *scene, const Gaffer::Context *contex
 	/// the scene then we would be able to use that in these situations and have a broader range
 	/// of filters. If we manage that, then we should go back to throwing an exception here if
 	/// the context doesn't contain a path. We should then do the same in the PathFilter.
-	typedef IECore::TypedData<ScenePlug::ScenePath> ScenePathData;
-	const ScenePathData *pathData = context->get<ScenePathData>( ScenePlug::scenePathContextName, nullptr );
-	if( pathData )
-	{
-		const ScenePlug::ScenePath &path = pathData->readable();
-		h.append( &(path[0]), path.size() );
-	}
+	h.append( context->variableHash( ScenePlug::scenePathContextName ) );
 
 	Gaffer::Context::EditableScope expressionResultScope( context );
 	expressionResultScope.remove( ScenePlug::scenePathContextName );

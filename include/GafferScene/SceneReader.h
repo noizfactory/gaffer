@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEREADER_H
-#define GAFFERSCENE_SCENEREADER_H
+#pragma once
 
 #include "GafferScene/SceneNode.h"
 
@@ -59,10 +58,10 @@ class GAFFERSCENE_API SceneReader : public SceneNode
 
 	public :
 
-		SceneReader( const std::string &name=defaultName<SceneReader>() );
+		explicit SceneReader( const std::string &name=defaultName<SceneReader>() );
 		~SceneReader() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SceneReader, SceneReaderTypeId, SceneNode )
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SceneReader, SceneReaderTypeId, SceneNode )
 
 		/// Holds the name of the file to be loaded.
 		Gaffer::StringPlug *fileNamePlug();
@@ -83,6 +82,8 @@ class GAFFERSCENE_API SceneReader : public SceneNode
 		static size_t supportedExtensions( std::vector<std::string> &extensions );
 
 	protected :
+
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
 
 		/// \todo These methods defer to SceneInterface::hash() to do most of the work, but we could go further.
 		/// Currently we still hash in fileNamePlug() and refreshCountPlug() because we don't trust the current
@@ -126,17 +127,23 @@ class GAFFERSCENE_API SceneReader : public SceneNode
 			IECoreScene::ConstSceneInterfacePtr pathScene;
 		};
 		mutable tbb::enumerable_thread_specific<LastScene> m_lastScene;
-		// Returns the SceneInterface for the current filename (in the current Context)
-		// and specified path, using m_lastScene to accelerate the lookups.
-		IECoreScene::ConstSceneInterfacePtr scene( const ScenePath &path ) const;
+		// Returns the SceneInterface for the current filename and specified
+		// path, using `m_lastScene` to accelerate the lookups. If `refreshCount`
+		// or `tags` are provided, they are filled from `refreshCountPlug()` and
+		// `tagsPlug()` respectively.
+		IECoreScene::ConstSceneInterfacePtr scene( const ScenePath &path, const Gaffer::Context *context, int *refreshCount = nullptr, std::string *tags = nullptr ) const;
 
 		static const double g_frameRate;
 		static size_t g_firstPlugIndex;
+
+		// SceneInterface has two different APIs related to sets : the legacy tags API and the
+		// new sets API. We prefer the sets API for standard formats like Alembic and USD, but
+		// fall back to the tags API for legacy SceneInterfaces.
+		friend class SceneWriter;
+		static bool useSetsAPI( const IECoreScene::SceneInterface *scene );
 
 };
 
 IE_CORE_DECLAREPTR( SceneReader )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEREADER_H

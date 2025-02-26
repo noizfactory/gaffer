@@ -35,11 +35,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_STRINGPLUG_H
-#define GAFFER_STRINGPLUG_H
+#pragma once
+
+#include "IECore/StringAlgo.h"
 
 #include "Gaffer/Context.h"
 #include "Gaffer/ValuePlug.h"
+
+#include <filesystem>
 
 namespace Gaffer
 {
@@ -84,16 +87,16 @@ class GAFFER_API StringPlug : public ValuePlug
 
 	public :
 
-		typedef std::string ValueType;
+		using ValueType = std::string;
 
 		GAFFER_PLUG_DECLARE_TYPE( Gaffer::StringPlug, StringPlugTypeId, ValuePlug );
 
-		StringPlug(
+		explicit StringPlug(
 			const std::string &name = defaultName<StringPlug>(),
 			Direction direction=In,
 			const std::string &defaultValue = "",
 			unsigned flags = Default,
-			unsigned substitutions = Context::AllSubstitutions
+			unsigned substitutions = IECore::StringAlgo::AllSubstitutions
 		);
 		~StringPlug() override;
 
@@ -107,10 +110,16 @@ class GAFFER_API StringPlug : public ValuePlug
 
 		/// \undoable
 		void setValue( const std::string &value );
-		/// Returns the value. See comments in TypedObjectPlug::getValue()
-		/// for details of the optional precomputedHash argument - and use
-		/// with care!
-		std::string getValue( const IECore::MurmurHash *precomputedHash = nullptr ) const;
+		/// \undoable
+		void setValue( const char *value );
+		/// Calls `setValue( value.generic_string() )`.
+		/// > Note : When representing paths as strings, Gaffer uses the generic
+		/// > `/` separator on all platforms, _not_ the platform's native separator
+		/// > (which would be `\` on Windows).
+		/// \undoable
+		void setValue( const std::filesystem::path &value );
+		/// Returns the value.
+		std::string getValue() const;
 
 		void setFrom( const ValuePlug *other ) override;
 
@@ -127,14 +136,4 @@ class GAFFER_API StringPlug : public ValuePlug
 
 IE_CORE_DECLAREPTR( StringPlug );
 
-typedef FilteredChildIterator<PlugPredicate<Plug::Invalid, StringPlug> > StringPlugIterator;
-typedef FilteredChildIterator<PlugPredicate<Plug::In, StringPlug> > InputStringPlugIterator;
-typedef FilteredChildIterator<PlugPredicate<Plug::Out, StringPlug> > OutputStringPlugIterator;
-
-typedef FilteredRecursiveChildIterator<PlugPredicate<Plug::Invalid, StringPlug>, PlugPredicate<> > RecursiveStringPlugIterator;
-typedef FilteredRecursiveChildIterator<PlugPredicate<Plug::In, StringPlug>, PlugPredicate<> > RecursiveInputStringPlugIterator;
-typedef FilteredRecursiveChildIterator<PlugPredicate<Plug::Out, StringPlug>, PlugPredicate<> > RecursiveOutputStringPlugIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_STRINGPLUG_H

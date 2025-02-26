@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import pathlib
 import unittest
 import imath
 
@@ -54,9 +55,9 @@ class TextTest( GafferSceneTest.SceneTestCase ) :
 		self.assertEqual( t.getName(), "Text" )
 		self.assertEqual( t["name"].getValue(), "text" )
 
- 	def testCompute( self ) :
+	def testCompute( self ) :
 
- 		t = GafferScene.Text()
+		t = GafferScene.Text()
 
 		self.assertEqual( t["out"].object( "/" ), IECore.NullObject() )
 		self.assertEqual( t["out"].transform( "/" ), imath.M44f() )
@@ -69,7 +70,7 @@ class TextTest( GafferSceneTest.SceneTestCase ) :
 		m2 = t["out"].object( "/text" )
 		self.assertTrue( isinstance( m2, IECoreScene.MeshPrimitive ) )
 
-		self.failUnless( m2.bound().size().x > m1.bound().size().x )
+		self.assertGreater( m2.bound().size().x, m1.bound().size().x )
 
 	def testAffects( self ) :
 
@@ -78,11 +79,10 @@ class TextTest( GafferSceneTest.SceneTestCase ) :
 		s = GafferTest.CapturingSlot( t.plugDirtiedSignal() )
 
 		t["name"].setValue( "ground" )
-		self.assertEqual( len( s ), 4 )
-		self.failUnless( s[0][0].isSame( t["name"] ) )
-		self.failUnless( s[1][0].isSame( t["out"]["childNames"] ) )
-		self.failUnless( s[2][0].isSame( t["out"]["set"] ) )
-		self.failUnless( s[3][0].isSame( t["out"] ) )
+		self.assertEqual(
+			{ x[0] for x in s if not x[0].getName().startswith( "__" ) },
+			{ t["name"], t["out"]["childNames"], t["out"]["exists"], t["out"]["childBounds"], t["out"]["set"], t["out"] }
+		)
 
 		del s[:]
 		t["text"].setValue( "cat" )
@@ -93,7 +93,7 @@ class TextTest( GafferSceneTest.SceneTestCase ) :
 		self.assertFalse( "out.transform" in [ x[0].relativeName( x[0].node() ) for x in s ] )
 
 		del s[:]
-		t["font"].setValue( os.path.expandvars( "$GAFFER_ROOT/fonts/VeraBI.ttf" ) )
+		t["font"].setValue( pathlib.Path( os.environ["GAFFER_ROOT"] ) / "fonts" / "VeraBI.ttf" )
 
 		self.assertTrue( "out.object" in [ x[0].relativeName( x[0].node() ) for x in s ] )
 		self.assertTrue( "out.bound" in [ x[0].relativeName( x[0].node() ) for x in s ] )

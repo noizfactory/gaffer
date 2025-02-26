@@ -35,11 +35,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_STANDARDSET_H
-#define GAFFER_STANDARDSET_H
+#pragma once
 
 #include "Gaffer/Set.h"
 
+#include "boost/multi_index/member.hpp"
 #include "boost/multi_index/ordered_index.hpp"
 #include "boost/multi_index/random_access_index.hpp"
 #include "boost/multi_index_container.hpp"
@@ -52,7 +52,7 @@ namespace Detail
 
 struct MemberAcceptanceCombiner
 {
-	typedef bool result_type;
+	using result_type = bool;
 
 	template<typename InputIterator>
 	bool operator()( InputIterator first, InputIterator last ) const
@@ -82,12 +82,12 @@ class GAFFER_API StandardSet : public Gaffer::Set
 
 	public :
 
-		StandardSet( bool removeOrphans = false );
+		explicit StandardSet( bool removeOrphans = false );
 		~StandardSet() override;
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::StandardSet, StandardSetTypeId, Gaffer::Set );
 
-		typedef boost::signal<bool ( const StandardSet *, const Member * ), Detail::MemberAcceptanceCombiner> MemberAcceptanceSignal;
+		using MemberAcceptanceSignal = Signals::Signal<bool ( const StandardSet *, const Member * ), Detail::MemberAcceptanceCombiner>;
 		/// This signal is emitted to determine whether or not a member is eligible
 		/// to be in the StandardSet. Members are only added if all slots of the signal
 		/// return true, or if no slots have been connected - otherwise an exception is thrown.
@@ -152,16 +152,23 @@ class GAFFER_API StandardSet : public Gaffer::Set
 
 		MemberAcceptanceSignal m_memberAcceptanceSignal;
 
-		typedef boost::multi_index::multi_index_container<
-			MemberPtr,
+		struct SetMember
+		{
+			MemberPtr member;
+			// OK to be mutable, because not used as key in `MemberContainer`.
+			mutable Signals::ScopedConnection parentChangedConnection;
+		};
+
+		using MemberContainer = boost::multi_index::multi_index_container<
+			SetMember,
 			boost::multi_index::indexed_by<
-				boost::multi_index::ordered_unique<boost::multi_index::identity<MemberPtr> >,
+				boost::multi_index::ordered_unique<boost::multi_index::member<SetMember, MemberPtr, &SetMember::member>>,
 				boost::multi_index::random_access<>
 			>
-		> MemberContainer;
+		>;
 
-		typedef const MemberContainer::nth_index<0>::type OrderedIndex;
-		typedef const MemberContainer::nth_index<1>::type SequencedIndex;
+		using OrderedIndex = const MemberContainer::nth_index<0>::type;
+		using SequencedIndex = const MemberContainer::nth_index<1>::type;
 
 		MemberContainer m_members;
 		bool m_removeOrphans;
@@ -173,5 +180,3 @@ IE_CORE_DECLAREPTR( StandardSet );
 } // namespace Gaffer
 
 #include "Gaffer/StandardSet.inl"
-
-#endif // GAFFER_STANDARDSET_H

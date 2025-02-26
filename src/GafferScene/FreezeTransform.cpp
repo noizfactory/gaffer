@@ -39,10 +39,11 @@
 #include "Gaffer/Context.h"
 
 #include "IECoreScene/Primitive.h"
-#include "IECoreScene/TransformOp.h"
+#include "GafferScene/Private/IECoreScenePreview/PrimitiveAlgo.h"
 
 #include "IECore/DataAlgo.h"
 #include "IECore/TypeTraits.h"
+#include "IECore/NullObject.h"
 
 using namespace std;
 using namespace Imath;
@@ -51,7 +52,7 @@ using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( FreezeTransform );
+GAFFER_NODE_DEFINE_TYPE( FreezeTransform );
 
 size_t FreezeTransform::g_firstPlugIndex = 0;
 
@@ -60,6 +61,9 @@ FreezeTransform::FreezeTransform( const std::string &name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new M44fPlug( "__transform", Plug::Out ) );
+	addChild( new ObjectPlug( "__processedObject", Plug::Out, NullObject::defaultNullObject() ) );
+
+	outPlug()->childBoundsPlug()->setFlags( Plug::AcceptsDependencyCycles, true );
 
 	// pass through the things we don't want to change
 	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
@@ -83,25 +87,60 @@ const Gaffer::M44fPlug *FreezeTransform::transformPlug() const
 	return getChild<M44fPlug>( g_firstPlugIndex );
 }
 
+Gaffer::ObjectPlug *FreezeTransform::processedObjectPlug()
+{
+	return getChild<ObjectPlug>( g_firstPlugIndex + 1 );
+}
+
+const Gaffer::ObjectPlug *FreezeTransform::processedObjectPlug() const
+{
+	return getChild<ObjectPlug>( g_firstPlugIndex + 1 );
+}
+
 void FreezeTransform::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	FilteredSceneProcessor::affects( input, outputs );
 
-	if( input == inPlug()->transformPlug() )
+	if(
+		input == inPlug()->transformPlug() ||
+		input == outPlug()->transformPlug()
+	)
 	{
 		outputs.push_back( transformPlug() );
 	}
-	else if( input == inPlug()->objectPlug() )
+
+	if(
+		input == filterPlug() ||
+		input == outPlug()->childBoundsPlug() ||
+		input == inPlug()->boundPlug() ||
+		input == transformPlug()
+	)
 	{
-		outputs.push_back( outPlug()->objectPlug() );
+		outputs.push_back( outPlug()->boundPlug() );
 	}
-	else if(
-		input == transformPlug() ||
-		input == filterPlug()
+
+	if(
+		input == filterPlug() ||
+		input == inPlug()->transformPlug()
 	)
 	{
 		outputs.push_back( outPlug()->transformPlug() );
-		outputs.push_back( outPlug()->boundPlug() );
+	}
+
+	if(
+		input == inPlug()->objectPlug() ||
+		input == transformPlug()
+	)
+	{
+		outputs.push_back( processedObjectPlug() );
+	}
+
+	if(
+		input == filterPlug() ||
+		input == inPlug()->objectPlug() ||
+		input == processedObjectPlug()
+	)
+	{
 		outputs.push_back( outPlug()->objectPlug() );
 	}
 }
@@ -112,9 +151,14 @@ void FreezeTransform::hash( const Gaffer::ValuePlug *output, const Gaffer::Conte
 
 	if( output == transformPlug() )
 	{
-		const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
-		h.append( inPlug()->fullTransformHash( scenePath ) );
-		h.append( outPlug()->fullTransformHash( scenePath ) );
+		const ScenePath &path = context->get<ScenePath>( ScenePlug::scenePathContextName );
+		h.append( inPlug()->fullTransformHash( path ) );
+		h.append( outPlug()->fullTransformHash( path ) );
+	}
+	else if( output == processedObjectPlug() )
+	{
+		inPlug()->objectPlug()->hash( h );
+		transformPlug()->hash( h );
 	}
 }
 
@@ -124,20 +168,52 @@ void FreezeTransform::compute( Gaffer::ValuePlug *output, const Gaffer::Context 
 	{
 		/// \todo Would it speed things up if we computed this from the parent full transforms and
 		/// the local transforms? So we don't traverse the full path at each location?
-		const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
-		const M44f inTransform = inPlug()->fullTransform( scenePath );
-		const M44f outTransform = outPlug()->fullTransform( scenePath );
+		const ScenePath &path = context->get<ScenePath>( ScenePlug::scenePathContextName );
+		const M44f inTransform = inPlug()->fullTransform( path );
+		const M44f outTransform = outPlug()->fullTransform( path );
 		const M44f transform = inTransform * outTransform.inverse();
 		static_cast<M44fPlug *>( output )->setValue( transform );
+		return;
+	}
+	else if( output == processedObjectPlug() )
+	{
+		ConstObjectPtr inputObject = inPlug()->objectPlug()->getValue();
+		ConstObjectPtr result;
+		const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject.get() );
+		if( !inputPrimitive )
+		{
+			result = inputObject;
+		}
+		else
+		{
+			PrimitivePtr outputPrimitive = inputPrimitive->copy();
+			const M44f transform = transformPlug()->getValue();
+			IECoreScenePreview::PrimitiveAlgo::transformPrimitive( *outputPrimitive, transform, context->canceller() );
+			result = std::move( outputPrimitive );
+		}
+
+		static_cast<ObjectPlug *>( output )->setValue( result );
 		return;
 	}
 
 	FilteredSceneProcessor::compute( output, context );
 }
 
+Gaffer::ValuePlug::CachePolicy FreezeTransform::computeCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	if( output == processedObjectPlug() )
+	{
+		return ValuePlug::CachePolicy::TaskCollaboration;
+	}
+	else
+	{
+		return FilteredSceneProcessor::computeCachePolicy( output );
+	}
+}
+
 void FreezeTransform::hashBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-	const unsigned m = filterPlug()->getValue();
+	const unsigned m = filterValue( context );
 	if( m & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
 	{
 		// if there's an ancestor match or an exact match here then we know
@@ -145,7 +221,7 @@ void FreezeTransform::hashBound( const ScenePath &path, const Gaffer::Context *c
 		// thus changing the bounds - so we must compute them properly from
 		// children.
 		SceneProcessor::hashBound( path, context, parent, h );
-		h.append( hashOfTransformedChildBounds( path, outPlug() ) );
+		outPlug()->childBoundsPlug()->hash( h );
 		// we may also be changing the bounds at this specific location.
 		inPlug()->boundPlug()->hash( h );
 		transformPlug()->hash( h );
@@ -163,10 +239,10 @@ void FreezeTransform::hashBound( const ScenePath &path, const Gaffer::Context *c
 
 Imath::Box3f FreezeTransform::computeBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	const unsigned m = filterPlug()->getValue();
+	const unsigned m = filterValue( context );
 	if( m & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
 	{
-		Box3f result = unionOfTransformedChildBounds( path, outPlug() );
+		Box3f result = outPlug()->childBoundsPlug()->getValue();
 		Box3f b = inPlug()->boundPlug()->getValue();
 		b = transform( b, transformPlug()->getValue() );
 		result.extendBy( b );
@@ -180,7 +256,7 @@ Imath::Box3f FreezeTransform::computeBound( const ScenePath &path, const Gaffer:
 
 void FreezeTransform::hashTransform( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-	const unsigned m = filterPlug()->getValue();
+	const unsigned m = filterValue( context );
 	if( m & IECore::PathMatcher::ExactMatch )
 	{
 		SceneProcessor::hashTransform( path, context, parent, h );
@@ -193,7 +269,7 @@ void FreezeTransform::hashTransform( const ScenePath &path, const Gaffer::Contex
 
 Imath::M44f FreezeTransform::computeTransform( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	const unsigned m = filterPlug()->getValue();
+	const unsigned m = filterValue( context );
 	if( m & IECore::PathMatcher::ExactMatch )
 	{
 		return M44f();
@@ -206,56 +282,22 @@ Imath::M44f FreezeTransform::computeTransform( const ScenePath &path, const Gaff
 
 void FreezeTransform::hashObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-	const unsigned m = filterPlug()->getValue();
-	if( m & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
+	if( filterValue( context ) & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
 	{
-		FilteredSceneProcessor::hashObject( path, context, parent, h );
-		inPlug()->objectPlug()->hash( h );
-		transformPlug()->hash( h );
+		h = processedObjectPlug()->hash();
 	}
 	else
 	{
+		// pass through
 		h = inPlug()->objectPlug()->hash();
 	}
 }
 
 IECore::ConstObjectPtr FreezeTransform::computeObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	const unsigned m = filterPlug()->getValue();
-	if( m & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
+	if( filterValue( context ) & ( IECore::PathMatcher::AncestorMatch | IECore::PathMatcher::ExactMatch ) )
 	{
-		ConstObjectPtr inputObject = inPlug()->objectPlug()->getValue();
-		const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject.get() );
-		if( !inputPrimitive )
-		{
-			return inputObject;
-		}
-
-		PrimitivePtr outputPrimitive = inputPrimitive->copy();
-
-		/// \todo This is a pain - we need functionality in Cortex to just automatically apply
-		/// the transform to all appropriate primitive variables, without having to manually
-		/// list them. At the same time, we could add a PrimitiveAlgo.h file to Cortex, allowing
-		/// us to apply a transform without having to create an Op to do it.
-		vector<string> primVarNames;
-		for( PrimitiveVariableMap::const_iterator it = inputPrimitive->variables.begin(), eIt = inputPrimitive->variables.end(); it != eIt; ++it )
-		{
-			if( trait<TypeTraits::IsFloatVec3VectorTypedData>( it->second.data.get() ) )
-			{
-				primVarNames.push_back( it->first );
-			}
-		}
-
-		const M44f transform = transformPlug()->getValue();
-
-		TransformOpPtr transformOp = new TransformOp;
-		transformOp->inputParameter()->setValue( outputPrimitive );
-		transformOp->copyParameter()->setTypedValue( false );
-		transformOp->matrixParameter()->setValue( new M44fData( transform ) );
-		transformOp->primVarsParameter()->setTypedValue( primVarNames );
-		transformOp->operate();
-
-		return outputPrimitive;
+		return processedObjectPlug()->getValue();
 	}
 	else
 	{

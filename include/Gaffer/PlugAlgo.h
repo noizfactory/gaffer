@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PLUGALGO_H
-#define GAFFER_PLUGALGO_H
+#pragma once
 
 #include "Gaffer/Export.h"
 #include "Gaffer/Plug.h"
@@ -49,18 +48,68 @@
 namespace Gaffer
 {
 
+IE_CORE_FORWARDDECLARE( Context )
 IE_CORE_FORWARDDECLARE( GraphComponent )
 IE_CORE_FORWARDDECLARE( ValuePlug )
 
 namespace PlugAlgo
 {
 
+/// Miscellaneous
+/// =============
+
+/// Adds `plug` as a child of `parent`, replacing an identically-named
+/// child if it exists. Where possible, existing values and connections
+/// are transferred from the original plug to the new one.
 GAFFER_API void replacePlug( GraphComponent *parent, PlugPtr plug );
+
+/// Returns `true` if the plug's value is provided by the output
+/// of a ComputeNode, and `false` otherwise.
+GAFFER_API bool dependsOnCompute( const ValuePlug *plug );
+
+/// Visits the plug and its downstream outputs, returning the first `predicate( plug )`
+/// result which evaluates to `true`. Traverses across Spreadsheets to visit the output
+/// corresponding to a CellPlug input.
+template<typename Predicate>
+std::invoke_result_t<Predicate, Plug *> findDestination( Plug *plug, Predicate &&predicate );
+
+/// Visits the plug and its inputs, returing the first `predicate( plug )` result which
+/// evaluates to `true`.
+template<typename Predicate>
+std::invoke_result_t<Predicate, Plug *> findSource( Plug *plug, Predicate &&predicate );
+
+/// Similar to `Plug::source()`, but also traversing upstream through Switch,
+/// Spreadsheet, ContextProcessor and Loop nodes, taking into account their
+/// operation in the current context. Returns the source plug and also the context
+/// it is evaluated in.
+///
+/// > Note : If the current context contains a Canceller, then the returned context
+/// > will reference it too. If the context is stored for later usage, the canceller
+/// > should be removed.
+GAFFER_API std::tuple<const Plug *, ConstContextPtr> contextSensitiveSource( const Plug *plug );
+
+/// Conversion to and from `IECore::Data`
+/// =====================================
 
 /// Creates an appropriate plug to hold the specified data.
 GAFFER_API ValuePlugPtr createPlugFromData( const std::string &name, Plug::Direction direction, unsigned flags, const IECore::Data *value );
 
-/// Extracts a Data value from a plug previously created with createPlugFromData().
+/// Returns a Data value from a plug.
+GAFFER_API IECore::DataPtr getValueAsData( const ValuePlug *plug );
+
+/// Sets the value of an existing plug to the specified data.
+/// Returns `true` on success and `false` on failure.
+GAFFER_API bool setValueFromData( ValuePlug *plug, const IECore::Data *value );
+
+/// Overload for use in `ComputeNode::compute()` implementations, where values may only
+/// be set on leaf plugs.
+GAFFER_API bool setValueFromData( const ValuePlug *plug, ValuePlug *leafPlug, const IECore::Data *value );
+
+/// Returns true if the given plug's value can be set from Data.
+/// If value is provided, then return true if it can be set from Data with this type id
+GAFFER_API bool canSetValueFromData( const ValuePlug *plug, const IECore::Data *value = nullptr );
+
+[[deprecated( "Use `getValueAsData()` instead" )]]
 GAFFER_API IECore::DataPtr extractDataFromPlug( const ValuePlug *plug );
 
 /// Promotion
@@ -74,14 +123,13 @@ GAFFER_API IECore::DataPtr extractDataFromPlug( const ValuePlug *plug );
 /// Returns true if a call to `promote( plug, parent )` would
 /// succeed, false otherwise.
 GAFFER_API bool canPromote( const Plug *plug, const Plug *parent = nullptr );
-/// Promotes an internal plug, returning the newly created
-/// external plug. By default the external plug is parented
-/// directly to the node, but the `parent` argument
-/// may specify a plug on that node to be used as parent
-/// instead. By default, all metadata values except those
-/// related to plug layouts are copied to the external
-/// plug - this can be controlled with the `excludeMetadata`
-/// argument.
+/// Promotes an internal plug, returning the newly created external plug. By
+/// default the external plug is parented directly to the node, but the `parent`
+/// argument may specify a plug on that node to be used as parent instead.
+/// Metadata is copied to the promoted plug, but copying can be disabled
+/// by registering `"<metadataName>:promotable"` metadata with a value of `false`.
+/// The `excludeMetadata` argument provides a secondary mechaniscm for the caller
+/// to explicitly exclude other metadata from promotion.
 /// \undoable
 GAFFER_API Plug *promote( Plug *plug, Plug *parent = nullptr, const IECore::StringAlgo::MatchPattern &excludeMetadata = "layout:*" );
 /// As `promote` but by providing the name argument, you can skip an additional
@@ -99,4 +147,4 @@ GAFFER_API void unpromote( Plug *plug );
 
 } // namespace Gaffer
 
-#endif // GAFFER_PLUGALGO_H
+#include "Gaffer/PlugAlgo.inl"

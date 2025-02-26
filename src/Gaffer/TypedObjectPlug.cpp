@@ -37,7 +37,11 @@
 
 #include "Gaffer/TypedObjectPlug.h"
 
-#include "Gaffer/TypedObjectPlug.inl"
+#include "Gaffer/StringPlug.h"
+#include "Gaffer/TypedObjectPlugImplementation.h"
+
+#include "boost/algorithm/string/classification.hpp"
+#include "boost/algorithm/string/split.hpp"
 
 namespace Gaffer
 {
@@ -45,29 +49,124 @@ namespace Gaffer
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::ObjectPlug, ObjectPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::BoolVectorDataPlug, BoolVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::IntVectorDataPlug, IntVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::Int64VectorDataPlug, Int64VectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::FloatVectorDataPlug, FloatVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::StringVectorDataPlug, StringVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::InternedStringVectorDataPlug, InternedStringVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::V2iVectorDataPlug, V2iVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::V3iVectorDataPlug, V3iVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::V2fVectorDataPlug, V2fVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::V3fVectorDataPlug, V3fVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::Color3fVectorDataPlug, Color3fVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::Color4fVectorDataPlug, Color4fVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::M44fVectorDataPlug, M44fVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::M33fVectorDataPlug, M33fVectorDataPlugTypeId )
+GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::Box2fVectorDataPlug, Box2fVectorDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::ObjectVectorPlug, ObjectVectorPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::CompoundObjectPlug, CompoundObjectPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::AtomicCompoundDataPlug, AtomicCompoundDataPlugTypeId )
 GAFFER_PLUG_DEFINE_TEMPLATE_TYPE( Gaffer::PathMatcherDataPlug, PathMatcherDataPlugTypeId )
 
+// Specialise CompoundObjectPlug to accept connections from CompoundDataPlug
+
+template<>
+bool CompoundObjectPlug::acceptsInput( const Plug *input ) const
+{
+	if( !ValuePlug::acceptsInput( input ) )
+	{
+		return false;
+	}
+
+	if( input )
+	{
+		return
+			input->isInstanceOf( staticTypeId() ) ||
+			input->isInstanceOf( AtomicCompoundDataPlug::staticTypeId() )
+		;
+	}
+	return true;
+}
+
+template<>
+void CompoundObjectPlug::setFrom( const ValuePlug *other )
+{
+	switch( static_cast<Gaffer::TypeId>( other->typeId() ) )
+	{
+		case CompoundObjectPlugTypeId :
+			setValue( static_cast<const CompoundObjectPlug *>( other )->getValue() );
+			break;
+		case AtomicCompoundDataPlugTypeId : {
+			IECore::ConstCompoundDataPtr d = static_cast<const AtomicCompoundDataPlug *>( other )->getValue();
+			IECore::CompoundObjectPtr o = new IECore::CompoundObject;
+			o->members().insert( d->readable().begin(), d->readable().end() );
+			setValue( o );
+			break;
+		}
+		default :
+			throw IECore::Exception( "Unsupported plug type" );
+	}
+}
+
+// Specialise StringVectorDataPlug to accept connections from StringPlug
+
+template<>
+bool StringVectorDataPlug::acceptsInput( const Plug *input ) const
+{
+	if( !ValuePlug::acceptsInput( input ) )
+	{
+		return false;
+	}
+
+	if( input )
+	{
+		return
+			input->isInstanceOf( staticTypeId() ) ||
+			input->isInstanceOf( StringPlug::staticTypeId() )
+		;
+	}
+	return true;
+}
+
+template<>
+void StringVectorDataPlug::setFrom( const ValuePlug *other )
+{
+	if( auto stringVectorPlug = IECore::runTimeCast<const StringVectorDataPlug >( other ) )
+	{
+		setValue( stringVectorPlug->getValue() );
+	}
+	else if( auto stringPlug = IECore::runTimeCast<const StringPlug >( other ) )
+	{
+		IECore::StringVectorDataPtr value = new IECore::StringVectorData;
+		std::string s = stringPlug->getValue();
+		if( !s.empty() )
+		{
+			boost::split( value->writable(), s, boost::is_any_of( " " ) );
+		}
+		setValue( value );
+	}
+	else
+	{
+		throw IECore::Exception( "Unsupported plug type" );
+	}
+}
+
 // explicit instantiation
 template class TypedObjectPlug<IECore::Object>;
 template class TypedObjectPlug<IECore::BoolVectorData>;
 template class TypedObjectPlug<IECore::IntVectorData>;
+template class TypedObjectPlug<IECore::Int64VectorData>;
 template class TypedObjectPlug<IECore::FloatVectorData>;
 template class TypedObjectPlug<IECore::StringVectorData>;
 template class TypedObjectPlug<IECore::InternedStringVectorData>;
 template class TypedObjectPlug<IECore::V2iVectorData>;
+template class TypedObjectPlug<IECore::V3iVectorData>;
+template class TypedObjectPlug<IECore::V2fVectorData>;
 template class TypedObjectPlug<IECore::V3fVectorData>;
 template class TypedObjectPlug<IECore::Color3fVectorData>;
+template class TypedObjectPlug<IECore::Color4fVectorData>;
 template class TypedObjectPlug<IECore::M44fVectorData>;
+template class TypedObjectPlug<IECore::M33fVectorData>;
+template class TypedObjectPlug<IECore::Box2fVectorData>;
 template class TypedObjectPlug<IECore::ObjectVector>;
 template class TypedObjectPlug<IECore::CompoundObject>;
 template class TypedObjectPlug<IECore::CompoundData>;

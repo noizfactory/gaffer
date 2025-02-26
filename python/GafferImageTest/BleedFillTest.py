@@ -38,6 +38,7 @@ import unittest
 import random
 import os
 import imath
+import pathlib
 
 import IECore
 
@@ -48,13 +49,11 @@ import GafferImageTest
 
 class BleedFillTest( GafferImageTest.ImageTestCase ) :
 
-	path = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/" )
-
 	def testBasics( self ) :
 
 		# Load a basic black/white checker, and resize it to 8x8 pixels
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( os.path.join( self.path, "checker2x2.exr" ) )
+		r["fileName"].setValue( self.imagesPath() / "checker2x2.exr" )
 
 		resize = GafferImage.Resize()
 		resize["in"].setInput( r["out"] )
@@ -75,15 +74,14 @@ class BleedFillTest( GafferImageTest.ImageTestCase ) :
 		# Test passthrough
 		bleedFill["enabled"].setValue( False )
 
-		self.assertEqual( bleedFill["out"].imageHash(), c["out"].imageHash() )
-		self.assertEqual( bleedFill["out"].image(), c["out"].image() )
+		self.assertEqual( GafferImage.ImageAlgo.imageHash( bleedFill["out"] ), GafferImage.ImageAlgo.imageHash( c["out"] ) )
+		self.assertEqual( GafferImage.ImageAlgo.image( bleedFill["out"] ), GafferImage.ImageAlgo.image( c["out"] ) )
 
 		bleedFill["enabled"].setValue( True )
 
-		self.assertNotEqual( bleedFill["out"].imageHash(), c["out"].imageHash() )
-		self.assertNotEqual( bleedFill["out"].image(), c["out"].image() )
+		self.assertNotEqual( GafferImage.ImageAlgo.imageHash( bleedFill["out"] ), GafferImage.ImageAlgo.imageHash( c["out"] ) )
+		self.assertNotEqual( GafferImage.ImageAlgo.image( bleedFill["out"] ), GafferImage.ImageAlgo.image( c["out"] ) )
 
-		
 		def sample( position ) :
 			sampler = GafferImage.Sampler(
 				bleedFill['out'],

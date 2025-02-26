@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERTEST_TYPEIDS_H
-#define GAFFERTEST_TYPEIDS_H
+#pragma once
 
 namespace GafferTest
 {
@@ -45,10 +44,8 @@ enum TypeId
 
 	MultiplyNodeTypeId = 110201,
 
-	LastTypeId = 110250,
+	LastTypeId = 110224,
 
 };
 
 } // namespace GafferTest
-
-#endif // GAFFERTEST_TYPEIDS_H

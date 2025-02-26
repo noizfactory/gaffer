@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import imath
 import subprocess
 import inspect
@@ -228,10 +228,10 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 		p = Gaffer.PlugAlgo.promote( s["b"]["o"]["primitiveVariables"]["testClosure"]["value"] )
 		p.setName( "p" )
 
-		s["b"].exportForReference( self.temporaryDirectory() + "/test.grf" )
+		s["b"].exportForReference( self.temporaryDirectory() / "test.grf" )
 
 		s["r"] = Gaffer.Reference()
-		s["r"].load( self.temporaryDirectory() + "/test.grf" )
+		s["r"].load( self.temporaryDirectory() / "test.grf" )
 
 		s["s"] = GafferOSL.OSLShader()
 		s["s"].loadShader( "ObjectProcessing/OutObject" )
@@ -463,15 +463,14 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 
 	def testTextureOrientation( self ) :
 
-		textureFileName = os.path.dirname( __file__ ) + "/images/vRamp.tx"
-
+		textureFileName = pathlib.Path( __file__ ).parent / "images" / "vRamp.tx"
 
 		outColor = GafferOSL.OSLCode()
 		outColor["out"]["c"] = GafferOSL.ClosurePlug(
 			direction = Gaffer.Plug.Direction.Out,
 			flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic
 		)
-		outColor["code"].setValue( 'c = outColor( "Cs", texture( "{}", u, v ) )'.format( textureFileName ) )
+		outColor["code"].setValue( 'c = outColor( "Cs", texture( "{}", u, v ) )'.format( textureFileName.as_posix() ) )
 
 		outObject = GafferOSL.OSLShader()
 		outObject.loadShader( "ObjectProcessing/OutObject" )
@@ -744,7 +743,7 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 
 		script = Gaffer.ScriptNode()
 
-		# Network to assign the length of "scene:path" as a primvar called "id"
+		# Network to assign the existence of "scene:path" as a primvar called "id"
 
 		script["outInt"] = GafferOSL.OSLShader()
 		script["outInt"].loadShader( "ObjectProcessing/OutInt" )
@@ -754,7 +753,7 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 		script["outObject"]["parameters"]["in0"].setInput( script["outInt"]["out"]["primitiveVariable"] )
 
 		script["expression"] = Gaffer.Expression()
-		script["expression"].setExpression( 'parent["outInt"]["parameters"]["value"] = len( context.get( "scene:path", [] ) )' )
+		script["expression"].setExpression( 'parent["outInt"]["parameters"]["value"] = 1 if context.get( "scene:path", None ) else 0' )
 
 		# OSLObject node to apply network
 
@@ -768,45 +767,9 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 		script["oslObject"]["filter"].setInput( script["filter"]["out"] )
 		script["oslObject"]["shader"].setInput( script["outObject"]["out"]["out"] )
 
-		# SceneWriter to save the result for later perusal
+		# Check that "scene:path" isn't exposed to the shader
 
-		script["writer"] = GafferScene.SceneWriter()
-		script["writer"]["in"].setInput( script["oslObject"]["out"] )
-		script["writer"]["fileName"].setValue( os.path.join( self.temporaryDirectory(), "test.scc" ) )
-
-		script["fileName"].setValue( os.path.join( self.temporaryDirectory(), "test.gfr" ) )
-		script.save()
-
-		# Assertions
-
-		def assertContextCompatibility( expected, envVar ) :
-
-			env = os.environ.copy()
-			if envVar is not None :
-				env["GAFFEROSL_OSLOBJECT_CONTEXTCOMPATIBILITY"] = envVar
-
-			subprocess.check_call(
-				[ "gaffer", "execute", script["fileName"].getValue(), "-nodes", "writer" ],
-				env = env
-			)
-
-			scene = IECoreScene.SceneCache( script["writer"]["fileName"].getValue(), IECore.IndexedIO.OpenMode.Read )
-			plane = scene.child( "plane" )
-
-			self.assertEqual( plane.readObject( 0 )["id"].data[0], 1 if expected else 0 )
-
-		assertContextCompatibility( False, envVar = None )
-		assertContextCompatibility( False, envVar = "0" )
-		assertContextCompatibility( False, envVar = "?" )
-		assertContextCompatibility( True, envVar = "1" )
-
-		Gaffer.NodeAlgo.applyUserDefaults( script["oslObject"] )
-		script.save()
-
-		assertContextCompatibility( False, envVar = None )
-		assertContextCompatibility( False, envVar = "0" )
-		assertContextCompatibility( False, envVar = "?" )
-		assertContextCompatibility( False, envVar = "1" )
+		self.assertEqual( script["oslObject"]["out"].object( "/plane")["id"].data[0], 0 )
 
 	def testAllTypes( self ) :
 
@@ -1030,6 +993,99 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 
 		self.assertEqual( o["out"].object( "/plane" )["testString"].data[0], "NOT FOUND" )
 
+	def testAttributeStringSubstitutions( self ):
+
+		p = GafferScene.Plane()
+
+		g = GafferScene.Group()
+		g["in"][0].setInput( p["out"] )
+		g["in"][1].setInput( p["out"] )
+
+		a = GafferScene.CustomAttributes()
+		a["attributes"].addChild( Gaffer.NameValuePlug( "testAttribute", "${scene:path}" ) )
+		a["in"].setInput( g["out"] )
+
+		o = GafferOSL.OSLObject()
+		o["in"].setInput( a["out"] )
+
+		# shading network to output attributes as formatted string.
+
+		code = GafferOSL.OSLCode()
+		code["parameters"].addChild( Gaffer.StringPlug( "inString", defaultValue = "<attr:testAttribute>" ) )
+		code["out"].addChild( Gaffer.StringPlug( "testString", direction = Gaffer.Plug.Direction.Out ) )
+
+		o["primitiveVariables"].addChild( Gaffer.NameValuePlug( "testString", "" ) )
+		o["primitiveVariables"][0]["value"].setInput( code["out"]["testString"] )
+
+		f = GafferScene.PathFilter()
+		f["paths"].setValue( IECore.StringVectorData( [ "/..." ] ) )
+
+		a["filter"].setInput( f["out"] )
+		o["filter"].setInput( f["out"] )
+
+		code["code"].setValue( 'testString = inString;' )
+
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], "" )
+		self.assertEqual( o["out"].object( "/group/plane1" )["testString"].data[0], "" )
+
+		o["useAttributes"].setValue( True )
+
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], "/group/plane" )
+		self.assertEqual( o["out"].object( "/group/plane1" )["testString"].data[0], "/group/plane1" )
+
+		code["parameters"].addChild( Gaffer.StringPlug( "inString2", defaultValue = "<attr:testAttribute>" ) )
+		code["code"].setValue( 'testString = concat( inString, ",", inString2 );' )
+
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], "/group/plane,/group/plane" )
+
+		code["parameters"]["inString"].setValue( "[<attr:testAttribute>]" )
+
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], "[/group/plane],/group/plane" )
+
+		code["parameters"]["inString"].setValue( "<attr:testAttribute2>" )
+
+		# Missing attributes are replaced with an empty string
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], ",/group/plane" )
+
+		a["attributes"].addChild( Gaffer.NameValuePlug( "testAttribute2", "foo" ) )
+		self.assertEqual( o["out"].object( "/group/plane" )["testString"].data[0], "foo,/group/plane" )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testAttributeStringSubstitutionsPerf( self ):
+
+		p = GafferScene.Plane()
+		p["divisions"].setValue( imath.V2i( 99 ) )
+
+		a = GafferScene.CustomAttributes()
+		for i in range( 100 ):
+			a["attributes"].addChild( Gaffer.NameValuePlug( "testAttribute%i"%i, "${scene:path}%i"%i ) )
+		a["in"].setInput( p["out"] )
+
+		o = GafferOSL.OSLObject()
+		o["in"].setInput( a["out"] )
+
+		# shading network to output attributes as formatted string.
+
+		code = GafferOSL.OSLCode()
+		for i in range( 100 ):
+			code["parameters"].addChild( Gaffer.StringPlug( "inString%i"%i, defaultValue = "<attr:testAttribute%i>"%i ) )
+		code["out"].addChild( Gaffer.IntPlug( "test", direction = Gaffer.Plug.Direction.Out ) )
+
+		o["primitiveVariables"].addChild( Gaffer.NameValuePlug( "test", 0 ) )
+		o["primitiveVariables"][0]["value"].setInput( code["out"]["test"] )
+
+		f = GafferScene.PathFilter()
+		f["paths"].setValue( IECore.StringVectorData( [ "/..." ] ) )
+
+		a["filter"].setInput( f["out"] )
+		o["filter"].setInput( f["out"] )
+
+		# Count the number of substituted parameters that end in "0"
+		code["code"].setValue( 'test = 0;\n' + "".join( [ 'test += getchar( inString%i, strlen( inString%i ) - 1 ) == 48;\n'%(i,i) for i in range( 100 ) ] ) )
+
+		o["useAttributes"].setValue( True )
+
+		self.assertEqual( o["out"].object( "/plane" )["test"].data, IECore.IntVectorData( [ 10 ] * 10000 ) )
 
 	def testAffects( self ) :
 
@@ -1044,31 +1100,100 @@ class OSLObjectTest( GafferOSLTest.OSLTestCase ) :
 
 		cs = GafferTest.CapturingSlot( o.plugDirtiedSignal() )
 
-		s["transform"]["translate"]["x"].setValue( 1 )
-		def checkAffected( expected ):
-			self.assertEqual( [ i[0].getName() for i in cs if i[0].parent() == o["out"] ], expected )
+		def checkAffected( expected ) :
+
+			self.assertEqual(
+				{ i[0].getName() for i in cs if i[0].parent() == o["out"] },
+				set( expected )
+			)
 			del cs[:]
-		checkAffected( ["transform", "bound" ] )
+
+		s["transform"]["translate"]["x"].setValue( 1 )
+		checkAffected( [ "transform", "bound", "childBounds" ] )
 
 		o["useTransform"].setValue( True )
-
-		checkAffected( ["object", "bound" ] )
+		checkAffected( [ "object", "bound", "childBounds" ] )
 
 		s["transform"]["translate"]["x"].setValue( 2 )
-
-		checkAffected( ["transform", "object", "bound" ] )
+		checkAffected( [ "transform", "object", "bound", "childBounds" ] )
 
 		a["attributes"][0]["value"].setValue( 1 )
-		checkAffected( ["attributes" ] )
+		checkAffected( [ "attributes" ] )
 
 		o["useAttributes"].setValue( True )
-
-		checkAffected( ["object", "bound" ] )
+		checkAffected( [ "object", "bound", "childBounds" ] )
 
 		a["attributes"][0]["value"].setValue( 2 )
+		checkAffected( [ "attributes", "object", "bound", "childBounds" ] )
 
-		checkAffected( ["attributes", "object", "bound" ] )
+	def testBoundsUpdate( self ) :
+
+		plane = GafferScene.Plane()
+
+		planeFilter = GafferScene.PathFilter()
+		planeFilter["paths"].setValue( IECore.StringVectorData( [ "/plane" ] ) )
+
+		inPoint = GafferOSL.OSLShader()
+		inPoint.loadShader( "ObjectProcessing/InPoint" )
+
+		multiplyVector = GafferOSL.OSLShader()
+		multiplyVector.loadShader( "Maths/MultiplyVector" )
+		multiplyVector["parameters"]["a"].setInput( inPoint["out"]["value"] )
+		multiplyVector["parameters"]["b"].setValue( imath.V3f( 2 ) )
+
+		oslObject = GafferOSL.OSLObject()
+		oslObject["in"].setInput( plane["out"] )
+		oslObject["filter"].setInput( planeFilter["out"] )
+
+		oslObject["primitiveVariables"].addChild(
+			Gaffer.NameValuePlug(
+				"aPoint", IECore.V3fData( imath.V3f( 0 ), IECore.GeometricData.Interpretation.Point )
+			)
+		)
+		oslObject["primitiveVariables"][0]["value"].setInput( multiplyVector["out"]["out"] )
+
+		# Because we're not manipulating "P", the bounding boxes should remain unchanged.
+
+		self.assertEqual(
+			oslObject["out"].object( "/plane" )["aPoint"].data,
+			oslObject["in"].object( "/plane" )["P"].data * imath.V3f( 2 )
+		)
+
+		self.assertScenesEqual( oslObject["out"], oslObject["in"], checks = { "bound" } )
+		self.assertSceneHashesEqual( oslObject["out"], oslObject["in"], checks = { "bound" } )
+
+		# But as soon as we manipulate "P", bounds updates should be triggered.
+
+		oslObject["primitiveVariables"][0]["name"].setValue( "P" )
+
+		self.assertEqual(
+			oslObject["out"].object( "/plane" )["P"].data,
+			oslObject["in"].object( "/plane" )["P"].data * imath.V3f( 2 )
+		)
+
+		self.assertEqual( oslObject["out"].bound( "/plane" ), oslObject["out"].object( "/plane" ).bound() )
+		self.assertSceneValid( oslObject["out"] )
+
+		# And we should be able to turn the bounds updates off if we don't want to
+		# pay for them.
+
+		oslObject["adjustBounds"].setValue( False )
+
+		self.assertEqual(
+			oslObject["out"].object( "/plane" )["P"].data,
+			oslObject["in"].object( "/plane" )["P"].data * imath.V3f( 2 )
+		)
+
+		self.assertScenesEqual( oslObject["out"], oslObject["in"], checks = { "bound" } )
+		self.assertSceneHashesEqual( oslObject["out"], oslObject["in"], checks = { "bound" } )
+
+	def testLoadFrom0_55( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "oslObjectVersion-0.55.0.0.gfr" )
+		script.load()
+
+		self.assertNotIn( "__contextCompatibility", script["OSLObject"] )
 
 if __name__ == "__main__":
 	unittest.main()
-

@@ -52,9 +52,10 @@
 #include "IECore/CompoundData.h"
 
 #include "boost/algorithm/string.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferUI;
 
@@ -87,6 +88,16 @@ class OSLImagePlugAdder : public PlugAdder
 
 		bool canCreateConnection( const Plug *endpoint ) const override
 		{
+			if( !PlugAdder::canCreateConnection( endpoint ) )
+			{
+				return false;
+			}
+
+			if( MetadataAlgo::readOnly( m_plugsParent.get() ) )
+			{
+				return false;
+			}
+
 			IECore::ConstCompoundDataPtr plugAdderOptions = Metadata::value<IECore::CompoundData>( m_plugsParent->node(), "plugAdderOptions" );
 			return !availableChannels( plugAdderOptions.get(), endpoint ).empty();
 		}
@@ -110,15 +121,11 @@ class OSLImagePlugAdder : public PlugAdder
 		std::set<std::string> usedNames() const
 		{
 			std::set<std::string> used;
-			for( NameValuePlugIterator it( m_plugsParent.get() ); !it.done(); ++it )
+			for( const auto &plug : NameValuePlug::Range( *m_plugsParent ) )
 			{
-				// TODO - this method for checking if a plug variesWithContext should probably live in PlugAlgo
-				// ( it's based on Switch::variesWithContext )
-				PlugPtr sourcePlug = (*it)->namePlug()->source<Gaffer::Plug>();
-				bool variesWithContext = sourcePlug->direction() == Plug::Out && IECore::runTimeCast<const ComputeNode>( sourcePlug->node() );
-				if( !variesWithContext )
+				if( !PlugAlgo::dependsOnCompute( plug->namePlug() ) )
 				{
-					used.insert( (*it)->namePlug()->getValue() );
+					used.insert( plug->namePlug()->getValue() );
 				}
 			}
 			return used;
@@ -137,7 +144,7 @@ class OSLImagePlugAdder : public PlugAdder
 				if( color4fDefaultData )
 				{
 					const Imath::Color4f &default4 = color4fDefaultData->readable();
-					alphaValuePlug = new FloatPlug( "value", Plug::In, default4[3], Imath::limits<float>::min(), Imath::limits<float>::max(), Plug::Flags::Default | Plug::Flags::Dynamic );
+					alphaValuePlug = new FloatPlug( "value", Plug::In, default4[3], std::numeric_limits<float>::lowest(), std::numeric_limits<float>::max(), Plug::Flags::Default | Plug::Flags::Dynamic );
 					defaultData = new IECore::Color3fData( Imath::Color3f( default4[0], default4[1], default4[2] ) );
 				}
 
@@ -181,6 +188,11 @@ class OSLImagePlugAdder : public PlugAdder
 
 		bool buttonRelease( const ButtonEvent &event )
 		{
+			if( MetadataAlgo::readOnly( m_plugsParent.get() ) )
+			{
+				return false;
+			}
+
 			IECore::ConstCompoundDataPtr plugAdderOptions = Metadata::value<IECore::CompoundData>( m_plugsParent->node(), "plugAdderOptions" );
 			vector<std::string> origNames = availableChannels( plugAdderOptions.get() );
 			map<std::string, std::string> nameMapping;
@@ -238,7 +250,7 @@ class OSLImagePlugAdder : public PlugAdder
 			{
 				try
 				{
-					matchingDataType = PlugAlgo::extractDataFromPlug( valueInput );
+					matchingDataType = PlugAlgo::getValueAsData( valueInput );
 				}
 				catch( ... )
 				{
@@ -283,7 +295,7 @@ class OSLImagePlugAdder : public PlugAdder
 
 			std::sort( result.begin(), result.end() );
 			vector<std::string> customSortResult;
-			for( const std::string &i : { "RGB", "RGBA", "R", "G", "B", "A" } )
+			for( const char *i : { "RGB", "RGBA", "R", "G", "B", "A" } )
 			{
 				if( std::find( result.begin(), result.end(), i ) != result.end() )
 				{
@@ -308,7 +320,7 @@ struct Registration
 {
 		Registration()
 		{
-			NoduleLayout::registerCustomGadget( "GafferOSLUI.OSLImageUI.PlugAdder", boost::bind( &create, ::_1 ) );
+			NoduleLayout::registerCustomGadget( "GafferOSLUI.OSLImageUI.PlugAdder", &create );
 		}
 
 	private :
@@ -322,5 +334,3 @@ struct Registration
 Registration g_registration;
 
 } // namespace
-
-

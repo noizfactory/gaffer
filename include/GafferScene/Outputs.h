@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_OUTPUTS_H
-#define GAFFERSCENE_OUTPUTS_H
+#pragma once
 
 #include "GafferScene/GlobalsProcessor.h"
 
@@ -50,10 +49,10 @@ class GAFFERSCENE_API Outputs : public GlobalsProcessor
 
 	public :
 
-		Outputs( const std::string &name=defaultName<Outputs>() );
+		explicit Outputs( const std::string &name=defaultName<Outputs>() );
 		~Outputs() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Outputs, OutputsTypeId, GlobalsProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Outputs, OutputsTypeId, GlobalsProcessor );
 
 		Gaffer::ValuePlug *outputsPlug();
 		const Gaffer::ValuePlug *outputsPlug() const;
@@ -83,5 +82,3 @@ class GAFFERSCENE_API Outputs : public GlobalsProcessor
 IE_CORE_DECLAREPTR( Outputs )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_OUTPUTS_H

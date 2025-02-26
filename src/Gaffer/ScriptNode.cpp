@@ -41,6 +41,7 @@
 #include "Gaffer/ApplicationRoot.h"
 #include "Gaffer/BackgroundTask.h"
 #include "Gaffer/CompoundDataPlug.h"
+#include "Gaffer/Container.inl"
 #include "Gaffer/Context.h"
 #include "Gaffer/DependencyNode.h"
 #include "Gaffer/MetadataAlgo.h"
@@ -52,15 +53,23 @@
 #include "IECore/MessageHandler.h"
 #include "IECore/SimpleTypedData.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
-#include "boost/filesystem/convenience.hpp"
-#include "boost/filesystem/path.hpp"
+
+#include "fmt/format.h"
 
 #include <fstream>
 
+// Help MSVC check if a file is writable
+#ifndef _MSC_VER
 #include <unistd.h>
+#else
+#include <io.h>
+#define access _waccess
+#define W_OK 6
+#endif
 
+using namespace boost::placeholders;
 using namespace Gaffer;
 
 //////////////////////////////////////////////////////////////////////////
@@ -70,7 +79,8 @@ using namespace Gaffer;
 namespace Gaffer
 {
 
-GAFFER_DECLARECONTAINERSPECIALISATIONS( ScriptContainer, ScriptContainerTypeId )
+GAFFER_DECLARECONTAINERSPECIALISATIONS( Gaffer::ScriptContainer, ScriptContainerTypeId )
+template class Container<GraphComponent, ScriptNode>;
 
 }
 
@@ -204,20 +214,23 @@ IE_CORE_DEFINERUNTIMETYPED( ScriptNode::CompoundAction );
 namespace
 {
 
-std::string readFile( const std::string &fileName )
+std::string readFile( const std::filesystem::path &fileName )
 {
 	std::ifstream f( fileName.c_str() );
 	if( !f.good() )
 	{
-		throw IECore::IOException( "Unable to open file \"" + fileName + "\"" );
+		throw IECore::IOException( "Unable to open file \"" + fileName.string() + "\"" );
 	}
+
+	const IECore::Canceller *canceller = Context::current()->canceller();
 
 	std::string s;
 	while( !f.eof() )
 	{
+		IECore::Canceller::check( canceller );
 		if( !f.good() )
 		{
-			throw IECore::IOException( "Failed to read from \"" + fileName + "\"" );
+			throw IECore::IOException( "Failed to read from \"" + fileName.string() + "\"" );
 		}
 
 		std::string line;
@@ -236,11 +249,96 @@ const IECore::InternedString g_framesPerSecond( "framesPerSecond" );
 
 } // namespace
 
+class ScriptNode::FocusSet : public Gaffer::Set
+{
+
+	public :
+
+		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::ScriptNode::FocusSet, ScriptNodeFocusSetTypeId, Gaffer::Set );
+
+		void setNode( Node *node )
+		{
+			if( node != m_node )
+			{
+				if( m_node )
+				{
+					NodePtr oldNode = m_node;
+					m_node.reset();
+					m_nodeParentChangedConnection.disconnect();
+					memberRemovedSignal()( this, oldNode.get() );
+				}
+
+				m_node = node;
+
+				if( node )
+				{
+					m_nodeParentChangedConnection = node->parentChangedSignal().connect(
+						boost::bind( &FocusSet::parentChanged, this, ::_1, ::_2 )
+					);
+					memberAddedSignal()( this, node );
+				}
+			}
+		}
+
+		Node *getNode() const
+		{
+			return m_node.get();
+		}
+
+		/// @name Set interface
+		////////////////////////////////////////////////////////////////////
+		//@{
+		bool contains( const Member *object ) const override
+		{
+			return m_node && m_node.get() == object;
+		}
+
+		Member *member( size_t index ) override
+		{
+			return m_node.get();
+		}
+
+		const Member *member( size_t index ) const override
+		{
+			return m_node.get();
+		}
+
+		size_t size() const override
+		{
+			return m_node ? 1 : 0;
+		}
+		//@}
+
+	private :
+
+		void parentChanged( GraphComponent *member, GraphComponent *oldParent )
+		{
+			assert( member == m_node );
+			if( !m_node->parent() )
+			{
+				setNode( nullptr );
+				ScriptNode *script = IECore::runTimeCast<ScriptNode>( oldParent );
+				if( !script )
+				{
+					script = oldParent->ancestor<ScriptNode>();
+				}
+				if( script )
+				{
+					script->focusChangedSignal()( script, nullptr );
+				}
+			}
+		}
+
+		Gaffer::NodePtr m_node;
+		Signals::ScopedConnection m_nodeParentChangedConnection;
+};
+
+
 //////////////////////////////////////////////////////////////////////////
 // ScriptNode implementation
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ScriptNode );
+GAFFER_NODE_DEFINE_TYPE( ScriptNode );
 
 size_t ScriptNode::g_firstPlugIndex = 0;
 ScriptNode::SerialiseFunction ScriptNode::g_serialiseFunction;
@@ -250,6 +348,7 @@ ScriptNode::ScriptNode( const std::string &name )
 	:
 	Node( name ),
 	m_selection( new StandardSet( /* removeOrphans = */ true ) ),
+	m_focus( new FocusSet() ),
 	m_undoIterator( m_undoList.end() ),
 	m_currentActionStage( Action::Invalid ),
 	m_executing( false ),
@@ -398,6 +497,45 @@ const StandardSet *ScriptNode::selection() const
 	return m_selection.get();
 }
 
+void ScriptNode::setFocus( Node *node )
+{
+	if( node == m_focus->getNode() )
+	{
+		return;
+	}
+	if( node && !this->isAncestorOf( node ) )
+	{
+		throw IECore::Exception( fmt::format( "{} is not a child of this script", node->fullName() ) );
+	}
+	m_focus->setNode( node );
+	focusChangedSignal()( this, node );
+}
+
+Node *ScriptNode::getFocus()
+{
+	return m_focus->getNode();
+}
+
+const Node *ScriptNode::getFocus() const
+{
+	return m_focus->getNode();
+}
+
+ScriptNode::FocusChangedSignal &ScriptNode::focusChangedSignal()
+{
+	return m_focusChangedSignal;
+}
+
+Set *ScriptNode::focusSet()
+{
+	return m_focus.get();
+}
+
+const Set *ScriptNode::focusSet() const
+{
+	return m_focus.get();
+}
+
 void ScriptNode::pushUndoState( UndoScope::State state, const std::string &mergeGroup )
 {
 	if( m_undoStateStack.size() == 0 )
@@ -473,6 +611,14 @@ void ScriptNode::popUndoState()
 
 }
 
+void ScriptNode::postActionStageCleanup()
+{
+	m_currentActionStage = Action::Invalid;
+
+	UndoScope undoDisabled( this, UndoScope::Disabled );
+	unsavedChangesPlug()->setValue( true );
+}
+
 bool ScriptNode::undoAvailable() const
 {
 	return m_currentActionStage == Action::Invalid && m_undoIterator != m_undoList.begin();
@@ -489,28 +635,21 @@ void ScriptNode::undo()
 
 	m_currentActionStage = Action::Undo;
 
-		m_undoIterator--;
-		(*m_undoIterator)->undoAction();
+	try
+	{
+		// NOTE : Decrement the undo iterator if undoAction() completes without throwing an exception
 
-	/// \todo It's conceivable that an exception from somewhere in
-	/// Action::undoAction() could prevent this cleanup code from running,
-	/// leaving us in a bad state. This could perhaps be addressed
-	/// by using BOOST_SCOPE_EXIT. The most likely cause of such an
-	/// exception would be in an errant slot connected to a signal
-	/// triggered by the action performed. However, currently most
-	/// python slot callers suppress python exceptions (printing
-	/// them to the shell), so it's not even straightforward to
-	/// write a test case for this potential problem. It could be
-	/// argued that we shouldn't be suppressing exceptions in slots,
-	/// but if we don't then well-behaved (and perhaps crucial) slots
-	/// might not get called when badly behaved slots mess up. It seems
-	/// best to simply report errors as we do, and allow the well behaved
-	/// slots to have their turn - we might even want to extend this
-	/// behaviour to the c++ slots.
-	m_currentActionStage = Action::Invalid;
+		UndoIterator it = m_undoIterator;
+		(*(--it))->undoAction();
+		m_undoIterator = it;
+	}
+	catch( ... )
+	{
+		postActionStageCleanup();
+		throw;
+	}
 
-	UndoScope undoDisabled( this, UndoScope::Disabled );
-	unsavedChangesPlug()->setValue( true );
+	postActionStageCleanup();
 }
 
 bool ScriptNode::redoAvailable() const
@@ -529,13 +668,18 @@ void ScriptNode::redo()
 
 	m_currentActionStage = Action::Redo;
 
+	try
+	{
 		(*m_undoIterator)->doAction();
-		m_undoIterator++;
+		++m_undoIterator;
+	}
+	catch( ... )
+	{
+		postActionStageCleanup();
+		throw;
+	}
 
-	m_currentActionStage = Action::Invalid;
-
-	UndoScope undoDisabled( this, UndoScope::Disabled );
-	unsavedChangesPlug()->setValue( true );
+	postActionStageCleanup();
 }
 
 Action::Stage ScriptNode::currentActionStage() const
@@ -619,7 +763,7 @@ void ScriptNode::deleteNodes( Node *parent, const Set *filter, bool reconnect )
 			DependencyNode *dependencyNode = IECore::runTimeCast<DependencyNode>( node );
 			if( reconnect && dependencyNode )
 			{
-				for( RecursiveOutputPlugIterator it( node ); !it.done(); ++it )
+				for( Plug::RecursiveOutputIterator it( node ); !it.done(); ++it )
 				{
 					Plug *inPlug = nullptr;
 					try
@@ -630,7 +774,7 @@ void ScriptNode::deleteNodes( Node *parent, const Set *filter, bool reconnect )
 					{
 						msg(
 							IECore::Msg::Warning,
-							boost::str( boost::format( "correspondingInput error while deleting - cannot reconnect \"%s\"" ) % it->get()->fullName() ),
+							fmt::format( "correspondingInput error while deleting - cannot reconnect \"{}\"", it->get()->fullName() ),
 							e.what()
 						);
 					}
@@ -676,21 +820,21 @@ std::string ScriptNode::serialise( const Node *parent, const Set *filter ) const
 	return serialiseInternal( parent, filter );
 }
 
-void ScriptNode::serialiseToFile( const std::string &fileName, const Node *parent, const Set *filter ) const
+void ScriptNode::serialiseToFile( const std::filesystem::path &fileName, const Node *parent, const Set *filter ) const
 {
 	std::string s = serialiseInternal( parent, filter );
 
 	std::ofstream f( fileName.c_str() );
 	if( !f.good() )
 	{
-		throw IECore::IOException( "Unable to open file \"" + fileName + "\"" );
+		throw IECore::IOException( "Unable to open file \"" + fileName.string() + "\"" );
 	}
 
 	f << s;
 
 	if( !f.good() )
 	{
-		throw IECore::IOException( "Failed to write to \"" + fileName + "\"" );
+		throw IECore::IOException( "Failed to write to \"" + fileName.string() + "\"" );
 	}
 }
 
@@ -699,10 +843,10 @@ bool ScriptNode::execute( const std::string &serialisation, Node *parent, bool c
 	return executeInternal( serialisation, parent, continueOnError, "" );
 }
 
-bool ScriptNode::executeFile( const std::string &fileName, Node *parent, bool continueOnError )
+bool ScriptNode::executeFile( const std::filesystem::path &fileName, Node *parent, bool continueOnError )
 {
 	const std::string serialisation = readFile( fileName );
-	return executeInternal( serialisation, parent, continueOnError, fileName );
+	return executeInternal( serialisation, parent, continueOnError, fileName.generic_string() );
 }
 
 bool ScriptNode::load( bool continueOnError)
@@ -725,12 +869,16 @@ bool ScriptNode::load( bool continueOnError)
 
 void ScriptNode::save() const
 {
+	// Caution : `FileMenu.save()` currently contains a duplicate of this code,
+	// so that `serialiseToFile()` can be done in a background task, and the
+	// plug edit can be made on the UI thread. If editing this function, make
+	// sure FileMenu stays in sync.
 	serialiseToFile( fileNamePlug()->getValue() );
 	UndoScope undoDisabled( const_cast<ScriptNode *>( this ), UndoScope::Disabled );
 	const_cast<BoolPlug *>( unsavedChangesPlug() )->setValue( false );
 }
 
-bool ScriptNode::importFile( const std::string &fileName, Node *parent, bool continueOnError )
+bool ScriptNode::importFile( const std::filesystem::path &fileName, Node *parent, bool continueOnError )
 {
 	DirtyPropagationScope dirtyScope;
 
@@ -739,7 +887,7 @@ bool ScriptNode::importFile( const std::string &fileName, Node *parent, bool con
 	bool result = script->load( continueOnError );
 
 	StandardSetPtr nodeSet = new StandardSet();
-	nodeSet->add( NodeIterator( script.get() ), NodeIterator( script->children().end(), script->children().end() ) );
+	nodeSet->add( Node::Iterator( script.get() ), Node::Iterator( script->children().end(), script->children().end() ) );
 	const std::string nodeSerialisation = script->serialise( script.get(), nodeSet.get() );
 
 	result |= execute( nodeSerialisation, parent, continueOnError );
@@ -753,6 +901,14 @@ std::string ScriptNode::serialiseInternal( const Node *parent, const Set *filter
 	{
 		throw IECore::Exception( "Serialisation not available - please link to libGafferBindings." );
 	}
+
+	Context::EditableScope scope( Context::current() );
+	if( ( !parent || parent == this ) && !filter )
+	{
+		static const bool includeParentMetadata = true;
+		scope.set( "serialiser:includeParentMetadata", &includeParentMetadata );
+	}
+
 	return g_serialiseFunction( parent ? parent : this, filter );
 }
 
@@ -790,6 +946,29 @@ const Context *ScriptNode::context() const
 	return m_context.get();
 }
 
+void ScriptNode::updateContextVariables()
+{
+	// Get contents of `variablesPlug()` and remove any previously transferred
+	// variables that no longer exist.
+	IECore::CompoundDataMap values;
+	variablesPlug()->fillCompoundData( values );
+	for( auto name : m_currentVariables )
+	{
+		if( values.find( name ) == values.end() )
+		{
+			context()->remove( name );
+		}
+	}
+
+	// Transfer current variables and remember what we've done.
+	m_currentVariables.clear();
+	for( const auto &variable : values )
+	{
+		context()->set( variable.first, variable.second.get() );
+		m_currentVariables.insert( variable.first );
+	}
+}
+
 void ScriptNode::plugSet( Plug *plug )
 {
 	if( plug == frameStartPlug() )
@@ -812,20 +991,16 @@ void ScriptNode::plugSet( Plug *plug )
 	}
 	else if( plug == variablesPlug() )
 	{
-		IECore::CompoundDataMap values;
-		variablesPlug()->fillCompoundData( values );
-		for( IECore::CompoundDataMap::const_iterator it = values.begin(), eIt = values.end(); it != eIt; ++it )
-		{
-			context()->set( it->first, it->second.get() );
-		}
+		updateContextVariables();
 	}
 	else if( plug == fileNamePlug() )
 	{
-		const boost::filesystem::path fileName( fileNamePlug()->getValue() );
+		const std::filesystem::path fileName( fileNamePlug()->getValue() );
 		context()->set( g_scriptName, fileName.stem().string() );
+
 		MetadataAlgo::setReadOnly(
 			this,
-			boost::filesystem::exists( fileName ) && 0 != access( fileName.c_str(), W_OK ),
+			std::filesystem::exists( fileName ) && 0 != access( fileName.c_str(), W_OK ),
 			/* persistent = */ false
 		);
 	}

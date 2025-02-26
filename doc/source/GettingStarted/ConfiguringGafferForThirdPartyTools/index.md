@@ -2,15 +2,18 @@
 
 Gaffer is compatible with the following commercial and open-source third-party tools:
 
-- [Appleseed](http://appleseedhq.net/)
-- [Arnold](https://www.solidangle.com/arnold/)
+- [Arnold](https://www.arnoldrenderer.com/)
+- [Cycles](https://www.cycles-renderer.org/)
 - [3Delight](http://www.3delight.com/)
 - [Tractor](https://renderman.pixar.com/tractor)
 
-Gaffer comes with Appleseed, so it will require no additional configuration. For the rest of the tools in this list, you will need to set some additional environment variables.
+Gaffer comes with Cycles, so it will require no additional configuration. For the rest of the tools in this list, you will need to set some additional environment variables.
+
+> Tip :
+> If you do not use Cycles in production, you can hide its nodes and presets from the UI by setting the `GAFFERCYCLES_HIDE_UI` environment variable to `1`. Even when set, Cycles will still be available for OSL shader previews and example scenes.
 
 > Note :
-> For the the following Linux instructions, we will assume you are using the _bash_ shell and are familiar with terminal commands. Other shells will have comparable methods for setting environment variables.
+> For the following Linux instructions, we will assume you are using the bash shell and are familiar with terminal commands. Other shells will have comparable methods for setting environment variables.
 
 
 ## Configuring Gaffer for Arnold ##
@@ -30,19 +33,38 @@ To create the `ARNOLD_ROOT` environment variable in Linux:
 2. Add the line `export ARNOLD_ROOT=!ARNOLD_PATH_LINUX!` and save.
 
 3. In a terminal, test that the variable is set:
-    
+
     ```bash
     user@desktop ~ $ echo $ARNOLD_ROOT
     # !ARNOLD_PATH_LINUX!
     ```
 
 
-### Arnold in OSX ###
+### Arnold in Windows ###
+
+> Note :
+> For this instruction, we will assume you have Arnold !ARNOLD_VERSION! installed to `!ARNOLD_PATH_WINDOWS!`.
+
+To create the `ARNOLD_ROOT` environment variable in Windows:
+
+1. Open the Command Prompt (Start > Windows System > Command Prompt).
+
+2. Run the command `setx ARNOLD_ROOT "!ARNOLD_PATH_WINDOWS!"`.
+
+3. In a new Command Prompt window, test that the variable is set:
+
+    ```powershell
+    C:\Users\user> echo %ARNOLD_ROOT%
+    # !ARNOLD_PATH_WINDOWS!
+    ```
+
+
+### Arnold in macOS ###
 
 > Note :
 > For this instruction, we will assume you have Arnold !ARNOLD_VERSION! installed to `!ARNOLD_PATH_OSX!`.
 
-To create the `ARNOLD_ROOT` environment variable in OSX:
+To create the `ARNOLD_ROOT` environment variable in macOS:
 
 1. Open `~/.bash_profile` with a text editor.
 
@@ -51,7 +73,7 @@ To create the `ARNOLD_ROOT` environment variable in OSX:
 3. Open a terminal (Finder > Go > Utilities > Terminal).
 
 4. Test that the variable is set:
-    
+
     ```bash
     MacBook:~ user$ echo $ARNOLD_ROOT
     # !ARNOLD_PATH_OSX!
@@ -60,7 +82,7 @@ To create the `ARNOLD_ROOT` environment variable in OSX:
 
 ### Verifying Arnold is loaded ###
 
-The next time you start Gaffer, the Arnold nodes will be available from the node creation menu (right-click inside the _Graph Editor_).
+The next time you start Gaffer, the Arnold nodes will be available from the node creation menu (right-click inside the Graph Editor).
 
 <!-- TODO: ![](images/arnoldNodes.png "Arnold node menu") -->
 
@@ -82,19 +104,44 @@ To create the `DELIGHT` environment variable in Linux:
 2. Add the line `export DELIGHT=!DELIGHT_PATH_LINUX!` and save.
 
 3. In a terminal, test that the variable is set:
-    
+
     ```shell
     user@desktop ~ $ echo $DELIGHT
     # !DELIGHT_PATH_LINUX!
     ```
 
 
-### 3Delight in OSX ###
+### 3Delight in Windows ###
+
+> Important :
+> Gaffer currently requires __3Delight for Maya__ to be included as part of the 3Delight install for access to lights and shaders.
+
+> Tip :
+> The 3Delight installer typically configures the `DELIGHT` environment variable on Windows. So the steps below may not be required.
+
+> Note :
+> For this instruction, we will assume you have 3Delight !DELIGHT_VERSION! installed to `!DELIGHT_PATH_WINDOWS!`.
+
+To create the `DELIGHT` environment variable in Windows:
+
+1. Open the Command Prompt (Start > Windows System > Command Prompt).
+
+2. Run the command `setx DELIGHT "!DELIGHT_PATH_WINDOWS!"`.
+
+3. In a new Command Prompt window, test that the variable is set:
+
+    ```powershell
+    C:\Users\user> echo %DELIGHT%
+    # !DELIGHT_PATH_WINDOWS!
+    ```
+
+
+### 3Delight in macOS ###
 
 > Note :
 > For this instruction, we will assume you have 3Delight !DELIGHT_VERSION! installed to `!DELIGHT_PATH_OSX!`.
 
-To create the `DELIGHT` environment variable in OSX:
+To create the `DELIGHT` environment variable in macOS:
 
 1. Open `~/.bash_profile` with a text editor.
 
@@ -103,7 +150,7 @@ To create the `DELIGHT` environment variable in OSX:
 3. Open a terminal (Finder > Go > Utilities > Terminal).
 
 4. Test that the variable is set:
-    
+
     ```bash
     MacBook:~ user$ echo $DELIGHT
     # !DELIGHT_PATH_OSX!
@@ -112,7 +159,7 @@ To create the `DELIGHT` environment variable in OSX:
 
 ### Verifying 3Delight is loaded ###
 
-The next time you start Gaffer, the 3Delight nodes will be available from the node creation menu (right-click inside the _Graph Editor_).
+The next time you start Gaffer, the 3Delight nodes will be available from the node creation menu (right-click inside the Graph Editor).
 
 <!-- TODO: ![](images/delightNodes.png "Delight node menu") -->
 
@@ -134,7 +181,7 @@ To add the Tractor python module to the `PYTHONPATH` environment variable in Lin
 2. Add the line `export PYTHONPATH=$PYTHONPATH\:!TRACTOR_PATH_LINUX!/lib/python2.7/site-packages` and save.
 
 3. In a terminal, test that the variable is set:
-    
+
     ```shell
     user@desktop ~ $ echo $PYTHONPATH
     # /usr/bin/python2.7:/usr/lib/python2.7:!TRACTOR_PATH_LINUX!/lib/python2.7/site-packages
@@ -144,12 +191,12 @@ To add the Tractor python module to the `PYTHONPATH` environment variable in Lin
 > Depending on your system's configuration, your `PYTHONPATH` variable might not appear exactly as above. What's important is whether `:!TRACTOR_PATH_LINUX!/lib/python2.7/site-packages` appears in the path.
 
 
-### Tractor in OSX ###
+### Tractor in macOS ###
 
 > Note :
 > For this instruction, we will assume you have Tractor !TRACTOR_VERSION! installed to `!TRACTOR_PATH_OSX!`.
 
-To add the Tractor python module to the `PYTHONPATH` environment variable in OSX:
+To add the Tractor python module to the `PYTHONPATH` environment variable in macOS:
 
 1. Open `~/.bash_profile` with a text editor.
 
@@ -158,12 +205,12 @@ To add the Tractor python module to the `PYTHONPATH` environment variable in OSX
 3. Open a terminal (Finder > Go > Utilities > Terminal).
 
 4. Test that the variable is set:
-    
+
     ```shell
     MacBook:~ user$ echo $PYTHONPATH
     # /Library/Frameworks/Python.framework/Versions/2.7/bin:!TRACTOR_PATH_OSX!/lib/python2.7/site-packages
     ```
-    
+
 > Note :
 > Depending on your system's configuration, your `PYTHONPATH` variable might not appear exactly as above. What's important is whether `:!TRACTOR_PATH_OSX!/lib/python2.7/site-packages` appears in the path.
 
@@ -176,7 +223,7 @@ Once the tractor folder has been added to your `PYTHONPATH`, you can then verify
 
 2. Create and select a SystemCommand node (_Dispatch_ > _SystemCommand_).
 
-3. In the _Node Editor_, click _Execute_. The _Dispatcher_ window will open.
+3. In the Node Editor, click _Execute_. The _Dispatcher_ window will open.
 
 4. _Tractor_ will be available in the _Dispatcher_ drop-down menu.
 

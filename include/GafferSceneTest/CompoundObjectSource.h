@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENETEST_COMPOUNDOBJECTSOURCE_H
-#define GAFFERSCENETEST_COMPOUNDOBJECTSOURCE_H
+#pragma once
 
 #include "GafferSceneTest/Export.h"
 #include "GafferSceneTest/TypeIds.h"
@@ -58,7 +57,7 @@ class GAFFERSCENETEST_API CompoundObjectSource : public GafferScene::SceneNode
 		CompoundObjectSource( const std::string &name=defaultName<CompoundObjectSource>() );
 		~CompoundObjectSource() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferSceneTest::CompoundObjectSource, CompoundObjectSourceTypeId, GafferScene::SceneNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferSceneTest::CompoundObjectSource, CompoundObjectSourceTypeId, GafferScene::SceneNode );
 
 		Gaffer::ObjectPlug *inPlug();
 		const Gaffer::ObjectPlug *inPlug() const;
@@ -91,5 +90,3 @@ class GAFFERSCENETEST_API CompoundObjectSource : public GafferScene::SceneNode
 };
 
 } // namespace GafferSceneTest
-
-#endif // GAFFERSCENETEST_COMPOUNDOBJECTSOURCE_H

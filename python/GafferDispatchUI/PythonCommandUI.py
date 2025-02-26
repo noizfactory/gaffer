@@ -34,9 +34,13 @@
 #
 ##########################################################################
 
+import inspect
+
 import Gaffer
 import GafferUI
 import GafferDispatch
+
+from GafferUI.PlugValueWidget import sole
 
 Gaffer.Metadata.registerNode(
 
@@ -55,11 +59,10 @@ Gaffer.Metadata.registerNode(
 			"""
 			The command to run. This may reference any of the
 			variables by name, and also the node itself as `self`
-			and the current context as `context`.
+			and the current Context as `context`.
 			""",
 
-			"plugValueWidget:type", "GafferUI.MultiLineStringPlugValueWidget",
-			"multiLineStringPlugValueWidget:role", "code",
+			"plugValueWidget:type", "GafferDispatchUI.PythonCommandUI._CommandPlugValueWidget",
 			"layout:label", "",
 
 		),
@@ -76,14 +79,21 @@ Gaffer.Metadata.registerNode(
 
 		),
 
-		"sequence" : (
+		"framesMode" : (
 
 			"description",
 			"""
-			Calls the command once for each sequence, instead of once
-			per frame. In this mode, an additional variable called `frames`
+			Determines how tasks for different frames are distributed
+			between calls to the command :
+
+			- Single : The command will be called for a single frame at a time.
+			- Batch : The command will be called once for each batch of frames
+			  defined by `dispatcher.batchSize`.
+			- Sequence : The command will be called once for all frames.
+
+			In Batch and Sequences modes, an additional variable called `frames`
 			is available to the command, containing a list of all frame
-			numbers for which execution should be performed. The context may
+			numbers for which execution should be performed. The Context may
 			be updated to reference any frame from this list, and accessing
 			a variable returns the value for the current frame.
 
@@ -102,12 +112,96 @@ Gaffer.Metadata.registerNode(
 			# Do some one-time finalization
 			...
 			```
+
+			> Note : In Single mode, the command will only be called for each
+			> frame if the inputs are animated. If the inputs are static
+			> then the command will only be called once.
 			""",
 
 			"layout:section", "Advanced",
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"preset:Single", GafferDispatch.PythonCommand.FramesMode.Single,
+			"preset:Batch", GafferDispatch.PythonCommand.FramesMode.Batch,
+			"preset:Sequence", GafferDispatch.PythonCommand.FramesMode.Sequence,
 
 		),
 
 	}
 
 )
+
+##########################################################################
+# _CodePlugValueWidget
+##########################################################################
+
+class _CommandPlugValueWidget( GafferUI.PlugValueWidget ) :
+
+	def __init__( self, plug, **kw ) :
+
+		self.__codeWidget = GafferUI.CodeWidget( lineNumbersVisible = True )
+
+		GafferUI.PlugValueWidget.__init__( self, self.__codeWidget, plug, **kw )
+
+		self.__codeWidget.setPlaceholderText(
+			inspect.cleandoc(
+				"""
+				# Global variables :
+				#
+				# `context` : Context the command is being executed in.
+				# `variables` : Contents of the Variables tab.
+				"""
+			)
+		)
+
+		self.__codeWidget.setHighlighter( GafferUI.CodeWidget.PythonHighlighter() )
+		self.__codeWidget.setCommentPrefix( "#" )
+
+		self.__codeWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ) )
+
+		self._addPopupMenu( self.__codeWidget )
+
+		node = self.__pythonCommandNode()
+		if node is not None :
+			node.plugDirtiedSignal().connect( Gaffer.WeakMethod( self.__pythonCommandPlugDirtied ) )
+		self.__updateCompleter()
+
+	def _updateFromValues( self, values, exception ) :
+
+		self.__codeWidget.setText( sole( values ) or "" )
+		self.__codeWidget.setErrored( exception is not None )
+
+	def _updateFromEditable( self ) :
+
+		self.__codeWidget.setEditable( self._editable() )
+
+	def __setPlugValue( self, *unused ) :
+
+		if not self._editable() :
+			return
+
+		text = self.__codeWidget.getText()
+		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+			self.getPlug().setValue( text )
+
+	def __pythonCommandNode( self ) :
+
+		return Gaffer.PlugAlgo.findDestination(
+			self.getPlug(),
+			lambda plug : plug.parent() if isinstance( plug.parent(), GafferDispatch.PythonCommand ) else None
+		)
+
+	def __pythonCommandPlugDirtied( self, plug ) :
+
+		if plug == plug.node()["variables"] :
+			self.__updateCompleter()
+
+	def __updateCompleter( self ) :
+
+		node = self.__pythonCommandNode()
+		if node is not None :
+			with self.context() :
+				self.__codeWidget.setCompleter(
+					GafferUI.CodeWidget.PythonCompleter( node._executionDict() )
+				)
+		else :
+			self.__codeWidget.setCompleter( None )

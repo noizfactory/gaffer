@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_BACKDROPNODEGADGET_H
-#define GAFFERUI_BACKDROPNODEGADGET_H
+#pragma once
 
 #include "GafferUI/NodeGadget.h"
 
@@ -50,12 +49,15 @@ class GAFFERUI_API BackdropNodeGadget : public NodeGadget
 
 	public :
 
-		BackdropNodeGadget( Gaffer::NodePtr node );
+		explicit BackdropNodeGadget( Gaffer::NodePtr node );
 		~BackdropNodeGadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::BackdropNodeGadget, BackdropNodeGadgetTypeId, NodeGadget );
 
 		std::string getToolTip( const IECore::LineSegment3f &line ) const override;
+
+		void setBound( const Imath::Box2f &bound );
+		Imath::Box2f getBound() const;
 
 		/// Resizes the backdrop to frame the specified nodes.
 		/// \undoable
@@ -67,10 +69,13 @@ class GAFFERUI_API BackdropNodeGadget : public NodeGadget
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
+		void contextChanged();
 		void plugDirtied( const Gaffer::Plug *plug );
 
 		bool mouseMove( Gadget *gadget, const ButtonEvent &event );
@@ -87,19 +92,18 @@ class GAFFERUI_API BackdropNodeGadget : public NodeGadget
 		// means not hovered in that direction.
 		void hoveredEdges( const ButtonEvent &event, int &horizontal, int &vertical ) const;
 
-		void nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore::InternedString key, const Gaffer::Node *node );
+		void nodeMetadataChanged( IECore::InternedString key );
 
 		bool updateUserColor();
 
-		Gaffer::Box2fPlug *boundPlug();
-		const Gaffer::Box2fPlug *boundPlug() const;
+		Gaffer::Box2fPlug *acquireBoundPlug( bool createIfMissing = true );
 
 		bool m_hovered;
 		int m_horizontalDragEdge;
 		int m_verticalDragEdge;
 		int m_mergeGroupId;
 
-		boost::optional<Imath::Color3f> m_userColor;
+		std::optional<Imath::Color3f> m_userColor;
 
 		static NodeGadgetTypeDescription<BackdropNodeGadget> g_nodeGadgetTypeDescription;
 
@@ -107,9 +111,4 @@ class GAFFERUI_API BackdropNodeGadget : public NodeGadget
 
 IE_CORE_DECLAREPTR( BackdropNodeGadget );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<BackdropNodeGadget> > BackdropNodeGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<BackdropNodeGadget> > RecursiveBackdropNodeGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_BACKDROPNODEGADGET_H

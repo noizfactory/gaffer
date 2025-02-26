@@ -92,19 +92,56 @@ struct ExpressionEngineCreator
 
 struct ExpressionChangedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, ExpressionPtr e )
+	void operator()( boost::python::object slot, ExpressionPtr e )
 	{
 		try
 		{
 			slot( e );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
+
+ValuePlug::CachePolicy defaultExecuteCachePolicy()
+{
+	// Expressions implemented through Python will be forced to run serially due to the GIL,
+	// which makes it very bad to allow parallel evaluations of the same plug, since they will
+	// all compete over the same GIL.
+
+	// In the long term, we can probably lock this to Standard, but in the short term, overriding
+	// to Legacy or TaskIsolation using an env var could provide a workaround if facilities have
+	// Gaffer nodes that do their own tbb calls without properly isolating them, which could
+	// cause hangs when using the Standard policy
+	if( const char *cp = getenv( "GAFFER_PYTHONEXPRESSION_CACHEPOLICY" ) )
+	{
+		if( !strcmp( cp, "Standard" ) )
+		{
+			return ValuePlug::CachePolicy::Standard;
+		}
+		else if( !strcmp( cp, "TaskCollaboration" ) )
+		{
+			return ValuePlug::CachePolicy::TaskCollaboration;
+		}
+		else if( !strcmp( cp, "TaskIsolation" ) )
+		{
+			return ValuePlug::CachePolicy::TaskIsolation;
+		}
+		else if( !strcmp( cp, "Legacy" ) || !strcmp( cp, "Default" ) )
+		{
+			return ValuePlug::CachePolicy::Default;
+		}
+		else
+		{
+			IECore::msg( IECore::Msg::Warning, "Expression", "Invalid value for GAFFER_PYTHONEXPRESSION_CACHEPOLICY. Must be Standard, TaskCollaboration, TaskIsolation or Legacy." );
+		}
+	}
+
+	return  ValuePlug::CachePolicy::Standard;
+}
+
 
 class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 {
@@ -134,7 +171,7 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -163,13 +200,18 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return extract<IECore::ConstObjectVectorPtr>( result );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
 			}
 
 			throw IECore::Exception( "Engine::execute() python method not defined" );
+		}
+
+		ValuePlug::CachePolicy executeCachePolicy() const override
+		{
+			return g_cachePolicy;
 		}
 
 		void apply( ValuePlug *proxyOutput, const ValuePlug *topLevelProxyOutput, const IECore::Object *value ) const override
@@ -186,7 +228,7 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -209,7 +251,7 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return extract<std::string>( result );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -242,7 +284,7 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return extract<std::string>( result );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -265,7 +307,7 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 						return extract<std::string>( result );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -292,9 +334,13 @@ class EngineWrapper : public IECorePython::RefCountedWrapper<Expression::Engine>
 			return boost::python::tuple( l );
 		}
 
+		static ValuePlug::CachePolicy g_cachePolicy;
 };
 
-static tuple languages()
+
+ValuePlug::CachePolicy EngineWrapper::g_cachePolicy( defaultExecuteCachePolicy() );
+
+tuple languages()
 {
 	std::vector<std::string> languages;
 	Expression::languages( languages );
@@ -322,7 +368,7 @@ class ExpressionSerialiser : public NodeSerialiser
 		}
 	}
 
-	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		// We delay the serialisation of the values for the engine and expression plugs
 		// until now so that `Expression::plugSet()` can successfully restore the engine

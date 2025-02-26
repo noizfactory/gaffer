@@ -37,6 +37,8 @@
 
 import weakref
 
+import imath
+
 import IECore
 
 import Gaffer
@@ -56,8 +58,18 @@ class ScriptWindow( GafferUI.Window ) :
 
 		self.__listContainer = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 0 )
 
+		self.__menuContainer = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 )
+		self.__listContainer.append( self.__menuContainer )
+
 		menuDefinition = self.menuDefinition( script.applicationRoot() ) if script.applicationRoot() else IECore.MenuDefinition()
-		self.__listContainer.append( GafferUI.MenuBar( menuDefinition ) )
+		self.__menuBar = GafferUI.MenuBar( menuDefinition )
+		self.__menuBar.addShortcutTarget( self )
+		self.__menuContainer.append( self.__menuBar )
+		self.__menuContainer._qtWidget().setObjectName( "gafferMenuBarWidgetContainer" )
+		# Must parent `__listContainer` to the window before setting the layout,
+		# because `CompoundEditor.__parentChanged` needs to find the ancestor
+		# ScriptWindow.
+		self.setChild( self.__listContainer )
 
 		applicationRoot = self.__script.ancestor( Gaffer.ApplicationRoot )
 		layouts = GafferUI.Layouts.acquire( applicationRoot ) if applicationRoot is not None else None
@@ -66,15 +78,14 @@ class ScriptWindow( GafferUI.Window ) :
 		else :
 			self.setLayout( GafferUI.CompoundEditor( script ) )
 
-		self.setChild( self.__listContainer )
-
-		self.closedSignal().connect( Gaffer.WeakMethod( self.__closed ), scoped = False )
+		self.closedSignal().connect( Gaffer.WeakMethod( self.__closed ) )
 
 		ScriptWindow.__instances.append( weakref.ref( self ) )
+		ScriptWindow.__instanceCreatedSignal( self )
 
 	def menuBar( self ) :
 
-		return self.__listContainer[0]
+		return self.__menuContainer[0]
 
 	def scriptNode( self ) :
 
@@ -82,11 +93,29 @@ class ScriptWindow( GafferUI.Window ) :
 
 	def setLayout( self, compoundEditor ) :
 
+		# When changing layout we need to manually transfer the edit scope
+		# from an existing CompoundEditor to the new one.
+		currentEditScope = None
 		if len( self.__listContainer ) > 1 :
+			currentEditScope = self.getLayout().settings()["editScope"].getInput()
 			del self.__listContainer[1]
 
 		assert( compoundEditor.scriptNode().isSame( self.scriptNode() ) )
 		self.__listContainer.append( compoundEditor, expand=True )
+
+		if len( self.__menuContainer ) > 1 :
+			del self.__menuContainer[1:]
+
+		if currentEditScope is not None :
+			compoundEditor.settings()["editScope"].setInput( currentEditScope )
+		self.__menuContainer.append(
+			GafferUI.PlugLayout(
+				compoundEditor.settings(),
+				orientation = GafferUI.ListContainer.Orientation.Horizontal,
+				rootSection = "Settings"
+			)
+		)
+		self.__menuContainer.append( GafferUI.Spacer( imath.V2i( 0 ) ) )
 
 	def getLayout( self ) :
 
@@ -116,12 +145,22 @@ class ScriptWindow( GafferUI.Window ) :
 		f = self.__script["fileName"].getValue()
 		f = f.rpartition( "/" )[2] if f else "untitled"
 
-		dialogue = GafferUI.ConfirmationDialogue(
+		dialogue = _ChoiceDialogue(
 			"Discard Unsaved Changes?",
-			"The file %s has unsaved changes. Do you want to discard them?" % f,
-			confirmLabel = "Discard"
+			f"The file \"{f}\" has unsaved changes. Do you want to discard them?",
+			choices = [ "Cancel", "Save", "Discard" ]
 		)
-		return dialogue.waitForConfirmation( parentWindow=self )
+		choice = dialogue.waitForChoice( parentWindow=self )
+
+		if choice == "Discard" :
+			return True
+		elif choice == "Save" :
+			## \todo Is it a bit odd that ScriptWindow should depend on FileMenu
+			# like this? Should the code be moved somewhere else?
+			GafferUI.FileMenu.save( self.menuBar() )
+			return True
+		else :
+			return False
 
 	def __closed( self, widget ) :
 
@@ -129,6 +168,7 @@ class ScriptWindow( GafferUI.Window ) :
 		if scriptParent is not None :
 			scriptParent.removeChild( self.__script )
 
+	__automaticallyCreatedInstances = [] # strong references to instances made by acquire()
 	__instances = [] # weak references to all instances - used by acquire()
 	## Returns the ScriptWindow for the specified script, creating one
 	# if necessary.
@@ -140,7 +180,13 @@ class ScriptWindow( GafferUI.Window ) :
 			if scriptWindow is not None and scriptWindow.scriptNode().isSame( script ) :
 				return scriptWindow
 
-		return ScriptWindow( script ) if createIfNecessary else None
+		if createIfNecessary :
+			w = ScriptWindow( script )
+			if ScriptWindow.__connected( script.ancestor( Gaffer.ApplicationRoot ) ) :
+				ScriptWindow.__automaticallyCreatedInstances.append( w )
+			return w
+
+		return None
 
 	## Returns an IECore.MenuDefinition which is used to define the menu bars for all ScriptWindows
 	# created as part of the specified application. This can be edited at any time to modify subsequently
@@ -163,6 +209,13 @@ class ScriptWindow( GafferUI.Window ) :
 
 		return menuDefinition
 
+	__instanceCreatedSignal = Gaffer.Signals.Signal1()
+	## A signal emitted whenever a ScriptWindow has been created.
+	@classmethod
+	def instanceCreatedSignal( cls ) :
+
+		return cls.__instanceCreatedSignal
+
 	## This function provides the top level functionality for instantiating
 	# the UI. Once called, new ScriptWindows will be instantiated for each
 	# script added to the application, and EventLoop.mainEventLoop().stop() will
@@ -170,17 +223,22 @@ class ScriptWindow( GafferUI.Window ) :
 	@classmethod
 	def connect( cls, applicationRoot ) :
 
-		applicationRoot["scripts"].childAddedSignal().connect( 0, ScriptWindow.__scriptAdded, scoped = False )
-		applicationRoot["scripts"].childRemovedSignal().connect( ScriptWindow.__staticScriptRemoved, scoped = False )
+		applicationRoot._scriptWindowChildAddedConnection = applicationRoot["scripts"].childAddedSignal().connect( ScriptWindow.__scriptAdded )
+		applicationRoot._scriptWindowChildRemovedConnection = applicationRoot["scripts"].childRemovedSignal().connect( ScriptWindow.__staticScriptRemoved )
 
-	__automaticallyCreatedInstances = [] # strong references to instances made by __scriptAdded()
+	@staticmethod
+	def __connected( applicationRoot ) :
+
+		childAddedConnection = getattr( applicationRoot, "_scriptWindowChildAddedConnection", None )
+		childRemovedConnection = getattr( applicationRoot, "_scriptWindowChildRemovedConnection", None )
+		return childAddedConnection is not None and childRemovedConnection is not None and childRemovedConnection.connected() and childRemovedConnection.connected()
+
 	@staticmethod
 	def __scriptAdded( scriptContainer, script ) :
 
-		w = ScriptWindow( script )
+		w = ScriptWindow.acquire( script )
 		w.setVisible( True )
 		w.getLayout().restoreWindowState()
-		ScriptWindow.__automaticallyCreatedInstances.append( w )
 
 	@staticmethod
 	def __staticScriptRemoved( scriptContainer, script ) :
@@ -192,6 +250,31 @@ class ScriptWindow( GafferUI.Window ) :
 		if not len( scriptContainer.children() ) and GafferUI.EventLoop.mainEventLoop().running() :
 			GafferUI.EventLoop.mainEventLoop().stop()
 
+## \todo Would this be worthy of inclusion in GafferUI?
+class _ChoiceDialogue( GafferUI.Dialogue ) :
+
+	def __init__( self, title, message, choices, **kw ) :
+
+		GafferUI.Dialogue.__init__( self, title, sizeMode=GafferUI.Window.SizeMode.Automatic, **kw )
+
+		with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 8 ) as column :
+
+			GafferUI.Label( message )
+
+		self._setWidget( column )
+
+		for choice in choices :
+			self.__lastButton = self._addButton( choice )
+
+	def waitForChoice( self, **kw ) :
+
+		self.__lastButton._qtWidget().setFocus()
+		button = self.waitForButton( **kw )
+
+		if button is None :
+			return None
+		else :
+			return button.getText()
 
 class _WindowTitleBehaviour :
 
@@ -200,8 +283,8 @@ class _WindowTitleBehaviour :
 		self.__window = weakref.ref( window )
 		self.__script = weakref.ref( script )
 
-		self.__scriptPlugSetConnection = script.plugSetSignal().connect( Gaffer.WeakMethod( self.__scriptPlugChanged ) )
-		self.__metadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal().connect( Gaffer.WeakMethod( self.__metadataChanged ) )
+		self.__scriptPlugSetConnection = script.plugSetSignal().connect( Gaffer.WeakMethod( self.__scriptPlugChanged ), scoped = True )
+		self.__metadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal().connect( Gaffer.WeakMethod( self.__metadataChanged ), scoped = True )
 
 		self.__updateTitle()
 
@@ -222,7 +305,7 @@ class _WindowTitleBehaviour :
 		u = " *" if self.__script()["unsavedChanges"].getValue() else ""
 		ro = " (read only) " if Gaffer.MetadataAlgo.readOnly( self.__script() ) else ""
 
-		w._setTitle( "Gaffer : %s%s%s%s" % ( f, ro, u, d ) )
+		w._setTitle( "Gaffer %s : %s%s%s%s" % ( Gaffer.About.versionString(), f, ro, u, d ) )
 
 	def __scriptPlugChanged( self, plug ) :
 
@@ -233,4 +316,3 @@ class _WindowTitleBehaviour :
 
 		if Gaffer.MetadataAlgo.readOnlyAffectedByChange( self.__script(), nodeTypeId, key, node ) :
 			self.__updateTitle()
-

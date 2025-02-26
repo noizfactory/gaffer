@@ -34,8 +34,12 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import unittest
+import inspect
+import imath
+
+import IECore
 
 import Gaffer
 import GafferTest
@@ -47,7 +51,7 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 	def test( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/cube.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "cube.abc" )
 
 		p = GafferScene.ScenePath( a["out"], Gaffer.Context(), "/" )
 		c = p.children()
@@ -58,7 +62,7 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 	def testRelative( self ) :
 
 		a = GafferScene.SceneReader()
-		a["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/cube.abc" )
+		a["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles"/ "cube.abc" )
 
 		p = GafferScene.ScenePath( a["out"], Gaffer.Context(), "group1" )
 		self.assertEqual( str( p ), "group1" )
@@ -99,16 +103,16 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 		plane = GafferScene.Plane()
 
 		context = Gaffer.Context()
-		self.assertEqual( context.changedSignal().num_slots(), 0 )
+		self.assertEqual( context.changedSignal().numSlots(), 0 )
 
 		p = GafferScene.ScenePath( plane["out"], context, "/" )
 
 		# The path shouldn't connect to the context changed signal
 		# until it really need to - when something is connected
 		# to the path's own changed signal.
-		self.assertEqual( context.changedSignal().num_slots(), 0 )
+		self.assertEqual( context.changedSignal().numSlots(), 0 )
 		cs = GafferTest.CapturingSlot( p.pathChangedSignal() )
-		self.assertEqual( context.changedSignal().num_slots(), 1 )
+		self.assertEqual( context.changedSignal().numSlots(), 1 )
 		self.assertEqual( len( cs ), 0 )
 
 		context["test"] = 10
@@ -117,11 +121,11 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 		# Changing the context should disconnect from the old one
 		# and reconnect to the new one.
 		context2 = Gaffer.Context()
-		self.assertEqual( context2.changedSignal().num_slots(), 0 )
+		self.assertEqual( context2.changedSignal().numSlots(), 0 )
 
 		p.setContext( context2 )
-		self.assertEqual( context.changedSignal().num_slots(), 0 )
-		self.assertEqual( context2.changedSignal().num_slots(), 1 )
+		self.assertEqual( context.changedSignal().numSlots(), 0 )
+		self.assertEqual( context2.changedSignal().numSlots(), 1 )
 
 		context["test"] = 20
 		self.assertTrue( len( cs ), 1 )
@@ -200,7 +204,7 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 		plane = GafferScene.Plane()
 		parent = GafferScene.Parent()
 		parent["in"].setInput( camera["out"] )
-		parent["child"].setInput( plane["out"] )
+		parent["children"][0].setInput( plane["out"] )
 		parent["parent"].setValue( "/" )
 
 		path = GafferScene.ScenePath( parent["out"], Gaffer.Context(), "/" )
@@ -209,15 +213,105 @@ class ScenePathTest( GafferSceneTest.SceneTestCase ) :
 		path.setFilter( GafferScene.ScenePath.createStandardFilter( [ "__cameras" ] ) )
 		self.assertEqual( { str( c ) for c in path.children() }, { "/camera" } )
 
-	def testNone( self ) :
+	def testNoneContext( self ) :
 
 		plane = GafferScene.Plane()
 
-		with self.assertRaisesRegexp( Exception, "Python argument types" ) :
-			GafferScene.ScenePath( None, Gaffer.Context() )
-
-		with self.assertRaisesRegexp( Exception, "Python argument types" ) :
+		with self.assertRaisesRegex( Exception, "Python argument types" ) :
 			GafferScene.ScenePath( plane["out"], None )
+
+	def testNoneScene( self ) :
+
+		path = GafferScene.ScenePath( None, Gaffer.Context() )
+		self.assertIsNone( path.getScene() )
+		self.assertIsNone( path.cancellationSubject() )
+		self.assertFalse( path.isValid() )
+		self.assertEqual( path.children(), [] )
+
+		path2 = path.copy()
+		self.assertIsNone( path2.getScene() )
+		self.assertIsNone( path2.cancellationSubject() )
+		self.assertFalse( path2.isValid() )
+		self.assertEqual( path2.children(), [] )
+
+	def testGILManagement( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		# Build a contrived scene that will cause `childNames` queries to spawn
+		# a threaded compute that will execute a Python expression.
+
+		script["plane"] = GafferScene.Plane()
+		script["plane"]["divisions"].setValue( imath.V2i( 50 ) )
+
+		script["planeFilter"] = GafferScene.PathFilter()
+		script["planeFilter"]["paths"].setValue( IECore.StringVectorData( [ "/plane" ] ) )
+
+		script["sphere"] = GafferScene.Sphere()
+
+		script["instancer"] = GafferScene.Instancer()
+		script["instancer"]["in"].setInput( script["plane"]["out"] )
+		script["instancer"]["prototypes"].setInput( script["sphere"]["out"] )
+		script["instancer"]["filter"].setInput( script["planeFilter"]["out"] )
+
+		script["instanceFilter"] = GafferScene.PathFilter()
+		script["instanceFilter"]["paths"].setValue( IECore.StringVectorData( [ "/plane/instances/*/*" ] ) )
+
+		script["cube"] = GafferScene.Cube()
+
+		script["parent"] = GafferScene.Parent()
+		script["parent"]["in"].setInput( script["instancer"]["out"] )
+		script["parent"]["children"][0].setInput( script["cube"]["out"] )
+		script["parent"]["filter"].setInput( script["instanceFilter"]["out"] )
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( 'parent["sphere"]["name"] = context["sphereName"]' )
+
+		# Test that `ScenePath` bindings release the GIL so that the compute
+		# doesn't hang. If we're lucky, the expression executes on the main
+		# thread anyway, so loop to give it plenty of chances to fail.
+
+		for i in range( 0, 100 ) :
+
+			context = Gaffer.Context()
+			context["sphereName"] = "sphere{}".format( i )
+			path = GafferScene.ScenePath( script["parent"]["out"], context, "/plane/instances/{}/2410/cube".format( context["sphereName"] ) )
+			self.assertTrue( path.isValid() )
+
+	def testCancellation( self ) :
+
+		plane = GafferScene.Plane()
+		path = GafferScene.ScenePath( plane["out"], Gaffer.Context(), "/" )
+
+		canceller = IECore.Canceller()
+		canceller.cancel()
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.children( canceller )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			path.isValid( canceller )
+
+	def testInspectionContext( self ) :
+
+		plane = GafferScene.Plane()
+		path = GafferScene.ScenePath( plane["out"], Gaffer.Context(), "/plane" )
+
+		inspectionContext = path.inspectionContext()
+		self.assertIsNotNone( inspectionContext )
+		self.assertIn( "scene:path", inspectionContext )
+		self.assertEqual( inspectionContext["scene:path"], GafferScene.ScenePlug.stringToPath( "/plane" ) )
+
+		context = Gaffer.Context()
+		context["foo"] = 123
+		path = GafferScene.ScenePath( plane["out"], context, "/plane/bogus" )
+
+		inspectionContext = path.inspectionContext()
+		self.assertIsNotNone( inspectionContext )
+		self.assertIn( "scene:path", inspectionContext )
+		self.assertEqual( inspectionContext["scene:path"], GafferScene.ScenePlug.stringToPath( "/plane/bogus" ) )
+		self.assertIn( "foo", inspectionContext )
+		self.assertEqual( inspectionContext["foo"], 123 )
 
 if __name__ == "__main__":
 	unittest.main()

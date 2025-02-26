@@ -47,7 +47,7 @@ gafferPatchVersion=`grep "gafferPatchVersion = " SConstruct | cut -d" " -f 3`
 if [[ `uname` = "Linux" ]] ; then
 	platform=linux
 else
-	platform=osx
+	platform=macos
 fi
 
 # The first argument can be used to specify a directory to install to
@@ -55,13 +55,4 @@ buildDir=${1:-"build/gaffer-$gafferMilestoneVersion.$gafferMajorVersion.$gafferM
 
 # Get the prebuilt dependencies package and unpack it into the build directory
 
-dependenciesVersion="0.54.1.0"
-dependenciesVersionSuffix=""
-dependenciesFileName="gafferDependencies-$dependenciesVersion-$platform.tar.gz"
-downloadURL="https://github.com/GafferHQ/dependencies/releases/download/$dependenciesVersion$dependenciesVersionSuffix/$dependenciesFileName"
-
-echo "Downloading dependencies \"$downloadURL\""
-curl -L $downloadURL > $dependenciesFileName
-
-mkdir -p $buildDir
-tar xf $dependenciesFileName -C $buildDir --strip-components=1
+.github/workflows/main/installDependencies.py --dependenciesDir "$buildDir"

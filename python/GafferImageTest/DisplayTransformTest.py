@@ -35,9 +35,12 @@
 ##########################################################################
 
 import os
+import pathlib
 import unittest
-import subprocess32 as subprocess
+import subprocess
 import imath
+
+import PyOpenColorIO
 
 import IECore
 
@@ -48,36 +51,34 @@ import GafferImageTest
 
 class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 
-	imageFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	imageFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def test( self ) :
 
 		n = GafferImage.ImageReader()
 		n["fileName"].setValue( self.imageFile )
-		orig = n["out"].image()
+		orig = GafferImage.ImageAlgo.image( n["out"] )
 
 		o = GafferImage.DisplayTransform()
 		o["in"].setInput( n["out"] )
 
-		self.assertEqual( orig, o["out"].image() )
+		o["inputColorSpace"].setValue( "scene_linear" )
+		o["display"].setValue( "sRGB - Display" )
+		o["view"].setValue( "ACES 1.0 - SDR Video" )
 
-		o["inputColorSpace"].setValue( "linear" )
-		o["display"].setValue( "default" )
-		o["view"].setValue( "rec709" )
+		transform1 = GafferImage.ImageAlgo.image( o["out"] )
+		self.assertNotEqual( orig, transform1 )
 
-		rec709 = o["out"].image()
-		self.assertNotEqual( orig, rec709 )
+		o["view"].setValue( "Un-tone-mapped" )
+		transform2 = GafferImage.ImageAlgo.image( o["out"] )
+		self.assertNotEqual( orig, transform2 )
+		self.assertNotEqual( transform1, transform2 )
 
-		o["view"].setValue( "sRGB" )
-		sRGB = o["out"].image()
-		self.assertNotEqual( orig, sRGB )
-		self.assertNotEqual( rec709, sRGB )
-
-		o["inputColorSpace"].setValue( "cineon" )
-		cineon = o["out"].image()
-		self.assertNotEqual( orig, cineon )
-		self.assertNotEqual( rec709, cineon )
-		self.assertNotEqual( sRGB, cineon )
+		o["inputColorSpace"].setValue( "V-Log V-Gamut" )
+		transform3 = GafferImage.ImageAlgo.image( o["out"] )
+		self.assertNotEqual( orig, transform3 )
+		self.assertNotEqual( transform1, transform3 )
+		self.assertNotEqual( transform2, transform3 )
 
 	def testHashPassThrough( self ) :
 
@@ -87,14 +88,16 @@ class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 		o = GafferImage.DisplayTransform()
 		o["in"].setInput( n["out"] )
 
+		o["display"].setValue( "sRGB - Display" )
+		o["view"].setValue( "Raw" ) # No-op view
+
 		self.assertImageHashesEqual( n["out"], o["out"] )
 		self.assertImagesEqual( n["out"], o["out"] )
 
-		o["inputColorSpace"].setValue( "linear" )
-		o["display"].setValue( "default" )
-		o["view"].setValue( "rec709" )
+		o["display"].setValue( "sRGB - Display" )
+		o["view"].setValue( "ACES 1.0 - SDR Video" )
 
-		self.assertNotEqual( n["out"].image(), o["out"].image() )
+		self.assertNotEqual( GafferImage.ImageAlgo.image( n["out"] ), GafferImage.ImageAlgo.image( o["out"] ) )
 
 		o["enabled"].setValue( False )
 
@@ -105,41 +108,15 @@ class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( n["out"]["metadata"].getValue(), o["out"]["metadata"].getValue() )
 		self.assertEqual( n["out"]['channelNames'].hash(), o["out"]['channelNames'].hash() )
 
-		o["enabled"].setValue( True )
-
-		o["inputColorSpace"].setValue( "" )
-		self.assertImageHashesEqual( n["out"], o["out"] )
-		self.assertImagesEqual( n["out"], o["out"] )
-		self.assertEqual( n["out"]['format'].hash(), o["out"]['format'].hash() )
-		self.assertEqual( n["out"]['dataWindow'].hash(), o["out"]['dataWindow'].hash() )
-		self.assertEqual( n["out"]["metadata"].getValue(), o["out"]["metadata"].getValue() )
-		self.assertEqual( n["out"]['channelNames'].hash(), o["out"]['channelNames'].hash() )
-
-	def testImageHashPassThrough( self ) :
-
-		i = GafferImage.ImageReader()
-		i["fileName"].setValue( self.imageFile )
-
-		o = GafferImage.DisplayTransform()
-		o["in"].setInput( i["out"] )
-
-		self.assertEqual( i["out"].imageHash(), o["out"].imageHash() )
-
-		o["inputColorSpace"].setValue( "linear" )
-		o["display"].setValue( "default" )
-		o["view"].setValue( "rec709" )
-
-		self.assertNotEqual( i["out"].imageHash(), o["out"].imageHash() )
-
 	def testChannelsAreSeparate( self ) :
 
 		i = GafferImage.ImageReader()
-		i["fileName"].setValue( os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/circles.exr" ) )
+		i["fileName"].setValue( self.imagesPath() / "circles.exr" )
 
 		o = GafferImage.DisplayTransform()
 		o["in"].setInput( i["out"] )
 
-		o["inputColorSpace"].setValue( "linear" )
+		o["inputColorSpace"].setValue( "scene_linear" )
 
 		self.assertNotEqual(
 			o["out"].channelDataHash( "R", imath.V2i( 0 ) ),
@@ -158,8 +135,8 @@ class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 
 		o = GafferImage.DisplayTransform()
 		o["in"].setInput( i["out"] )
-		o["inputColorSpace"].setValue( "linear" )
-		o["display"].setValue( "default" )
+		o["inputColorSpace"].setValue( "scene_linear" )
+		o["display"].setValue( "sRGB - Display" )
 		o["view"].setValue( "rec709" )
 
 		self.assertEqual( i["out"]["format"].hash(), o["out"]["format"].hash() )
@@ -174,9 +151,9 @@ class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 
 	def testContext( self ) :
 
-		scriptFileName = self.temporaryDirectory() + "/script.gfr"
-		contextImageFile = self.temporaryDirectory() + "/context.#.exr"
-		contextOverrideImageFile = self.temporaryDirectory() + "/context_override.#.exr"
+		scriptFileName = self.temporaryDirectory() / "script.gfr"
+		contextImageFile = self.temporaryDirectory() / "context.exr"
+		contextOverrideImageFile = self.temporaryDirectory() / "context_override.exr"
 
 		s = Gaffer.ScriptNode()
 
@@ -185,67 +162,104 @@ class DisplayTransformTest( GafferImageTest.ImageTestCase ) :
 
 		s["dt"] = GafferImage.DisplayTransform()
 		s["dt"]["in"].setInput( s["reader"]["out"] )
-		s["dt"]["inputColorSpace"].setValue( "linear" )
+		s["dt"]["inputColorSpace"].setValue( "scene_linear" )
 		s["dt"]["display"].setValue( "default" )
 		s["dt"]["view"].setValue( "context" )
-
 
 		s["writer"] = GafferImage.ImageWriter()
 		s["writer"]["fileName"].setValue( contextImageFile )
 		s["writer"]["in"].setInput( s["dt"]["out"] )
 		s["writer"]["channels"].setValue( "R G B A" )
+		s["writer"]["openexr"]["dataType"].setValue( "float" )
 
 		s["fileName"].setValue( scriptFileName )
 		s.save()
 
 		env = os.environ.copy()
-		env["OCIO"] = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/openColorIO/context.ocio" )
+		env["OCIO"] = str( self.openColorIOPath() / "context.ocio" )
 		env["LUT"] = "srgb.spi1d"
 		env["CDL"] = "cineon.spi1d"
 
 		subprocess.check_call(
-			" ".join(["gaffer", "execute", scriptFileName,"-frames", "1"]),
-			shell = True,
+			[ str( Gaffer.executablePath() ), "execute", str( scriptFileName ), "-frames", "1" ],
 			stderr = subprocess.PIPE,
 			env = env,
 		)
 
-		i = GafferImage.ImageReader()
-		i["fileName"].setValue( os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker_ocio_context.exr" ) )
+		expected = GafferImage.ImageReader()
+		expected["fileName"].setValue( self.imagesPath() / "checker_ocio_context.exr" )
 
-		o = GafferImage.ImageReader()
-		o["fileName"].setValue( contextImageFile )
-
-		expected = i["out"]
-		context = o["out"]
+		actual = GafferImage.ImageReader()
+		actual["fileName"].setValue( contextImageFile )
 
 		# check against expected output
-		self.assertImagesEqual( expected, context, ignoreMetadata = True )
+		self.assertImagesEqual( actual["out"], expected["out"], ignoreMetadata = True )
 
 		# override context
 		s["writer"]["fileName"].setValue( contextOverrideImageFile )
-		s["dt"]["context"].addChild( Gaffer.NameValuePlug("LUT", IECore.StringData( "cineon.spi1d" ), True, "LUT", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
-		s["dt"]["context"].addChild( Gaffer.NameValuePlug("CDL", IECore.StringData( "rec709.spi1d" ), True, "CDL", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["dt"]["context"].addChild( Gaffer.NameValuePlug( "LUT", IECore.StringData( "cineon.spi1d" ), True, "LUT", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		s["dt"]["context"].addChild( Gaffer.NameValuePlug( "CDL", IECore.StringData( "rec709.spi1d" ), True, "CDL", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 		s.save()
 
 		subprocess.check_call(
-			" ".join(["gaffer", "execute", scriptFileName,"-frames", "1"]),
-			shell = True,
+			[ str( Gaffer.executablePath() ), "execute", str( scriptFileName ), "-frames", "1" ],
 			stderr = subprocess.PIPE,
 			env = env
 		)
 
-		i = GafferImage.ImageReader()
-		i["fileName"].setValue( os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker_ocio_context_override.exr" ) )
-
-		o = GafferImage.ImageReader()
-		o["fileName"].setValue( contextOverrideImageFile )
-
-		expected = i["out"]
-		context = o["out"]
+		expected["fileName"].setValue( self.imagesPath() / "checker_ocio_context_override.exr" )
+		actual["fileName"].setValue( contextOverrideImageFile )
 
 		# check override produce expected output
-		self.assertImagesEqual( expected, context, ignoreMetadata = True )
+		self.assertImagesEqual( actual["out"], expected["out"], ignoreMetadata = True )
+
+	def testChangingWorkingSpace( self ) :
+
+		checker = GafferImage.Checkerboard()
+
+		displayTransform = GafferImage.DisplayTransform()
+		displayTransform["in"].setInput( checker["out"] )
+		displayTransform["display"].setValue( "sRGB - Display" )
+		displayTransform["view"].setValue( "ACES 1.0 - SDR Video" )
+
+		with Gaffer.Context() as context :
+
+			GafferImage.OpenColorIOAlgo.setWorkingSpace( context, "scene_linear" )
+			tile = displayTransform["out"].channelData( "R", imath.V2i( 0 ) )
+
+			GafferImage.OpenColorIOAlgo.setWorkingSpace( context, "color_picking" )
+			self.assertNotEqual( displayTransform["out"].channelData( "R", imath.V2i( 0 ) ), tile )
+
+	def testDisplayAndViewDefaultToConfig( self ) :
+
+		checker = GafferImage.Checkerboard()
+
+		# Test default config
+
+		defaultDisplayTransform = GafferImage.DisplayTransform()
+		defaultDisplayTransform["in"].setInput( checker["out"] )
+
+		config = GafferImage.OpenColorIOAlgo.currentConfig()
+		explicitDisplayTransform = GafferImage.DisplayTransform()
+		explicitDisplayTransform["in"].setInput( checker["out"] )
+		explicitDisplayTransform["display"].setValue( config.getDefaultDisplay() )
+		explicitDisplayTransform["view"].setValue( config.getDefaultView( config.getDefaultDisplay() ) )
+
+		self.assertImagesEqual( defaultDisplayTransform["out"], explicitDisplayTransform["out"] )
+
+		# Test alternative config
+
+		configPath = self.openColorIOPath() / "context.ocio"
+		config = PyOpenColorIO.Config.CreateFromFile( str( configPath ) )
+
+		explicitDisplayTransform["display"].setValue( config.getDefaultDisplay() )
+		explicitDisplayTransform["view"].setValue( config.getDefaultView( config.getDefaultDisplay() ) )
+
+		with Gaffer.Context() as context :
+			GafferImage.OpenColorIOAlgo.setConfig( context, configPath.as_posix() )
+			GafferImage.OpenColorIOAlgo.addVariable( context, "CDL", "rec709.spi1d" )
+			GafferImage.OpenColorIOAlgo.addVariable( context, "LUT", "cineon.spi1d" )
+			self.assertImagesEqual( defaultDisplayTransform["out"], explicitDisplayTransform["out"] )
 
 if __name__ == "__main__":
 	unittest.main()

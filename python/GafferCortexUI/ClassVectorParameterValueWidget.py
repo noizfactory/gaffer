@@ -150,13 +150,13 @@ class _PlugValueWidget( GafferCortexUI.CompoundParameterValueWidget._PlugValueWi
 
 		return result
 
- 	def __classMenuDefinition( self ) :
+	def __classMenuDefinition( self ) :
 
- 		result = IECore.MenuDefinition()
+		result = IECore.MenuDefinition()
 
- 		classNameFilter = "*"
- 		with IECore.IgnoredExceptions( KeyError ) :
- 			classNameFilter = self._parameter().userData()["UI"]["classNameFilter"].value
+		classNameFilter = "*"
+		with IECore.IgnoredExceptions( KeyError ) :
+			classNameFilter = self._parameter().userData()["UI"]["classNameFilter"].value
 		menuPathStart = max( 0, classNameFilter.find( "*" ) )
 
 		loader = IECore.ClassLoader.defaultLoader( self._parameter().searchPathEnvVar() )
@@ -240,7 +240,7 @@ class _ChildParameterUI( CompoundPlugValueWidget ) :
 		with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal ) as result :
 
 			collapseButton = GafferUI.Button( image = "collapsibleArrowRight.png", hasFrame=False )
-			collapseButton.clickedSignal().connect( Gaffer.WeakMethod( self.__collapseButtonClicked ), scoped = False )
+			collapseButton.clickedSignal().connect( Gaffer.WeakMethod( self.__collapseButtonClicked ) )
 
 			GafferUI.Spacer( imath.V2i( 2 ) )
 
@@ -293,8 +293,8 @@ class _ChildParameterUI( CompoundPlugValueWidget ) :
 						self.__parameterHandler.childParameterHandler( self.__parameterHandler.parameter()["label"] ),
 					),
 				)
-				self.__label.buttonPressSignal().connect( Gaffer.WeakMethod( self.__labelButtonPress ), scoped = False )
-				self.getPlug().node().plugSetSignal().connect( Gaffer.WeakMethod( self.__plugSet ), scoped = False )
+				self.__label.buttonPressSignal().connect( Gaffer.WeakMethod( self.__labelButtonPress ) )
+				self.getPlug().node().plugSetSignal().connect( Gaffer.WeakMethod( self.__plugSet ) )
 
 			# parameters after the label
 			for parameter in headerParameters :

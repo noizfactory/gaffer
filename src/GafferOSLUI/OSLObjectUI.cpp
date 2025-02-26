@@ -46,14 +46,16 @@
 #include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/UndoScope.h"
+#include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/NameValuePlug.h"
 #include "Gaffer/PlugAlgo.h"
 
 #include "IECore/CompoundData.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferUI;
 
@@ -79,6 +81,16 @@ class OSLObjectPlugAdder : public PlugAdder
 
 		bool canCreateConnection( const Plug *endpoint ) const override
 		{
+			if( !PlugAdder::canCreateConnection( endpoint ) )
+			{
+				return false;
+			}
+
+			if( MetadataAlgo::readOnly( m_plugsParent.get() ) )
+			{
+				return false;
+			}
+
 			IECore::ConstCompoundDataPtr plugAdderOptions = Metadata::value<IECore::CompoundData>( m_plugsParent->node(), "plugAdderOptions" );
 			return !availablePrimVars( plugAdderOptions.get(), endpoint ).empty();
 		}
@@ -102,15 +114,11 @@ class OSLObjectPlugAdder : public PlugAdder
 		std::set<std::string> usedNames() const
 		{
 			std::set<std::string> used;
-			for( NameValuePlugIterator it( m_plugsParent.get() ); !it.done(); ++it )
+			for( const auto &plug : NameValuePlug::Range( *m_plugsParent ) )
 			{
-				// TODO - this method for checking if a plug variesWithContext should probably live in PlugAlgo
-				// ( it's based on Switch::variesWithContext )
-				PlugPtr sourcePlug = (*it)->namePlug()->source<Gaffer::Plug>();
-				bool variesWithContext = sourcePlug->direction() == Plug::Out && IECore::runTimeCast<const ComputeNode>( sourcePlug->node() );
-				if( !variesWithContext )
+				if( !PlugAlgo::dependsOnCompute( plug->namePlug() ) )
 				{
-					used.insert( (*it)->namePlug()->getValue() );
+					used.insert( plug->namePlug()->getValue() );
 				}
 			}
 			return used;
@@ -155,6 +163,11 @@ class OSLObjectPlugAdder : public PlugAdder
 
 		bool buttonRelease( const ButtonEvent &event )
 		{
+			if( MetadataAlgo::readOnly( m_plugsParent.get() ) )
+			{
+				return false;
+			}
+
 			IECore::ConstCompoundDataPtr plugAdderOptions = Metadata::value<IECore::CompoundData>( m_plugsParent->node(), "plugAdderOptions" );
 			vector<std::string> origNames = availablePrimVars( plugAdderOptions.get() );
 			map<std::string, std::string> nameMapping;
@@ -212,7 +225,7 @@ class OSLObjectPlugAdder : public PlugAdder
 			{
 				try
 				{
-					matchingDataType = PlugAlgo::extractDataFromPlug( valueInput );
+					matchingDataType = PlugAlgo::getValueAsData( valueInput );
 				}
 				catch( ... )
 				{
@@ -266,7 +279,7 @@ struct Registration
 {
 		Registration()
 		{
-			NoduleLayout::registerCustomGadget( "GafferOSLUI.OSLObjectUI.PlugAdder", boost::bind( &create, ::_1 ) );
+			NoduleLayout::registerCustomGadget( "GafferOSLUI.OSLObjectUI.PlugAdder", &create );
 		}
 
 	private :
@@ -280,5 +293,3 @@ struct Registration
 Registration g_registration;
 
 } // namespace
-
-

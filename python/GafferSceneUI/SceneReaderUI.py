@@ -143,7 +143,7 @@ def __tagsPopupMenu( menuDefinition, plugValueWidget ) :
 	if plug != node["tags"] :
 		return
 
-	fileName = plugValueWidget.getContext().substitute( node["fileName"].getValue() )
+	fileName = plugValueWidget.context().substitute( node["fileName"].getValue() )
 	try :
 		scene = IECoreScene.SharedSceneInterfaces.get( fileName )
 	except :
@@ -154,7 +154,7 @@ def __tagsPopupMenu( menuDefinition, plugValueWidget ) :
 		return
 	sceneTags = sorted( [ str( tag ) for tag in sceneTags ] )
 
-	with plugValueWidget.getContext() :
+	with plugValueWidget.context() :
 		currentTags = plug.getValue().split()
 
 	menuDefinition.prepend( "/TagsDivider", { "divider" : True } )
@@ -165,8 +165,8 @@ def __tagsPopupMenu( menuDefinition, plugValueWidget ) :
 			{
 				"command" : functools.partial( __toggleTag, plug, tag ),
 				"checkBox" : tag in currentTags,
-				"active" : plug.settable() and not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ),
+				"active" : plug.settable() and not Gaffer.MetadataAlgo.readOnly( plug ),
 			}
 		)
 
-__tagsPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __tagsPopupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __tagsPopupMenu )

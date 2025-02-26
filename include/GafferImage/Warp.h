@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_WARP_H
-#define GAFFERIMAGE_WARP_H
+#pragma once
 
-#include "GafferImage/ImageProcessor.h"
+#include "GafferImage/FlatImageProcessor.h"
 
 #include "Gaffer/NumericPlug.h"
 #include "Gaffer/StringPlug.h"
@@ -57,14 +56,14 @@ namespace GafferImage
 ///   pixel positions from output pixel positions.
 /// - Implement hashEngine() and computeEngine() to create
 ///   and return the Engine subclass.
-class GAFFERIMAGE_API Warp : public ImageProcessor
+class GAFFERIMAGE_API Warp : public FlatImageProcessor
 {
 	public :
 
-		Warp( const std::string &name=defaultName<Warp>() );
+		explicit Warp( const std::string &name=defaultName<Warp>() );
 		~Warp() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Warp, WarpTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Warp, WarpTypeId, FlatImageProcessor );
 
 		Gaffer::IntPlug *boundingModePlug();
 		const Gaffer::IntPlug *boundingModePlug() const;
@@ -131,5 +130,3 @@ class GAFFERIMAGE_API Warp : public ImageProcessor
 IE_CORE_DECLAREPTR( Warp )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_WARP_H

@@ -40,9 +40,10 @@
 
 #include "GafferDispatch/Dispatcher.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferScene;
@@ -91,12 +92,7 @@ void GafferSceneTest::traverseScene( const GafferScene::ScenePlug *scenePlug )
 	SceneAlgo::parallelTraverse( scenePlug, f );
 }
 
-void GafferSceneTest::traverseScene( GafferScene::ScenePlug *scenePlug )
-{
-	traverseScene( const_cast<const ScenePlug *>( scenePlug ) );
-}
-
-boost::signals::connection GafferSceneTest::connectTraverseSceneToPlugDirtiedSignal( const GafferScene::ConstScenePlugPtr &scene )
+Signals::Connection GafferSceneTest::connectTraverseSceneToPlugDirtiedSignal( const GafferScene::ConstScenePlugPtr &scene )
 {
 	const Node *node = scene->node();
 	if( !node )
@@ -107,13 +103,12 @@ boost::signals::connection GafferSceneTest::connectTraverseSceneToPlugDirtiedSig
 	return const_cast<Node *>( node )->plugDirtiedSignal().connect( boost::bind( &traverseOnDirty, ::_1, scene ) );
 }
 
-boost::signals::connection GafferSceneTest::connectTraverseSceneToContextChangedSignal( const GafferScene::ConstScenePlugPtr &scene, const Gaffer::ContextPtr &context )
+Signals::Connection GafferSceneTest::connectTraverseSceneToContextChangedSignal( const GafferScene::ConstScenePlugPtr &scene, const Gaffer::ContextPtr &context )
 {
 	return context->changedSignal().connect( boost::bind( &traverseOnChanged, scene, context ) );
 }
 
-boost::signals::connection GafferSceneTest::connectTraverseSceneToPreDispatchSignal( const GafferScene::ConstScenePlugPtr &scene )
+Signals::Connection GafferSceneTest::connectTraverseSceneToPreDispatchSignal( const GafferScene::ConstScenePlugPtr &scene )
 {
 	return GafferDispatch::Dispatcher::preDispatchSignal().connect( boost::bind( traverseOnPreDispatch, scene ) );
 }
-

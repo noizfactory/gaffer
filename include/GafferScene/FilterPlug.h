@@ -34,13 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_FILTERPLUG_H
-#define GAFFERSCENE_FILTERPLUG_H
+#pragma once
 
 #include "GafferScene/Export.h"
 #include "GafferScene/TypeIds.h"
 
 #include "Gaffer/Context.h"
+#include "Gaffer/DependencyNode.h"
 #include "Gaffer/NumericPlug.h"
 
 namespace GafferScene
@@ -58,7 +58,7 @@ class GAFFERSCENE_API FilterPlug : public Gaffer::IntPlug
 
 	public :
 
-		FilterPlug(
+		explicit FilterPlug(
 			const std::string &name = defaultName<FilterPlug>(),
 			Direction direction = In,
 			unsigned flags = Default
@@ -81,30 +81,30 @@ class GAFFERSCENE_API FilterPlug : public Gaffer::IntPlug
 		bool acceptsInput( const Gaffer::Plug *input ) const override;
 		Gaffer::PlugPtr createCounterpart( const std::string &name, Direction direction ) const override;
 
-		bool sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const;
+		/// Must be called when a child of a ScenePlug is dirtied, and that ScenePlug will later
+		/// be passed to the filter via SceneScope. This allows the filter to participate fully in
+		/// dirty propagation, despite not having ScenePlug inputs of its own. For an example of
+		/// usage, see `FilteredSceneProcessor::affects()`.
+		void sceneAffects( const Gaffer::Plug *scenePlugChild, Gaffer::DependencyNode::AffectedPlugsContainer &outputs ) const;
+
+		/// Evaluates the filter for the specified scene plug. Should be used in preference to
+		/// singular calls to getValue(), as it ensures a suitable SceneScope before evaluating the filter.
+		unsigned match( const ScenePlug *scene ) const;
 
 		/// Name of a context variable used to provide the input
 		/// scene to the filter
 		static const IECore::InternedString inputSceneContextName;
 
 		/// Provides the input scene for a filter evaluation
-		struct SceneScope : public Gaffer::Context::EditableScope
+		struct GAFFERSCENE_API SceneScope : public Gaffer::Context::EditableScope
 		{
 			SceneScope( const Gaffer::Context *context, const ScenePlug *scenePlug );
+			private :
+				const ScenePlug *m_scenePlug;
 		};
 
 };
 
 IE_CORE_DECLAREPTR( FilterPlug );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, FilterPlug> > FilterPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, FilterPlug> > InputFilterPlugIterator;
-typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, FilterPlug> > OutputFilterPlugIterator;
-
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, FilterPlug>, Gaffer::PlugPredicate<> > RecursiveFilterPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::In, FilterPlug>, Gaffer::PlugPredicate<> > RecursiveInputFilterPlugIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Out, FilterPlug>, Gaffer::PlugPredicate<> > RecursiveOutputFilterPlugIterator;
-
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_FILTERPLUG_H

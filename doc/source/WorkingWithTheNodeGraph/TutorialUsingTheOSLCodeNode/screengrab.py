@@ -1,4 +1,7 @@
 # BuildTarget: images/blank.png
+# BuildTarget: images/parameters.png
+# BuildTarget: images/shaderBallColoredStripes.png
+# BuildTarget: images/shaderBallStripes.png
 
 import time
 
@@ -12,7 +15,7 @@ import GafferUI
 scriptWindow = GafferUI.ScriptWindow.acquire( script )
 
 script["OSLCode"] = GafferOSL.OSLCode()
-script.selection().add( script["OSLCode"] )
+script.setFocus( script["OSLCode"] )
 oslEditor = GafferUI.NodeEditor.acquire( script["OSLCode"], floating=True )
 GafferUI.WidgetAlgo.grab( widget = oslEditor, imagePath = "images/blank.png" )
 

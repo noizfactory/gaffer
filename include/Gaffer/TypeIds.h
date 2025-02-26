@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_TYPEIDS_H
-#define GAFFER_TYPEIDS_H
+#pragma once
 
 namespace Gaffer
 {
@@ -101,11 +100,11 @@ enum TypeId
 	InternedStringVectorDataPlugTypeId = 110054,
 	SplinefColor4fPlugTypeId = 110055,
 	NumericBookmarkSetTypeId = 110056,
-	DispatcherTypeId = 110057, // obsolete - available for reuse
+	NameSwitchTypeId = 110057,
 	Transform2DPlugTypeId = 110058,
 	ReferenceTypeId = 110059,
 	ComputeNodeTypeId = 110060,
-	ParameterisedHolderComputeNodeTypeId = 110061, // obsolete - available for reuse
+	SpreadsheetTypeId = 110061,
 	Color3fVectorDataPlugTypeId = 110062,
 	ActionTypeId = 110063,
 	SimpleActionTypeId = 110064,
@@ -115,7 +114,7 @@ enum TypeId
 	ArrayPlugTypeId = 110068,
 	BackdropTypeId = 110069,
 	SwitchTypeId = 110070,
-	SwitchDependencyNodeTypeId = 110071, // obsolete - available for reuse
+	SpreadsheetCellPlugTypeId = 110071,
 	PathMatcherDataPlugTypeId = 110072,
 	SubGraphTypeId = 110073,
 	DotTypeId = 110074,
@@ -133,11 +132,32 @@ enum TypeId
 	BoxInTypeId = 110086,
 	BoxOutTypeId = 110087,
 	DeleteContextVariablesTypeId = 110088,
+	SpreadsheetRowsPlugTypeId = 110089,
+	SpreadsheetRowPlugTypeId = 110090,
+	ShufflePlugTypeId = 110091,
+	ShufflesPlugTypeId = 110092,
+	EditScopeTypeId = 110093,
+	MessagesDataTypeId = 110094,
+	M33fVectorDataPlugTypeId = 110095,
+	ScriptNodeFocusSetTypeId = 110096,
+	AnimationKeyTypeId = 110097,
+	RandomChoiceTypeId = 110098,
+	ContextQueryTypeId = 110099,
+	TweakPlugTypeId = 110100,
+	TweaksPlugTypeId = 110101,
+	V2fVectorDataPlugTypeId = 110102,
+	V3iVectorDataPlugTypeId = 110103,
+	ContextVariableTweaksTypeId = 110104,
+	HiddenFilePathFilterTypeId = 110105,
+	Color4fVectorDataPlugTypeId = 110106,
+	OptionalValuePlugTypeId = 110107,
+	CollectTypeId = 110108,
+	Box2fVectorDataPlugTypeId = 110109,
+	PatternMatchTypeId = 110110,
+	Int64VectorDataPlugTypeId = 110111,
 
 	LastTypeId = 110159,
 
 };
 
 } // namespace Gaffer
-
-#endif // GAFFER_TYPEIDS_H

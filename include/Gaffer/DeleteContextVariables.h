@@ -34,24 +34,22 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_DELETECONTEXTVARIABLES_H
-#define GAFFER_DELETECONTEXTVARIABLES_H
+#pragma once
 
-#include "Gaffer/CompoundDataPlug.h"
 #include "Gaffer/ContextProcessor.h"
 #include "Gaffer/StringPlug.h"
 
 namespace Gaffer
 {
 
-class IECORE_EXPORT DeleteContextVariables : public ContextProcessor
+class GAFFER_API DeleteContextVariables : public ContextProcessor
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::DeleteContextVariables, DeleteContextVariablesTypeId, ContextProcessor );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::DeleteContextVariables, DeleteContextVariablesTypeId, ContextProcessor );
 
-		DeleteContextVariables( const std::string &name=GraphComponent::defaultName<DeleteContextVariables>() );
+		explicit DeleteContextVariables( const std::string &name=GraphComponent::defaultName<DeleteContextVariables>() );
 		~DeleteContextVariables() override;
 
 		StringPlug *variablesPlug();
@@ -60,7 +58,7 @@ class IECORE_EXPORT DeleteContextVariables : public ContextProcessor
 	protected :
 
 		bool affectsContext( const Plug *input ) const override;
-		void processContext( Context::EditableScope &context ) const override;
+		void processContext( Context::EditableScope &context, IECore::ConstRefCountedPtr &storage ) const override;
 
 	private :
 
@@ -71,5 +69,3 @@ class IECORE_EXPORT DeleteContextVariables : public ContextProcessor
 IE_CORE_DECLAREPTR( DeleteContextVariables );
 
 } // namespace Gaffer
-
-#endif // GAFFER_DELETECONTEXTVARIABLES_H

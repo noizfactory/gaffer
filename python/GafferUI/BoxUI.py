@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import inspect
 import functools
 
 import IECore
@@ -81,7 +82,8 @@ Gaffer.Metadata.registerNode(
 
 		"*" : [
 
-			"labelPlugValueWidget:renameable", True,
+			"deletable", True,
+			"renameable", True,
 
 		],
 
@@ -136,9 +138,19 @@ def appendNodeEditorToolMenuDefinitions( nodeEditor, node, menuDefinition ) :
 	if not isinstance( node, Gaffer.Box ) :
 		return
 
+	nonDefaultPlugs = __nonDefaultPlugs( node )
+
+	menuDefinition.append( "/ResetDefaultsDivider", { "divider" : True } )
+	menuDefinition.append(
+		"/Reset Default Values",
+		{
+			"command" : functools.partial( __resetDefaultValues, plugs = nonDefaultPlugs ),
+			"active" : len( nonDefaultPlugs ) and all( not Gaffer.MetadataAlgo.readOnly( p ) for p in nonDefaultPlugs )
+		}
+	)
 	menuDefinition.append( "/BoxDivider", { "divider" : True } )
-	menuDefinition.append( "/Export reference...", { "command" : functools.partial( __exportForReferencing, node = node ) } )
-	menuDefinition.append( "/Import reference...", { "command" : functools.partial( __importReference, node = node ) } )
+	menuDefinition.append( "/Export Reference...", { "command" : functools.partial( __exportForReferencing, node = node ) } )
+	menuDefinition.append( "/Import Reference...", { "command" : functools.partial( __importReference, node = node ) } )
 
 	if Gaffer.BoxIO.canInsert( node ) :
 		menuDefinition.append( "/UpgradeDivider", { "divider" : True } )
@@ -148,7 +160,82 @@ def __showContents( graphEditor, box ) :
 
 	GafferUI.GraphEditor.acquire( box )
 
+def __nonDefaultPlugs( box ) :
+
+	def __nonDefaultWalk( plug ) :
+
+		if Gaffer.Metadata.value( plug, "userDefault", Gaffer.Metadata.RegistrationTypes.Instance ) is not None :
+			return True
+
+		if len( plug ) == 0 :
+			if isinstance( plug, Gaffer.ValuePlug ) and not plug.isSetToDefault() :
+				if plug.getInput() is None :
+					return True
+				else :
+					# Plug will always say it is not set to default, but
+					# we don't care as we don't export connections.
+					pass
+			return False
+		else :
+			return any( __nonDefaultWalk( c ) for c in plug )
+
+	return [
+		p for p in Gaffer.Plug.Range( box )
+		if not p.getName().startswith( "__" )
+		and __nonDefaultWalk( p )
+	]
+
+def __resetDefaultValues( plugs ) :
+
+	with Gaffer.UndoScope( plugs[0].ancestor( Gaffer.ScriptNode ) ) :
+		for p in plugs :
+			p.resetDefault()
+			# If someone is going to the trouble of authoring a
+			# default, they don't want a pre-existing userDefault
+			# to ruin things.
+			Gaffer.Metadata.deregisterValue( p, "userDefault" )
+			for c in Gaffer.Plug.RecursiveRange( p ) :
+				Gaffer.Metadata.deregisterValue( c, "userDefault" )
+
+def __formatPlugs( box, plugs ) :
+
+	result = ""
+
+	for section in GafferUI.PlugLayout.layoutSections( box ) :
+		for plug in GafferUI.PlugLayout.layoutOrder( box, section = section ) :
+			if plug not in plugs :
+				continue
+			result += "{}.{}\n".format(
+				section,
+				Gaffer.Metadata.value( plug, "label" ) or IECore.CamelCase.toSpaced( plug.getName() )
+			)
+
+	return result
+
 def __exportForReferencing( menu, node ) :
+
+	nonDefaultPlugs = __nonDefaultPlugs( node )
+	if len( nonDefaultPlugs ) :
+		dialogue = GafferUI.ConfirmationDialogue(
+			title = "Export without current values?",
+			message = inspect.cleandoc(
+				"""
+				Not all plugs are at their default values, and non-default
+				values will not be exported. Export anyway?
+				"""
+			),
+			details = __formatPlugs( node, nonDefaultPlugs ) + "\n\n" +
+			inspect.cleandoc(
+				"""
+				Defaults can be reset for the whole node using "Reset Default
+				Values" in the NodeEditor tool menu or for individual plugs
+				using "Reset Default Value" in the plug context menu.
+				"""
+			).replace( "\n", " " ),
+			confirmLabel = "Export"
+		)
+		if not dialogue.waitForConfirmation() :
+			return
 
 	bookmarks = GafferUI.Bookmarks.acquire( node, category="reference" )
 
@@ -198,33 +285,21 @@ def __upgradeToUseBoxIO( node ) :
 # Shared menu code
 ##########################################################################
 
-def __deletePlug( plug ) :
-
-	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
-		plug.parent().removeChild( plug )
-
-def __appendPlugDeletionMenuItems( menuDefinition, plug, readOnly = False ) :
-
-	if not isinstance( plug.parent(), Gaffer.Box ) :
-		return
-
-	menuDefinition.append( "/DeleteDivider", { "divider" : True } )
-	menuDefinition.append( "/Delete", {
-		"command" : functools.partial( __deletePlug, plug ),
-		"active" : not readOnly,
-	} )
-
 def __promote( plug ) :
 
 	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
-		Gaffer.BoxIO.promote( plug )
+		promoted = Gaffer.BoxIO.promote( plug )
+		if isinstance( promoted, Gaffer.NameValuePlug ) :
+			Gaffer.Metadata.registerValue(
+				promoted, "nameValuePlugPlugValueWidget:ignoreNamePlug", True
+			)
 
 def __unpromote( plug ) :
 
 	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
 		Gaffer.PlugAlgo.unpromote( plug )
 
-def __appendPlugPromotionMenuItems( menuDefinition, plug, readOnly = False ) :
+def __appendPlugPromotionMenuItems( menuDefinition, plug ) :
 
 	node = plug.node()
 	if node is None :
@@ -234,11 +309,21 @@ def __appendPlugPromotionMenuItems( menuDefinition, plug, readOnly = False ) :
 	if box is None :
 		return
 
-	parentLabel = {
+	readOnly = Gaffer.MetadataAlgo.readOnly( plug )
+
+	ancestorLabel = {
 		Gaffer.ArrayPlug : "Array",
 		Gaffer.TransformPlug : "Transform",
 		Gaffer.Transform2DPlug : "Transform",
+		Gaffer.NameValuePlug : "Value and Switch",
 	}.get( type( plug.parent() ) )
+
+	if ancestorLabel is not None :
+		ancestor = plug.parent()
+	else :
+		ancestor = plug.ancestor( Gaffer.Spreadsheet.RowsPlug )
+		if ancestor is not None :
+			ancestorLabel = "Spreadsheet"
 
 	if Gaffer.PlugAlgo.canPromote( plug ) :
 
@@ -250,9 +335,9 @@ def __appendPlugPromotionMenuItems( menuDefinition, plug, readOnly = False ) :
 			"active" : not readOnly,
 		} )
 
-		if parentLabel and Gaffer.PlugAlgo.canPromote( plug.parent() ) :
-			menuDefinition.append( "/Promote %s to %s" % ( parentLabel, box.getName() ), {
-				"command" : functools.partial( __promote, plug.parent() ),
+		if ancestorLabel and Gaffer.PlugAlgo.canPromote( ancestor ) :
+			menuDefinition.append( "/Promote %s to %s" % ( ancestorLabel, box.getName() ), {
+				"command" : functools.partial( __promote, ancestor ),
 				"active" : not readOnly,
 			} )
 
@@ -263,9 +348,9 @@ def __appendPlugPromotionMenuItems( menuDefinition, plug, readOnly = False ) :
 		if len( menuDefinition.items() ) :
 			menuDefinition.append( "/BoxDivider", { "divider" : True } )
 
-		if parentLabel and Gaffer.PlugAlgo.isPromoted( plug.parent() ) :
-			menuDefinition.append( "/Unpromote %s from %s" % ( parentLabel, box.getName() ), {
-				"command" : functools.partial( __unpromote, plug.parent() ),
+		if ancestorLabel and Gaffer.PlugAlgo.isPromoted( ancestor ) :
+			menuDefinition.append( "/Unpromote %s from %s" % ( ancestorLabel, box.getName() ), {
+				"command" : functools.partial( __unpromote, ancestor ),
 				"active" : not readOnly,
 			} )
 		else :
@@ -280,12 +365,27 @@ def __appendPlugPromotionMenuItems( menuDefinition, plug, readOnly = False ) :
 # PlugValueWidget menu
 ##########################################################################
 
+def __appendPlugResetDefaultMenuItems( menuDefinition, plug ) :
+
+	if not isinstance( plug.node(), Gaffer.Box ) :
+		return
+
+	readOnly = Gaffer.MetadataAlgo.readOnly( plug )
+
+	menuDefinition.append(
+		"/Reset Default Value",
+		{
+			"command" : functools.partial( __resetDefaultValues, [ plug ] ),
+			"active" : isinstance( plug, Gaffer.ValuePlug ) and not plug.isSetToDefault() and not readOnly,
+		}
+	)
+
 def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 
-	__appendPlugDeletionMenuItems( menuDefinition, plugValueWidget.getPlug(), readOnly = plugValueWidget.getReadOnly() )
-	__appendPlugPromotionMenuItems( menuDefinition, plugValueWidget.getPlug(), readOnly = plugValueWidget.getReadOnly() )
+	__appendPlugResetDefaultMenuItems( menuDefinition, plugValueWidget.getPlug() )
+	__appendPlugPromotionMenuItems( menuDefinition, plugValueWidget.getPlug() )
 
-__plugPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
 
 # GraphEditor plug context menu
 ##########################################################################
@@ -293,6 +393,16 @@ __plugPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( 
 def __renamePlug( menu, plug ) :
 
 	d = GafferUI.TextInputDialogue( initialText = plug.getName(), title = "Enter name", confirmLabel = "Rename" )
+
+	# Hack to borrow the input validation from NameWidget so we can prevent the
+	# user entering an invalid name.
+	# \todo : This could be improved with some combination of a public validator
+	# API, sanitising node names in `GraphComponent::setName` and relaxing
+	# `GraphComponent` name contraints.
+	from GafferUI.NameWidget import _Validator
+	textWidget = d._getWidget()._qtWidget()
+	textWidget.setValidator( _Validator( textWidget ) )
+
 	name = d.waitForText( parentWindow = menu.ancestor( GafferUI.Window ) )
 
 	if not name :
@@ -338,7 +448,7 @@ def __graphEditorPlugContextMenu( graphEditor, plug, menuDefinition ) :
 			"/Rename...",
 			{
 				"command" : functools.partial( __renamePlug, plug = parentPlug ),
-				"active" : not readOnly,
+				"active" : not readOnly and Gaffer.Metadata.value( parentPlug, "renameable" ),
 			}
 		)
 
@@ -375,7 +485,6 @@ def __graphEditorPlugContextMenu( graphEditor, plug, menuDefinition ) :
 			}
 		)
 
-	__appendPlugDeletionMenuItems( menuDefinition, parentPlug, readOnly )
-	__appendPlugPromotionMenuItems( menuDefinition, plug, readOnly )
+	__appendPlugPromotionMenuItems( menuDefinition, plug )
 
-GafferUI.GraphEditor.plugContextMenuSignal().connect( __graphEditorPlugContextMenu, scoped = False )
+GafferUI.GraphEditor.plugContextMenuSignal().connect( __graphEditorPlugContextMenu )

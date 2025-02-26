@@ -37,6 +37,7 @@
 import os
 import unittest
 import imath
+import math
 
 import IECore
 
@@ -46,14 +47,14 @@ import GafferImageTest
 
 class SamplerTest( GafferImageTest.ImageTestCase ) :
 
-	fileName = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	fileName = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def testOutOfBoundsSampleModeBlack( self ) :
 
 		c = GafferImage.Constant()
 		c["color"].setValue( imath.Color4f( 1 ) )
 
-		dw = c["out"]["dataWindow"].getValue();
+		dw = c["out"]["dataWindow"].getValue()
 		s = GafferImage.Sampler( c["out"], "R", dw, GafferImage.Sampler.BoundingMode.Black )
 
 		# Check integer sampling.
@@ -66,7 +67,7 @@ class SamplerTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( s.sample( dw.max().x - 1, dw.max().y - 1 ), 1 )
 		self.assertEqual( s.sample( dw.min().x, dw.max().y - 1 ), 1 )
 
-		# Pixels just outside dataWindow should be white.
+		# Pixels just outside dataWindow should be black.
 
 		self.assertEqual( s.sample( dw.min().x - 1, dw.min().y - 1 ), 0 )
 		self.assertEqual( s.sample( dw.max().x, dw.min().y - 1 ), 0 )
@@ -92,12 +93,33 @@ class SamplerTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( s.sample( float( dw.max().x - 0.5 ), float( dw.max().y - 0.5 ) ), 1 )
 		self.assertEqual( s.sample( float( dw.min().x + 0.5 ), float( dw.max().y - 0.5 ) ), 1 )
 
+	def testExceptionalValues( self ) :
+
+		c = GafferImage.Constant()
+		c["color"].setValue( imath.Color4f( 1 ) )
+
+		inf = GafferImage.Grade()
+		inf["in"].setInput( c["out"] )
+		inf["multiply"].setValue( imath.Color4f( float( "inf" ) ) )
+		inf["offset"].setValue( imath.Color4f( float( "inf" ) ) )
+		inf["blackClamp"].setValue( False )
+
+		dw = imath.Box2i( imath.V2i( 0 ), imath.V2i( 1 ) )
+		self.assertEqual( GafferImage.Sampler( inf["out"], "R", dw ).sample( 0, 0 ), float( "inf" ) )
+
+		inf["multiply"].setValue( imath.Color4f( -float( "inf" ) ) )
+		inf["offset"].setValue( imath.Color4f( -float( "inf" ) ) )
+		self.assertEqual( GafferImage.Sampler( inf["out"], "R", dw ).sample( 0, 0 ), -float( "inf" ) )
+
+		inf["multiply"].setValue( imath.Color4f( float( "nan" ) ) )
+		self.assertTrue( math.isnan( GafferImage.Sampler( inf["out"], "R", dw ).sample( 0, 0 ) ) )
+
 	def testOutOfBoundsSampleModeClamp( self ) :
 
 		r = GafferImage.ImageReader()
 		r["fileName"].setValue( self.fileName )
 
-		dw = r["out"]["dataWindow"].getValue();
+		dw = r["out"]["dataWindow"].getValue()
 		s = GafferImage.Sampler( r["out"], "R", dw, GafferImage.Sampler.BoundingMode.Clamp )
 
 		# Get the exact values of the corner pixels.
@@ -119,7 +141,7 @@ class SamplerTest( GafferImageTest.ImageTestCase ) :
 	def test2x2Checker( self ) :
 
 		reader = GafferImage.ImageReader()
-		reader["fileName"].setValue( os.path.dirname( __file__ ) + "/images/checker2x2.exr" )
+		reader["fileName"].setValue( self.imagesPath() / "checker2x2.exr" )
 
 		# As long as the sample region includes the valid range of our image, and all
 		# the pixels we're going to request, it should have no effect on our sampling.
@@ -202,6 +224,85 @@ class SamplerTest( GafferImageTest.ImageTestCase ) :
 		empty = self.emptyImage()
 		sampler = GafferImage.Sampler( empty["out"], "R", empty["out"]["format"].getValue().getDisplayWindow(), boundingMode = GafferImage.Sampler.BoundingMode.Clamp )
 		self.assertEqual( sampler.sample( 0, 0 ), 0.0 )
+
+	def testExceptionOnDeepData( self ) :
+
+		constant1 = GafferImage.Constant()
+		constant1["format"].setValue( GafferImage.Format( 1000, 1000 ) )
+		constant1["color"].setValue( imath.Color4f( 1 ) )
+
+		constant2 = GafferImage.Constant()
+		constant2["format"].setValue( GafferImage.Format( 1000, 1000 ) )
+		constant2["color"].setValue( imath.Color4f( 1 ) )
+
+		merge = GafferImage.DeepMerge()
+		merge["in"][0].setInput( constant1["out"] )
+		merge["in"][1].setInput( constant2["out"] )
+
+		with self.assertRaises( RuntimeError ) :
+			sampler = GafferImage.Sampler( merge["out"], "R", imath.Box2i( imath.V2i( 0 ), imath.V2i( 200 ) ), boundingMode = GafferImage.Sampler.BoundingMode.Black )
+
+	def testVisitPixels( self ):
+
+		ts = GafferImage.ImagePlug.tileSize()
+		ramp = GafferImage.Ramp()
+		ramp["startPosition"].setValue( imath.V2f( 0.5 ) )
+
+		offset = GafferImage.Offset()
+		offset["in"].setInput( ramp["out"] )
+
+		# Test for a bunch of different images sizes
+		for width in [ 1, 6, ts + 6, 2 * ts + 6 ]:
+			for height in [ 1, 9, ts + 9, 2 * ts + 9 ]:
+
+				# Set up a ramp where each pixel gets a unique value based on its index
+				ramp["format"].setValue( GafferImage.Format( width, height, 1.000 ) )
+				rampScale = ( width * height - 1 ) / ( width * width + 1 )
+				ramp["endPosition"].setValue( imath.V2f( 0.5 + 1 * rampScale, 0.5 + width * rampScale ) )
+				ramp['ramp'].setValue( Gaffer.SplineDefinitionfColor4f( ( ( 0, imath.Color4f( 0 ) ), ( 1, imath.Color4f( width * height - 1 ) )), Gaffer.SplineDefinitionInterpolation.Linear ) )
+
+				center = imath.V2i( width // 2, height // 2 )
+
+				# Test for a bunch of different offsets, so we're hitting different ways the datawindow
+				# may be aligned to a tile boundary
+				for dataAlignment in [ imath.V2i(0), -center, imath.V2i( ts // 2 ) - center  ]:
+					offset["offset"].setValue( dataAlignment )
+					dataWindow = offset["out"].dataWindow()
+
+					for bm in [ GafferImage.Sampler.BoundingMode.Black, GafferImage.Sampler.BoundingMode.Clamp ]:
+
+						# Make one big sampler that can handle all our queries. Making this larger than the
+						# data window doesn't actually have an impact on the current implementation, but it
+						# means that our queries outside the datawindow are officially legal.
+						oversizedSampleWindow = imath.Box2i( dataWindow.min() - ts * 3, dataWindow.max() + ts * 3 )
+
+						sampler = GafferImage.Sampler( offset["out"], "R", oversizedSampleWindow, boundingMode = bm )
+
+						# Test possible ways for the sampling region to line up with the data window: corners,
+						# edges, center, or completely outside
+						for regionAlignment in [ imath.V2i( regionAlignmentX, regionAlignmentY )
+							for regionAlignmentX in [ 0, width // 2, width - 1 ]
+							for regionAlignmentY in [ 0, height // 2, height - 1 ]
+						] + [ imath.V2i( -ts ), dataWindow.max() + imath.V2i( ts ) ]:
+
+								for regionSize in [
+										imath.V2i( 1, 1 ),
+										imath.V2i( 5, 7 ),
+										imath.V2i( 7, 5 ),
+										imath.V2i( ts + 7, 1 ),
+										imath.V2i( 1, ts + 7 ),
+										imath.V2i( 2 * ts + 7, 1 ),
+										imath.V2i( 1, 2 * ts + 7 ),
+										imath.V2i( 2 * ts + 7, 2 ),
+										imath.V2i( 2, 2 * ts + 7 ),
+										imath.V2i( 2 * ts + 5, 2 * ts + 7 ),
+									]:
+
+									regionMin = dataAlignment + regionAlignment - regionSize / 2
+									region = imath.Box2i( regionMin, regionMin + regionSize )
+
+									with self.subTest( dataWindow = dataWindow, region = region ):
+										GafferImageTest.validateVisitPixels( sampler, region )
 
 if __name__ == "__main__":
 	unittest.main()

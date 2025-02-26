@@ -35,8 +35,10 @@
 #
 ##########################################################################
 
+import functools
 import unittest
 import imath
+import operator
 
 import IECore
 
@@ -77,6 +79,8 @@ class GadgetTest( GafferUITest.TestCase ) :
 
 	def testDerivationInPython( self ) :
 
+		b = imath.Box3f( imath.V3f( -20, 10, 2 ), imath.V3f( 10, 15, 5 ) )
+		layers = [ GafferUI.Gadget.Layer.Main, GafferUI.Gadget.Layer.MidBack, GafferUI.Gadget.Layer.Front ]
 		class MyGadget( GafferUI.Gadget ) :
 
 			def __init__( self ) :
@@ -87,11 +91,19 @@ class GadgetTest( GafferUITest.TestCase ) :
 
 			def bound( self ) :
 
-				return imath.Box3f( imath.V3f( -20, 10, 2 ), imath.V3f( 10, 15, 5 ) )
+				return b
 
-			def doRenderLayer( self, layer, style ) :
+			def renderLayer( self, layer, style, reason ) :
 
-				self.layersRendered.add( layer )
+				self.layersRendered.add( (layer, style, reason) )
+
+			def layerMask( self ) :
+
+				return functools.reduce( operator.or_, layers )
+
+			def renderBound( self ) :
+
+				return b
 
 		mg = MyGadget()
 
@@ -106,12 +118,21 @@ class GadgetTest( GafferUITest.TestCase ) :
 		self.assertEqual( c.bound().size(), mg.bound().size() )
 
 		with GafferUI.Window() as w :
-			GafferUI.GadgetWidget( c )
+			gw = GafferUI.GadgetWidget( c )
+			gw.getViewportGadget().frame( b )
 
 		w.setVisible( True )
 		self.waitForIdle( 1000 )
 
-		self.assertEqual( mg.layersRendered, set( GafferUI.Gadget.Layer.values.values() ) )
+		self.assertEqual( set( i[0] for i in mg.layersRendered ), set(layers) )
+		mg.layersRendered = set()
+
+		s = GafferUI.StandardStyle()
+		c.setStyle( s )
+
+		self.waitForIdle( 1000 )
+
+		self.assertEqual( mg.layersRendered, set( (i,s, GafferUI.Gadget.RenderReason.Draw) for i in layers ) )
 
 	def testStyle( self ) :
 
@@ -122,17 +143,17 @@ class GadgetTest( GafferUITest.TestCase ) :
 		self.assertEqual( g.getStyle(), None )
 		self.assertEqual( l.getStyle(), None )
 
-		self.failUnless( g.style().isSame( GafferUI.Style.getDefaultStyle() ) )
-		self.failUnless( l.style().isSame( GafferUI.Style.getDefaultStyle() ) )
+		self.assertTrue( g.style().isSame( GafferUI.Style.getDefaultStyle() ) )
+		self.assertTrue( l.style().isSame( GafferUI.Style.getDefaultStyle() ) )
 
 		s = GafferUI.StandardStyle()
 		l.setStyle( s )
 
-		self.failUnless( l.getStyle().isSame( s ) )
+		self.assertTrue( l.getStyle().isSame( s ) )
 		self.assertEqual( g.getStyle(), None )
 
-		self.failUnless( g.style().isSame( s ) )
-		self.failUnless( l.style().isSame( s ) )
+		self.assertTrue( g.style().isSame( s ) )
+		self.assertTrue( l.style().isSame( s ) )
 
 	def testTypeNamePrefixes( self ) :
 
@@ -142,28 +163,42 @@ class GadgetTest( GafferUITest.TestCase ) :
 	def testRenderRequestOnStyleChange( self ) :
 
 		g = GafferUI.Gadget()
+		v = GafferUI.ViewportGadget()
+		v.addChild( g )
 
-		cs = GafferTest.CapturingSlot( g.renderRequestSignal() )
+		cs = GafferTest.CapturingSlot( v.renderRequestSignal() )
 		self.assertEqual( len( cs ), 0 )
 
 		s = GafferUI.StandardStyle()
 
 		g.setStyle( s )
 		self.assertEqual( len( cs ), 1 )
-		self.assertTrue( cs[0][0].isSame( g ) )
+		self.assertTrue( cs[0][0].isSame( v ) )
 
 		s2 = GafferUI.StandardStyle()
 		g.setStyle( s2 )
 		self.assertEqual( len( cs ), 2 )
-		self.assertTrue( cs[1][0].isSame( g ) )
+		self.assertTrue( cs[1][0].isSame( v ) )
 
 		s2.setColor( GafferUI.StandardStyle.Color.BackgroundColor, imath.Color3f( 1 ) )
 		self.assertEqual( len( cs ), 3 )
-		self.assertTrue( cs[2][0].isSame( g ) )
+		self.assertTrue( cs[2][0].isSame( v ) )
+
+		s.setColor( GafferUI.StandardStyle.Color.BackgroundColor, imath.Color3f( 1 ) )
+		self.assertEqual( len( cs ), 3 )
+
+		g.setStyle( None )
+		self.assertEqual( len( cs ), 4 )
+
+		s2.setColor( GafferUI.StandardStyle.Color.BackgroundColor, imath.Color3f( 2 ) )
+		self.assertEqual( len( cs ), 4 )
 
 	def testHighlighting( self ) :
 
 		g = GafferUI.Gadget()
+		v = GafferUI.ViewportGadget()
+		v.addChild( g )
+
 		self.assertEqual( g.getHighlighted(), False )
 
 		g.setHighlighted( True )
@@ -172,14 +207,14 @@ class GadgetTest( GafferUITest.TestCase ) :
 		g.setHighlighted( False )
 		self.assertEqual( g.getHighlighted(), False )
 
-		cs = GafferTest.CapturingSlot( g.renderRequestSignal() )
+		cs = GafferTest.CapturingSlot( v.renderRequestSignal() )
 
 		g.setHighlighted( False )
 		self.assertEqual( len( cs ), 0 )
 
 		g.setHighlighted( True )
 		self.assertEqual( len( cs ), 1 )
-		self.assertTrue( cs[0][0].isSame( g ) )
+		self.assertTrue( cs[0][0].isSame( v ) )
 
 	def testVisibility( self ) :
 
@@ -215,7 +250,10 @@ class GadgetTest( GafferUITest.TestCase ) :
 	def testVisibilitySignals( self ) :
 
 		g = GafferUI.Gadget()
-		cs = GafferTest.CapturingSlot( g.renderRequestSignal() )
+		v = GafferUI.ViewportGadget()
+		v.addChild( g )
+
+		cs = GafferTest.CapturingSlot( v.renderRequestSignal() )
 		self.assertEqual( len( cs ), 0 )
 
 		g.setVisible( True )
@@ -223,15 +261,15 @@ class GadgetTest( GafferUITest.TestCase ) :
 
 		g.setVisible( False )
 		self.assertEqual( len( cs ), 1 )
-		self.assertEqual( cs[0][0], g )
+		self.assertEqual( cs[0][0], v )
 
 		g.setVisible( False )
 		self.assertEqual( len( cs ), 1 )
-		self.assertEqual( cs[0][0], g )
+		self.assertEqual( cs[0][0], v )
 
 		g.setVisible( True )
 		self.assertEqual( len( cs ), 2 )
-		self.assertEqual( cs[1][0], g )
+		self.assertEqual( cs[1][0], v )
 
 	def testBoundIgnoresHiddenChildren( self ) :
 
@@ -262,12 +300,10 @@ class GadgetTest( GafferUITest.TestCase ) :
 
 			events.append( ( gadget, gadget.visible() ) )
 
-		connnections = [
-			g.visibilityChangedSignal().connect( visibilityChanged ),
-			g["a"].visibilityChangedSignal().connect( visibilityChanged ),
-			g["a"]["c"].visibilityChangedSignal().connect( visibilityChanged ),
-			g["b"].visibilityChangedSignal().connect( visibilityChanged ),
-		]
+		g.visibilityChangedSignal().connect( visibilityChanged )
+		g["a"].visibilityChangedSignal().connect( visibilityChanged )
+		g["a"]["c"].visibilityChangedSignal().connect( visibilityChanged )
+		g["b"].visibilityChangedSignal().connect( visibilityChanged )
 
 		g["b"].setVisible( True )
 		self.assertEqual( len( events ), 0 )
@@ -336,6 +372,24 @@ class GadgetTest( GafferUITest.TestCase ) :
 		self.assertEqual( g3.enabled(), False )
 		self.assertEqual( g3.enabled( relativeTo = g2 ), True )
 		self.assertEqual( g3.enabled( relativeTo = g1 ), True )
+
+	def testAccessWidgetsFromGadgetDragSignals( self ) :
+
+		button1 = GafferUI.Button()
+		button2 = GafferUI.Button()
+
+		gadget = GafferUI.Gadget()
+
+		event = GafferUI.DragDropEvent()
+		event.sourceWidget = button1
+		event.destinationWidget = button2
+
+		cs = GafferTest.CapturingSlot( gadget.dragMoveSignal() )
+		gadget.dragMoveSignal()( gadget, event )
+
+		self.assertEqual( len( cs ), 1 )
+		self.assertIs( cs[0][1].sourceWidget, button1 )
+		self.assertIs( cs[0][1].destinationWidget, button2 )
 
 if __name__ == "__main__":
 	unittest.main()

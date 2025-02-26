@@ -41,7 +41,7 @@
 
 #include "Gaffer/Context.h"
 
-#include "OpenEXR/ImathFun.h"
+#include "Imath/ImathFun.h"
 
 #include <cmath>
 
@@ -126,7 +126,7 @@ struct VectorWarp::Engine : public Warp::Engine
 // VectorWarp implementation
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( VectorWarp );
+GAFFER_NODE_DEFINE_TYPE( VectorWarp );
 
 size_t VectorWarp::g_firstPlugIndex = 0;
 
@@ -176,10 +176,21 @@ const IntPlug *VectorWarp::vectorUnitsPlug() const
 	return getChild<IntPlug>( g_firstPlugIndex + 2 );
 }
 
+void VectorWarp::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+{
+	Warp::affects( input, outputs );
+
+	if( input == vectorPlug()->deepPlug() )
+	{
+		outputs.push_back( outPlug()->deepPlug() );
+	}
+}
+
 bool VectorWarp::affectsEngine( const Gaffer::Plug *input ) const
 {
 	return
 		Warp::affectsEngine( input ) ||
+		input == inPlug()->viewNamesPlug() ||
 		input == inPlug()->formatPlug() ||
 		input == vectorPlug()->channelNamesPlug() ||
 		input == vectorPlug()->channelDataPlug() ||
@@ -193,6 +204,14 @@ void VectorWarp::hashEngine( const Imath::V2i &tileOrigin, const Gaffer::Context
 
 	h.append( tileOrigin );
 
+	vectorModePlug()->hash( h );
+	vectorUnitsPlug()->hash( h );
+
+	if( !ImageAlgo::viewIsValid( context, vectorPlug()->viewNames()->readable() ) )
+	{
+		return;
+	}
+
 	ConstStringVectorDataPtr channelNames;
 
 	{
@@ -205,26 +224,24 @@ void VectorWarp::hashEngine( const Imath::V2i &tileOrigin, const Gaffer::Context
 
 	ImagePlug::ChannelDataScope channelDataScope( context );
 
-	if( ImageAlgo::channelExists( channelNames->readable(), "R" ) )
+	if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameR ) )
 	{
-		channelDataScope.setChannelName( "R" );
+		channelDataScope.setChannelName( &ImageAlgo::channelNameR );
 		vectorPlug()->channelDataPlug()->hash( h );
 	}
 
-	if( ImageAlgo::channelExists( channelNames->readable(), "G" ) )
+	if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameG ) )
 	{
-		channelDataScope.setChannelName( "G" );
+		channelDataScope.setChannelName( &ImageAlgo::channelNameG );
 		vectorPlug()->channelDataPlug()->hash( h );
 	}
 
-	if( ImageAlgo::channelExists( channelNames->readable(), "A" ) )
+	if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameA ) )
 	{
-		channelDataScope.setChannelName( "A" );
+		channelDataScope.setChannelName( &ImageAlgo::channelNameA );
 		vectorPlug()->channelDataPlug()->hash( h );
 	}
 
-	vectorModePlug()->hash( h );
-	vectorUnitsPlug()->hash( h );
 }
 
 const Warp::Engine *VectorWarp::computeEngine( const Imath::V2i &tileOrigin, const Gaffer::Context *context ) const
@@ -236,34 +253,48 @@ const Warp::Engine *VectorWarp::computeEngine( const Imath::V2i &tileOrigin, con
 	ConstStringVectorDataPtr channelNames;
 	Box2i displayWindow;
 
-	{
-		ImagePlug::GlobalScope c( context );
-		validTileBound = BufferAlgo::intersection( tileBound, vectorPlug()->dataWindowPlug()->getValue() );
-		channelNames = vectorPlug()->channelNamesPlug()->getValue();
-		displayWindow = inPlug()->formatPlug()->getValue().getDisplayWindow();
-	}
-
-	ImagePlug::ChannelDataScope channelDataScope( context );
-
 	ConstFloatVectorDataPtr xData = ImagePlug::blackTile();
-	if( ImageAlgo::channelExists( channelNames->readable(), "R" ) )
-	{
-		channelDataScope.setChannelName( "R" );
-		xData = vectorPlug()->channelDataPlug()->getValue();
-	}
-
 	ConstFloatVectorDataPtr yData = ImagePlug::blackTile();
-	if( ImageAlgo::channelExists( channelNames->readable(), "G" ) )
-	{
-		channelDataScope.setChannelName( "G" );
-		yData = vectorPlug()->channelDataPlug()->getValue();
-	}
-
 	ConstFloatVectorDataPtr aData = ImagePlug::whiteTile();
-	if( ImageAlgo::channelExists( channelNames->readable(), "A" ) )
+
 	{
-		channelDataScope.setChannelName( "A" );
-		aData = vectorPlug()->channelDataPlug()->getValue();
+		if( ImageAlgo::viewIsValid( context, vectorPlug()->viewNames()->readable() ) )
+		{
+
+			{
+				ImagePlug::GlobalScope c( context );
+				validTileBound = BufferAlgo::intersection( tileBound, vectorPlug()->dataWindowPlug()->getValue() );
+				channelNames = vectorPlug()->channelNamesPlug()->getValue();
+				displayWindow = inPlug()->formatPlug()->getValue().getDisplayWindow();
+			}
+
+			ImagePlug::ChannelDataScope channelDataScope( context );
+
+			if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameR ) )
+			{
+				channelDataScope.setChannelName( &ImageAlgo::channelNameR );
+				xData = vectorPlug()->channelDataPlug()->getValue();
+			}
+
+			if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameG ) )
+			{
+				channelDataScope.setChannelName( &ImageAlgo::channelNameG );
+				yData = vectorPlug()->channelDataPlug()->getValue();
+			}
+
+			if( ImageAlgo::channelExists( channelNames->readable(), ImageAlgo::channelNameA ) )
+			{
+				channelDataScope.setChannelName( &ImageAlgo::channelNameA );
+				aData = vectorPlug()->channelDataPlug()->getValue();
+			}
+
+			if( xData->readable().size() != (unsigned int)ImagePlug::tilePixels() ||
+				yData->readable().size() != (unsigned int)ImagePlug::tilePixels() ||
+				aData->readable().size() != (unsigned int)ImagePlug::tilePixels() )
+			{
+				throw IECore::Exception( "VectorWarp::computeEngine : Bad channel data size on vector plug.  Maybe it's deep?" );
+			}
+		}
 	}
 
 	return new Engine(
@@ -276,4 +307,25 @@ const Warp::Engine *VectorWarp::computeEngine( const Imath::V2i &tileOrigin, con
 		(VectorMode)vectorModePlug()->getValue(),
 		(VectorUnits)vectorUnitsPlug()->getValue()
 	);
+}
+
+void VectorWarp::hashDeep( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	FlatImageProcessor::hashDeep( parent, context, h );
+	if( ImageAlgo::viewIsValid( context, vectorPlug()->viewNames()->readable() ) )
+	{
+		h.append( vectorPlug()->deepPlug()->hash() );
+	}
+}
+
+bool VectorWarp::computeDeep( const Gaffer::Context *context, const ImagePlug *parent ) const
+{
+	if( ImageAlgo::viewIsValid( context, vectorPlug()->viewNames()->readable() ) )
+	{
+		if( vectorPlug()->deepPlug()->getValue() )
+		{
+			throw IECore::Exception( "Deep data not supported in input \"vector\"" );
+		}
+	}
+	return false;
 }

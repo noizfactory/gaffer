@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_COLORSPACE_H
-#define GAFFERIMAGE_COLORSPACE_H
+#pragma once
 
 #include "GafferImage/OpenColorIOTransform.h"
 
@@ -55,10 +54,10 @@ class GAFFERIMAGE_API ColorSpace : public OpenColorIOTransform
 
 	public :
 
-		ColorSpace( const std::string &name=defaultName<ColorSpace>() );
+		explicit ColorSpace( const std::string &name=defaultName<ColorSpace>() );
 		~ColorSpace() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ColorSpace, ColorSpaceTypeId, OpenColorIOTransform );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ColorSpace, ColorSpaceTypeId, OpenColorIOTransform );
 
 		Gaffer::StringPlug *inputSpacePlug();
 		const Gaffer::StringPlug *inputSpacePlug() const;
@@ -70,7 +69,7 @@ class GAFFERIMAGE_API ColorSpace : public OpenColorIOTransform
 
 		bool affectsTransform( const Gaffer::Plug *input ) const override;
 		void hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		OpenColorIO::ConstTransformRcPtr transform() const override;
+		OCIO_NAMESPACE::ConstTransformRcPtr transform() const override;
 
 	private :
 
@@ -81,5 +80,3 @@ class GAFFERIMAGE_API ColorSpace : public OpenColorIOTransform
 IE_CORE_DECLAREPTR( ColorSpace )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_COLORSPACE_H

@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEXMODULE_PARAMETERISEDHOLDERBINDING_H
-#define GAFFERCORTEXMODULE_PARAMETERISEDHOLDERBINDING_H
+#pragma once
 
 #include "GafferCortex/ParameterisedHolder.h"
 
@@ -46,7 +45,7 @@
 
 #include "IECore/Parameter.h"
 
-#include "boost/format.hpp"
+#include "fmt/format.h"
 
 #include <memory>
 
@@ -69,10 +68,9 @@ class ParameterisedHolderWrapper : public BaseType
 			IECorePython::ScopedGILLock gilLock;
 			boost::python::dict scopeDict;
 			scopeDict["IECore"] = boost::python::import( "IECore" );
-			std::string toExecute = boost::str(
-				boost::format(
-					"IECore.ClassLoader.defaultLoader( \"%s\" ).load( \"%s\", %d )()\n"
-				) % searchPathEnvVar % className % classVersion
+			const std::string toExecute = fmt::format(
+				"IECore.ClassLoader.defaultLoader( \"{}\" ).load( \"{}\", {} )()\n",
+				searchPathEnvVar, className, classVersion
 			);
 			boost::python::object result = boost::python::eval( toExecute.c_str(), scopeDict, scopeDict );
 			return boost::python::extract<IECore::RunTimeTypedPtr>( result );
@@ -202,5 +200,3 @@ class ParameterisedHolderClass : public BaseType
 void bindParameterisedHolder();
 
 } // namespace GafferCortexModule
-
-#endif // GAFFERCORTEXMODULE_PARAMETERISEDHOLDERBINDING_H

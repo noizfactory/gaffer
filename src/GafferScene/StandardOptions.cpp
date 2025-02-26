@@ -42,7 +42,7 @@
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( StandardOptions );
+GAFFER_NODE_DEFINE_TYPE( StandardOptions );
 
 StandardOptions::StandardOptions( const std::string &name )
 	:	Options( name )
@@ -65,9 +65,19 @@ StandardOptions::StandardOptions( const std::string &name )
 	options->addChild( new Gaffer::NameValuePlug( "render:overscanRight", new FloatPlug( "value", Plug::In, 0.1f, 0.0f, 1.0f ), false, "overscanRight" ) );
 	options->addChild( new Gaffer::NameValuePlug( "render:depthOfField", new IECore::BoolData( false ), false, "depthOfField" ) );
 
+	// Renderer
+
+	options->addChild( new Gaffer::NameValuePlug( "render:defaultRenderer", new IECore::StringData(), false, "defaultRenderer" ) );
+
+	// Render set
+
+	options->addChild( new Gaffer::NameValuePlug( "render:includedPurposes", new IECore::StringVectorData( { "default", "render" } ), false, "includedPurposes" ) );
+	options->addChild( new Gaffer::NameValuePlug( "render:inclusions", new IECore::StringData( "/" ), false, "inclusions" ) );
+	options->addChild( new Gaffer::NameValuePlug( "render:exclusions", new IECore::StringData( "" ), false, "exclusions" ) );
+	options->addChild( new Gaffer::NameValuePlug( "render:additionalLights", new IECore::StringData( "" ), false, "additionalLights" ) );
+
 	// Motion blur
 
-	options->addChild( new Gaffer::NameValuePlug( "render:cameraBlur", new IECore::BoolData( false ), false, "cameraBlur" ) );
 	options->addChild( new Gaffer::NameValuePlug( "render:transformBlur", new IECore::BoolData( false ), false, "transformBlur" ) );
 	options->addChild( new Gaffer::NameValuePlug( "render:deformationBlur", new IECore::BoolData( false ), false, "deformationBlur" ) );
 	options->addChild( new Gaffer::NameValuePlug( "render:shutter", new IECore::V2fData( Imath::V2f( -0.25, 0.25 ) ), false, "shutter" ) );

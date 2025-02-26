@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDLIGHTFILTER_H
-#define GAFFERARNOLD_ARNOLDLIGHTFILTER_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -52,9 +51,9 @@ class GAFFERARNOLD_API ArnoldLightFilter : public GafferScene::LightFilter
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldLightFilter, ArnoldLightFilterTypeId, GafferScene::LightFilter );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldLightFilter, ArnoldLightFilterTypeId, GafferScene::LightFilter );
 
-		ArnoldLightFilter( const std::string &name=defaultName<ArnoldLightFilter>() );
+		explicit ArnoldLightFilter( const std::string &name=defaultName<ArnoldLightFilter>() );
 		~ArnoldLightFilter() override;
 
 };
@@ -62,5 +61,3 @@ class GAFFERARNOLD_API ArnoldLightFilter : public GafferScene::LightFilter
 IE_CORE_DECLAREPTR( ArnoldLightFilter )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDLIGHTFILTER_H

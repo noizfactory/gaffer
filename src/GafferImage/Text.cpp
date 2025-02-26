@@ -40,17 +40,22 @@
 
 #include "Gaffer/StringPlug.h"
 #include "Gaffer/Transform2DPlug.h"
+#include "Gaffer/Private/IECorePreview/LRUCache.h"
 
-#include "IECore/LRUCache.h"
 #include "IECore/SearchPath.h"
 
 #include "tbb/enumerable_thread_specific.h"
+#ifdef SearchPath
+#undef SearchPath
+#endif
 
 #include "boost/locale/encoding_utf.hpp"
 
 #include "ft2build.h"
 
 #include FT_FREETYPE_H
+
+#include "fmt/format.h"
 
 #include <memory>
 
@@ -72,7 +77,7 @@ namespace
 // the appropriate library for the current thread.
 FT_Library library()
 {
-	typedef tbb::enumerable_thread_specific<FT_Library> ThreadSpecificLibrary;
+	using ThreadSpecificLibrary = tbb::enumerable_thread_specific<FT_Library>;
 	static ThreadSpecificLibrary g_threadLibraries( FT_Library( nullptr ) );
 
 	FT_Library &l = g_threadLibraries.local();
@@ -90,16 +95,16 @@ FT_Library library()
 // We want to maintain a cache of FT_Faces, because creating them
 // is fairly costly. But since FT_Faces belong to FT_Libraries
 // the cache must be maintained per-thread.
-typedef std::shared_ptr<FT_FaceRec_> FacePtr;
-FacePtr faceLoader( const std::string &font, size_t &cost )
+using FacePtr = std::shared_ptr<FT_FaceRec_>;
+FacePtr faceLoader( const std::string &font, size_t &cost, const IECore::Canceller *canceller )
 {
 	const char *e = getenv( "IECORE_FONT_PATHS" );
 	IECore::SearchPath sp( e ? e : "" );
 
-	std::string file = sp.find( font ).string();
+	std::string file = sp.find( font ).generic_string();
 	if( !file.size() )
 	{
-		throw Exception( boost::str( boost::format( "Unable to find font \"%s\"." ) % font ) );
+		throw Exception( fmt::format( "Unable to find font \"{}\".", font ) );
 	}
 
 	FT_Face face = nullptr;
@@ -109,23 +114,23 @@ FacePtr faceLoader( const std::string &font, size_t &cost )
 
 	if( error )
 	{
-		throw Exception( boost::str( boost::format( "Error loading font \"%s\"." ) % font ) );
+		throw Exception( fmt::format( "Error loading font \"{}\".", font ) );
 	}
 
 	cost = 1;
 	return result;
 }
 
-typedef LRUCache<string, FacePtr> FaceCache;
-typedef std::unique_ptr<FaceCache> FaceCachePtr;
+using FaceCache = IECorePreview::LRUCache<string, FacePtr>;
+using FaceCachePtr = std::unique_ptr<FaceCache>;
 FaceCachePtr createFaceCache()
 {
-	return FaceCachePtr( new FaceCache( faceLoader ) );
+	return FaceCachePtr( new FaceCache( faceLoader, 500 ) );
 }
 
 FacePtr face( const string &font, const V2i &size )
 {
-	typedef tbb::enumerable_thread_specific<FaceCachePtr> ThreadSpecificFaceCache;
+	using ThreadSpecificFaceCache = tbb::enumerable_thread_specific<FaceCachePtr>;
 	static ThreadSpecificFaceCache g_faceCaches( createFaceCache );
 
 	FacePtr face = g_faceCaches.local()->get( font );
@@ -134,7 +139,7 @@ FacePtr face( const string &font, const V2i &size )
 	FT_Error error = FT_Set_Pixel_Sizes( face.get(), size.x, size.y );
 	if( error )
 	{
-		throw Exception( boost::str( boost::format( "Error setting size for font \"%s\"." ) % font ) );
+		throw Exception( fmt::format( "Error setting size for font \"{}\".", font ) );
 	}
 
 	return face;
@@ -205,7 +210,7 @@ struct Line
 // Text node
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Text );
+GAFFER_NODE_DEFINE_TYPE( Text );
 
 size_t Text::g_firstPlugIndex = 0;
 
@@ -398,7 +403,7 @@ IECore::ConstCompoundObjectPtr Text::computeLayout( const Gaffer::Context *conte
 
 	const std::string text = textPlug()->getValue();
 	/// \todo Does tokenization/wrapping need to be unicode aware?
-	typedef boost::tokenizer<boost::char_separator<char> > Tokenizer;
+	using Tokenizer = boost::tokenizer<boost::char_separator<char> >;
 	boost::char_separator<char> separator( "", " \n\t" );
 	Tokenizer tokenizer( text, separator );
 	for( Tokenizer::iterator it = tokenizer.begin(), eIt = tokenizer.end(); it != eIt; ++it )
@@ -424,7 +429,7 @@ IECore::ConstCompoundObjectPtr Text::computeLayout( const Gaffer::Context *conte
 		{
 			const u32string word = fromUTF8( *it );
 			int width = ::width( word, face.get() );
-			if( pen.x + width > area.max.x )
+			if( pen.x + width > area.max.x && pen.x > area.min.x )
 			{
 				pen.x = area.min.x;
 

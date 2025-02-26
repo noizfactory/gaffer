@@ -35,11 +35,16 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "boost/python.hpp"
+#include "fmt/format.h"
 
 #include "GafferImageTest/ContextSanitiser.h"
 
+#include "GafferTest/ContextTest.h"
+
 #include "GafferImage/ImageAlgo.h"
 #include "GafferImage/ImagePlug.h"
+#include "GafferImage/Format.h"
+#include "GafferImage/Sampler.h"
 
 #include "Gaffer/Node.h"
 
@@ -47,6 +52,7 @@
 #include "IECorePython/ScopedGILRelease.h"
 
 using namespace boost::python;
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferImage;
 using namespace GafferImageTest;
@@ -66,12 +72,20 @@ struct TilesEvaluateFunctor
 void processTiles( const GafferImage::ImagePlug *imagePlug )
 {
 	TilesEvaluateFunctor f;
-	ImageAlgo::parallelProcessTiles(
-		imagePlug, imagePlug->channelNamesPlug()->getValue()->readable(),
-		f,
-		imagePlug->dataWindowPlug()->getValue(),
-		ImageAlgo::TopToBottom
-	);
+
+	IECore::ConstStringVectorDataPtr viewNames = imagePlug->viewNames();
+	ImagePlug::ViewScope viewScope( Context::current() );
+
+	for( const std::string &viewName : viewNames->readable() )
+	{
+		viewScope.setViewName( &viewName );
+		ImageAlgo::parallelProcessTiles(
+			imagePlug, imagePlug->channelNamesPlug()->getValue()->readable(),
+			f,
+			imagePlug->dataWindowPlug()->getValue(),
+			ImageAlgo::TopToBottom
+		);
+	}
 }
 
 void processTilesOnDirty( const Gaffer::Plug *dirtiedPlug, ConstImagePlugPtr image )
@@ -88,7 +102,7 @@ void processTilesWrapper( GafferImage::ImagePlug *imagePlug )
 	processTiles( imagePlug );
 }
 
-boost::signals::connection connectProcessTilesToPlugDirtiedSignal( GafferImage::ConstImagePlugPtr image )
+Signals::Connection connectProcessTilesToPlugDirtiedSignal( GafferImage::ConstImagePlugPtr image )
 {
 	const Node *node = image->node();
 	if( !node )
@@ -97,6 +111,51 @@ boost::signals::connection connectProcessTilesToPlugDirtiedSignal( GafferImage::
 	}
 
 	return const_cast<Node *>( node )->plugDirtiedSignal().connect( boost::bind( &processTilesOnDirty, ::_1, image ) );
+}
+
+void testEditableScopeForFormat()
+{
+	GafferTest::testEditableScopeTyped<FormatData>(
+		Format( Imath::Box2i( Imath::V2i( 1, 2 ), Imath::V2i( 1, 2 ) ), 1 ),
+		Format( Imath::Box2i( Imath::V2i( 3, 5 ), Imath::V2i( 1920, 1080 ) ), 1.6 )
+	);
+}
+
+void validateVisitPixels( GafferImage::Sampler &sampler, const Imath::Box2i &region )
+{
+	int i = 0;
+	int sizeX = region.size().x;
+	sampler.visitPixels( region,
+		[&region, &sampler, &i, sizeX ] ( float value, int x, int y )
+		{
+			int expectedX = ( i % sizeX ) + region.min.x;
+			int expectedY = ( i / sizeX ) + region.min.y;
+			if( x != expectedX || y != expectedY )
+			{
+				throw IECore::Exception( fmt::format (
+					"visitPixels passed incorrect coordinate - expected {},{}, received {},{}",
+					expectedX, expectedY, x, y
+				) );
+			}
+
+			float expectedValue = sampler.sample( x, y );
+			if( value != expectedValue )
+			{
+				throw IECore::Exception( fmt::format(
+					"visitPixels passed incorrect value for pixel {},{} - expected {} received {}",
+					x, y, expectedValue, value
+				) );
+			}
+			i++;
+		}
+	);
+	if( i != region.size().x * region.size().y )
+	{
+		throw IECore::Exception( fmt::format(
+			"visitPixels processed wrong number of pixels: visited {} in region of size {},{}",
+			i, region.size().x, region.size().y
+		) );
+	}
 }
 
 } // namespace
@@ -109,4 +168,6 @@ BOOST_PYTHON_MODULE( _GafferImageTest )
 
 	def( "processTiles", &processTilesWrapper );
 	def( "connectProcessTilesToPlugDirtiedSignal", &connectProcessTilesToPlugDirtiedSignal );
+	def( "testEditableScopeForFormat", &testEditableScopeForFormat );
+	def( "validateVisitPixels", &validateVisitPixels );
 }

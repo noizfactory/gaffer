@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_LIGHTTOCAMERA_H
-#define GAFFERSCENE_LIGHTTOCAMERA_H
+#pragma once
 
 #include "GafferScene/SceneElementProcessor.h"
 
@@ -47,16 +46,21 @@ class GAFFERSCENE_API LightToCamera : public SceneElementProcessor
 
 	public :
 
-		LightToCamera( const std::string &name=defaultName<LightToCamera>() );
+		explicit LightToCamera( const std::string &name=defaultName<LightToCamera>() );
 		~LightToCamera() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::LightToCamera, LightToCameraTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::LightToCamera, LightToCameraTypeId, SceneElementProcessor );
 
 		Gaffer::IntPlug *filmFitPlug();
 		const Gaffer::IntPlug *filmFitPlug() const;
 
+		Gaffer::FloatPlug *distantAperturePlug();
+		const Gaffer::FloatPlug *distantAperturePlug() const;
+
+		Gaffer::V2fPlug *clippingPlanesPlug();
+		const Gaffer::V2fPlug *clippingPlanesPlug() const;
+
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
-		bool acceptsInput( const Gaffer::Plug *plug, const Gaffer::Plug *inputPlug ) const override;
 
 	protected :
 
@@ -87,5 +91,3 @@ class GAFFERSCENE_API LightToCamera : public SceneElementProcessor
 IE_CORE_DECLAREPTR( LightToCamera )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_LIGHTTOCAMERA_H

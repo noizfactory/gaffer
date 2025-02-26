@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PROCESS_H
-#define GAFFER_PROCESS_H
+#pragma once
 
+#include "Gaffer/Context.h"
 #include "Gaffer/Export.h"
+#include "Gaffer/Plug.h"
 #include "Gaffer/ThreadState.h"
 
 #include "IECore/InternedString.h"
@@ -63,9 +64,12 @@ class GAFFER_API Process : private ThreadState::Scope
 
 		/// The type of process being performed.
 		const IECore::InternedString type() const { return m_type; }
-		/// The plug for which the process is being
-		/// performed.
+		/// The plug which is the subject of the process being performed.
 		const Plug *plug() const { return m_plug; }
+		/// The plug which triggered the process. This may be the same as
+		/// `plug()` or may be a downstream plug. In either case,
+		/// `destinationPlug()->source() == plug()`.
+		const Plug *destinationPlug() const { return m_destinationPlug; }
 		/// The context in which the process is being
 		/// performed.
 		const Context *context() const { return m_threadState->m_context; }
@@ -78,10 +82,14 @@ class GAFFER_API Process : private ThreadState::Scope
 		/// this thread, or null if there is no such process.
 		static const Process *current();
 
+		/// Check if we must force the monitored process to run, rather than using employing caches that
+		/// may allow skipping the execution ( obviously, this is much slower than using the caches )
+		inline static bool forceMonitoring( const ThreadState &s, const Plug *plug, const IECore::InternedString &processType );
+
 	protected :
 
 		/// Protected constructor for use by derived classes only.
-		Process( const IECore::InternedString &type, const Plug *plug, const Plug *downstream = nullptr );
+		Process( const IECore::InternedString &type, const Plug *plug, const Plug *destinationPlug = nullptr );
 		~Process();
 
 		/// Derived classes should catch exceptions thrown
@@ -89,18 +97,45 @@ class GAFFER_API Process : private ThreadState::Scope
 		/// report the error appropriately via Node::errorSignal()
 		/// and rethrow the exception for propagation back to
 		/// the original caller.
-		/// \todo Consider ways of dealing with this automatically - could
-		/// we use C++11's current_exception() in our destructor perhaps?
-		void handleException();
+		[[noreturn]] void handleException() const;
+
+		/// Searches for an in-flight process and waits for its result, collaborating
+		/// on any TBB tasks it spawns. If no such process exists, constructs one
+		/// using `args` and makes it available for collaboration by other threads,
+		/// publishing the result to a cache when the process completes.
+		///
+		/// Requirements :
+		///
+		/// - `ProcessType( args... )` constructs a process suitable for computing
+		///   the result for `cacheKey`.
+		/// - `ProcessType::ResultType` defines the result type for the process.
+		/// - `ProcessType::run()` does the work for the process and returns the
+		///   result.
+		/// - `ProcessType::g_cache` is a static LRUCache of type `ProcessType::CacheType`
+		///   to be used for the caching of the result.
+		/// - `ProcessType::cacheCostFunction()` is a static function suitable
+		///   for use with `CacheType::setIfUncached()`.
+		///
+		template<typename ProcessType, typename... ProcessArguments>
+		static typename ProcessType::ResultType acquireCollaborativeResult(
+			const typename ProcessType::CacheType::KeyType &cacheKey, ProcessArguments&&... args
+		);
 
 	private :
+
+		class Collaboration;
+		template<typename T>
+		class TypedCollaboration;
+
+		static bool forceMonitoringInternal( const ThreadState &s, const Plug *plug, const IECore::InternedString &processType );
 
 		void emitError( const std::string &error, const Plug *source = nullptr ) const;
 
 		IECore::InternedString m_type;
 		const Plug *m_plug;
-		const Plug *m_downstream;
+		const Plug *m_destinationPlug;
 		const Process *m_parent;
+		const Collaboration *m_collaboration;
 
 };
 
@@ -140,4 +175,4 @@ class GAFFER_API ProcessException : public std::runtime_error
 
 } // namespace Gaffer
 
-#endif // GAFFER_PROCESS_H
+#include "Gaffer/Process.inl"

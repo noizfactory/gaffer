@@ -38,20 +38,23 @@
 
 #include "GafferUI/View.h"
 
-#include "boost/bind.hpp"
+#include "Gaffer/Container.inl"
+
+#include "boost/bind/bind.hpp"
 
 using namespace Gaffer;
 using namespace GafferUI;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Tool );
+GAFFER_NODE_DEFINE_TYPE( Tool );
 
 size_t Tool::g_firstPlugIndex = 0;
 
 Tool::Tool( View *view, const std::string &name )
-	:	Node( name ), m_view( view )
+	:	Node( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new BoolPlug( "active", Plug::In, false ) );
+	view->tools()->addChild( this );
 }
 
 Tool::~Tool()
@@ -70,12 +73,40 @@ const Gaffer::BoolPlug *Tool::activePlug() const
 
 View *Tool::view()
 {
-	return m_view;
+	return const_cast<View *>( const_cast<const Tool *>( this )->view() );
 }
 
 const View *Tool::view() const
 {
-	return m_view;
+	auto v = ancestor<View>();
+	if( !v )
+	{
+		throw IECore::Exception( "View not found" );
+	}
+	return v;
+}
+
+bool Tool::acceptsParent( const GraphComponent *potentialParent ) const
+{
+	if( !Node::acceptsParent( potentialParent ) )
+	{
+		return false;
+	}
+
+	if( !potentialParent || potentialParent == parent() )
+	{
+		return true;
+	}
+
+	if( typeId() != staticTypeId() )
+	{
+		// Only accept initial parenting performed in our constructor, before
+		// derived class is initialised (and `typeId()` returns something else).
+		return false;
+	}
+
+	// Only accept parenting to ToolContainers.
+	return IECore::runTimeCast<const ToolContainer>( potentialParent );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -85,8 +116,8 @@ const View *Tool::view() const
 namespace
 {
 
-typedef std::map<std::string, Tool::ToolCreator> NamedCreators;
-typedef std::map<IECore::TypeId, NamedCreators> PerViewCreators;
+using NamedCreators = std::map<std::string, Tool::ToolCreator>;
+using PerViewCreators = std::map<IECore::TypeId, NamedCreators>;
 
 NamedCreators &namedCreators( IECore::TypeId viewType )
 {
@@ -130,3 +161,27 @@ void Tool::registeredTools( IECore::TypeId viewType, std::vector<std::string> &t
 		viewType = IECore::RunTimeTyped::baseTypeId( viewType );
 	} while( viewType != (IECore::TypeId)NodeTypeId && viewType != IECore::InvalidTypeId );
 }
+
+void Tool::parentChanged( GraphComponent *oldParent )
+{
+	if( oldParent != nullptr )
+	{
+		// Tools are bound to a particular ToolContainer, and can't be reparented.  If we already
+		// had a parent, and it's changing, that can only mean we're being destroyed.
+		// Disable signals while we're being destroyed, so that Tools don't have to handle
+		// plugDirtiedSignal while their parent is invalid.
+		disconnectTrackedConnections();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// ToolContainer
+//////////////////////////////////////////////////////////////////////////
+
+namespace Gaffer
+{
+
+GAFFER_DECLARECONTAINERSPECIALISATIONS( GafferUI::ToolContainer, ToolContainerTypeId )
+template class Container<Node, Tool>;
+
+} // namespace Gaffer

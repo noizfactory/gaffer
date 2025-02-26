@@ -69,6 +69,26 @@ def __visibilitySummary( plug ) :
 __transformTypeEnumNames = { "linear" : "Linear", "rotate_about_origin" : "RotateAboutOrigin",
 	"rotate_about_center" : "RotateAboutCenter" }
 
+def __autoBumpVisibilitySummary( plug ) :
+
+	info = []
+	for childName, label in (
+
+		( "camera", "Camera" ),
+		( "shadow", "Shadow" ),
+		( "diffuseReflection", "DiffRefl" ),
+		( "specularReflection", "SpecRefl" ),
+		( "diffuseTransmission", "DiffTrans" ),
+		( "specularTransmission", "SpecTrans" ),
+		( "volume", "Volume" ),
+		( "subsurface", "Subsurf" ),
+
+	)	:
+		if plug[childName+"AutoBumpVisibility"]["enabled"].getValue() :
+			info.append( label + ( " On" if plug[childName+"AutoBumpVisibility"]["value"].getValue() else " Off" ) )
+
+	return ", ".join( info )
+
 def __transformSummary( plug ) :
 
 	info = []
@@ -112,6 +132,8 @@ def __subdivisionSummary( plug ) :
 		)
 	if plug["subdivSmoothDerivs"]["enabled"].getValue() :
 		info.append( "Smooth Derivs " + ( "On" if plug["subdivSmoothDerivs"]["value"].getValue() else "Off" ) )
+	if plug["subdivFrustumIgnore"]["enabled"].getValue() :
+		info.append( "Frustum Ignore " + ( "On" if plug["subdivFrustumIgnore"]["value"].getValue() else "Off" ) )
 	if plug["subdividePolygons"]["enabled"].getValue() :
 		info.append( "Subdivide Polygons " + ( "On" if plug["subdividePolygons"]["value"].getValue() else "Off" ) )
 
@@ -124,6 +146,14 @@ def __curvesSummary( plug ) :
 		info.append( string.capwords( plug["curvesMode"]["value"].getValue() ) )
 	if plug["curvesMinPixelWidth"]["enabled"].getValue() :
 		info.append( "Min Pixel Width %s" % GafferUI.NumericWidget.valueToString( plug["curvesMinPixelWidth"]["value"].getValue() ) )
+
+	return ", ".join( info )
+
+def __pointsSummary( plug ) :
+
+	info = []
+	if plug["pointsMinPixelWidth"]["enabled"].getValue() :
+		info.append( "Min Pixel Width {}".format( GafferUI.NumericWidget.valueToString( plug["pointsMinPixelWidth"]["value"].getValue() ) ) )
 
 	return ", ".join( info )
 
@@ -149,6 +179,14 @@ def __volumeSummary( plug ) :
 
 	return ", ".join( info )
 
+def __toonSummary( plug ) :
+
+	info = []
+	if plug["toonId"]["enabled"].getValue() :
+		info.append( "Toon Id " + plug["toonId"]["value"].getValue() )
+
+	return ", ".join( info )
+
 Gaffer.Metadata.registerNode(
 
 	GafferArnold.ArnoldAttributes,
@@ -165,11 +203,14 @@ Gaffer.Metadata.registerNode(
 		"attributes" : [
 
 			"layout:section:Visibility:summary", __visibilitySummary,
+			"layout:section:Displacement.Auto Bump Visibility:summary", __autoBumpVisibilitySummary,
 			"layout:section:Transform:summary", __transformSummary,
 			"layout:section:Shading:summary", __shadingSummary,
 			"layout:section:Subdivision:summary", __subdivisionSummary,
 			"layout:section:Curves:summary", __curvesSummary,
+			"layout:section:Points:summary", __pointsSummary,
 			"layout:section:Volume:summary", __volumeSummary,
+			"layout:section:Toon:summary", __toonSummary,
 
 		],
 
@@ -215,6 +256,13 @@ Gaffer.Metadata.registerNode(
 
 			"layout:section", "Visibility",
 			"label", "Shadow Group",
+		],
+
+		"attributes.shadowGroup.value" : [
+
+			"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
+			"ui:scene:acceptsSetExpression", True,
+
 		],
 
 		"attributes.diffuseReflectionVisibility" : [
@@ -291,6 +339,124 @@ Gaffer.Metadata.registerNode(
 			""",
 
 			"layout:section", "Visibility",
+			"label", "Subsurface",
+
+		],
+
+		"attributes.autoBump" : [
+
+			"description",
+			"""
+			Automatically turns the details of the displacement map
+			into bump, wherever the mesh is not subdivided enough
+			to properly capture them.
+			""",
+
+			"nodule:type", "",
+			"layout:section", "Displacement",
+
+		],
+
+		"attributes.cameraAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible to camera
+			rays.
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Camera",
+
+		],
+
+		"attributes.shadowAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible to shadow
+			rays.
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Shadow",
+
+		],
+
+		"attributes.diffuseReflectionAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible in
+			reflected diffuse ( ie. if it casts bounce light )
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Diffuse Reflection",
+
+		],
+
+		"attributes.specularReflectionAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible in
+			reflected specular ( ie. if it is visible in mirrors ).
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Specular Reflection",
+
+		],
+
+		"attributes.diffuseTransmissionAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible in
+			transmitted diffuse ( ie. if it casts light through leaves ).
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Diffuse Transmission",
+
+		],
+
+		"attributes.specularTransmissionAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible in
+			refracted specular ( ie. if it can be seen through glass ).
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Specular Transmission",
+
+		],
+
+		"attributes.volumeAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible in
+			volume scattering.
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
+			"label", "Volume",
+
+		],
+
+		"attributes.subsurfaceAutoBumpVisibility" : [
+
+			"description",
+			"""
+			Whether or not the autobump is visible to subsurface
+			rays.
+			""",
+
+			"layout:section", "Displacement.Auto Bump Visibility",
 			"label", "Subsurface",
 
 		],
@@ -529,6 +695,20 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"attributes.subdivFrustumIgnore" : [
+
+			"layout:section", "Subdivision",
+			"label", "Ignore Frustum",
+
+			"description",
+			"""
+			Turns off subdivision culling on a per-object basis. This provides
+			finer control on top of the global `subdivFrustumCulling` setting
+			provided by the ArnoldOptions node.
+			""",
+
+		],
+
 		"attributes.subdividePolygons" : [
 
 			"description",
@@ -601,13 +781,31 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		# Points
+
+		"attributes.pointsMinPixelWidth" : [
+
+			"description",
+			"""
+			The minimum width of rendered points primitives, measured in pixels on the screen.
+			When rendering very small points, a large number of AA samples are required to avoid
+			aliasing. In these cases a minimum pixel width may be specified to artificially enlarge
+			the points, meaning that fewer AA samples may be used. The additional size is
+			compensated for automatically by lowering the opacity of the points.
+			""",
+
+			"layout:section", "Points",
+			"label", "Min Pixel Width",
+
+		],
+
 		# Volume
 
 		"attributes.volumeStepScale" : [
 
 			"description",
 			"""
-			Raymarching step size is calculated using this value 
+			Raymarching step size is calculated using this value
 			multiplied by the volume voxel size or volumeStepSize if set.
 			""",
 
@@ -620,8 +818,8 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			Override the step size taken when raymarching volumes. 
-			If this value is disabled or zero then value is calculated from the voxel size.  
+			Override the step size taken when raymarching volumes.
+			If this value is disabled or zero then value is calculated from the voxel size.
 			""",
 
 			"layout:section", "Volume",
@@ -633,7 +831,7 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			Raymarching step size is calculated using this value 
+			Raymarching step size is calculated using this value
 			multiplied by the shapeStepSize.
 			""",
 
@@ -648,7 +846,7 @@ Gaffer.Metadata.registerNode(
 			"""
 			A non-zero value causes an object to be treated
 			as a volume container, and a value of 0 causes
-			an object to be treated as regular geometry.  
+			an object to be treated as regular geometry.
 			""",
 
 			"layout:section", "Volume",
@@ -705,6 +903,18 @@ Gaffer.Metadata.registerNode(
 
 			"layout:section", "Volume",
 			"label", "Velocity Outlier Threshold",
+
+		],
+
+		"attributes.toonId" : [
+
+			"description",
+			"""
+			You can select in the toon shader to skip outlines between objects with the same toon id set.
+			""",
+
+			"layout:section", "Toon",
+			"label", "Toon Id",
 
 		],
 

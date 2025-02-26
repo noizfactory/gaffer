@@ -67,12 +67,14 @@ class MetadataWidget( GafferUI.Widget ) :
 		self.setEnabled( self.__target is not None )
 
 		if isinstance( self.__target, Gaffer.Node ) :
-			self.__metadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal().connect(
-				Gaffer.WeakMethod( self.__nodeMetadataChanged )
+			self.__metadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal( self.__target ).connect(
+				Gaffer.WeakMethod( self.__metadataChanged ),
+				scoped = True
 			)
 		elif isinstance( self.__target, Gaffer.Plug ) :
-			self.__metadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal().connect(
-				Gaffer.WeakMethod( self.__plugMetadataChanged )
+			self.__metadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal( self.__target.node() ).connect(
+				Gaffer.WeakMethod( self.__metadataChanged ),
+				scoped = True
 			)
 		else :
 			self.__metadataChangedConnection = None
@@ -107,12 +109,12 @@ class MetadataWidget( GafferUI.Widget ) :
 
 	## Must be called by derived classes to update
 	# the Metadata value when the widget value changes.
-	def _updateFromWidget( self, value ) :
+	def _updateFromWidget( self, value, mergeGroup = "" ) :
 
 		if self.__target is None :
 			return
 
-		with Gaffer.UndoScope( self.__target.ancestor( Gaffer.ScriptNode ) ) :
+		with Gaffer.UndoScope( self.__target.ancestor( Gaffer.ScriptNode ), mergeGroup = mergeGroup ) :
 			Gaffer.Metadata.registerValue( self.__target, self.__key, value )
 
 	## May be called by derived classes to deregister the
@@ -139,23 +141,9 @@ class MetadataWidget( GafferUI.Widget ) :
 
 		self._updateFromValue( v if v is not None else self.defaultValue() )
 
-	def __nodeMetadataChanged( self, nodeTypeId, key, node ) :
+	def __metadataChanged( self, target, key, reason ) :
 
-		if self.__key != key :
-			return
-		if node is not None and not node.isSame( self.__target ) :
-			return
-		if not self.__target.isInstanceOf( nodeTypeId ) :
-			return
-
-		self.__update()
-
-	def __plugMetadataChanged( self, nodeTypeId, plugPath, key, plug ) :
-
-		if self.__key != key :
-			return
-
-		if Gaffer.MetadataAlgo.affectedByChange( self.__target, nodeTypeId, plugPath, plug ) :
+		if key == self.__key and target == self.__target :
 			self.__update()
 
 	@staticmethod
@@ -178,7 +166,7 @@ class BoolMetadataWidget( MetadataWidget ) :
 		MetadataWidget.__init__( self, self.__boolWidget, key, target, defaultValue = defaultValue, **kw )
 
 		self.__boolWidget.stateChangedSignal().connect(
-			Gaffer.WeakMethod( self.__stateChanged ), scoped = False
+			Gaffer.WeakMethod( self.__stateChanged )
 		)
 
 	def _updateFromValue( self, value ) :
@@ -199,7 +187,7 @@ class StringMetadataWidget( MetadataWidget ) :
 		self.__acceptEmptyString = acceptEmptyString
 
 		self.__textWidget.editingFinishedSignal().connect(
-			Gaffer.WeakMethod( self.__editingFinished ), scoped = False
+			Gaffer.WeakMethod( self.__editingFinished )
 		)
 
 	def textWidget( self ) :
@@ -226,7 +214,7 @@ class MultiLineStringMetadataWidget( MetadataWidget ) :
 		MetadataWidget.__init__( self, self.__textWidget, key, target, defaultValue = defaultValue, **kw )
 
 		self.__textWidget.editingFinishedSignal().connect(
-			Gaffer.WeakMethod( self.__editingFinished ), scoped = False
+			Gaffer.WeakMethod( self.__editingFinished )
 		)
 
 	def textWidget( self ) :
@@ -245,27 +233,25 @@ class ColorSwatchMetadataWidget( MetadataWidget ) :
 
 	def __init__( self, key, target = None, defaultValue = imath.Color4f( 0, 0, 0, 0 ), **kw ) :
 
-		self.__swatch = GafferUI.ColorSwatch( useDisplayTransform = False )
+		self.__swatch = GafferUI.ColorSwatch( displayTransform = GafferUI.Widget.identityDisplayTransform )
 
 		MetadataWidget.__init__( self, self.__swatch, key, target, defaultValue = defaultValue, **kw )
 
 		self.__swatch._qtWidget().setFixedHeight( 18 )
 		self.__swatch._qtWidget().setMaximumWidth( 40 )
-		self.__value = None
 
-		self.__swatch.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ), scoped = False )
+		self.__swatch.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) )
 
 	def _updateFromValue( self, value ) :
 
-		self.__value = value
+		self.__swatch.setColor( value )
 
 	def __buttonRelease( self, swatch, event ) :
 
 		if event.button != event.Buttons.Left :
 			return False
 
-		color = self.__value if self.__value is not None else imath.Color3f( 1 )
-		dialogue = GafferUI.ColorChooserDialogue( color = color, useDisplayTransform = False )
+		dialogue = GafferUI.ColorChooserDialogue( color = self.__swatch.getColor(), displayTransform = GafferUI.Widget.identityDisplayTransform )
 		color = dialogue.waitForColor( parentWindow = self.ancestor( GafferUI.Window ) )
 
 		if color is not None :
@@ -329,13 +315,13 @@ class FileSystemPathMetadataWidget( MetadataWidget ) :
 		self.__row.append( self.__pathWidget )
 
 		button = GafferUI.Button( image = "pathChooser.png", hasFrame=False )
-		button.clickedSignal().connect( Gaffer.WeakMethod( self.__buttonClicked ), scoped = False )
+		button.clickedSignal().connect( Gaffer.WeakMethod( self.__buttonClicked ) )
 		self.__row.append( button )
 
 		self.__acceptEmptyString = acceptEmptyString
 
 		self.__pathWidget.editingFinishedSignal().connect(
-			Gaffer.WeakMethod( self.__editingFinished ), scoped = False
+			Gaffer.WeakMethod( self.__editingFinished )
 		)
 
 	def _updateFromValue( self, value ) :
@@ -361,3 +347,43 @@ class FileSystemPathMetadataWidget( MetadataWidget ) :
 		if chosenPath is not None :
 			self.__path.setFromString( str( chosenPath ) )
 			self.__editingFinished()
+
+class NumericMetadataWidget( MetadataWidget ) :
+
+	def __init__( self, key, target = None, defaultValue = 0, **kw ) :
+
+		self.__numericWidget = GafferUI.NumericWidget( value = defaultValue )
+
+		self.__defaultValue = defaultValue
+		# we use these to decide which actions to merge into a single undo
+		self.__lastChangedReason = None
+		self.__mergeGroupId = 0
+
+		MetadataWidget.__init__( self, self.__numericWidget, key, target, defaultValue = defaultValue, **kw )
+
+		self.__numericWidget.valueChangedSignal().connect(
+			Gaffer.WeakMethod( self.__valueChanged )
+		)
+
+	def numericWidget( self ) :
+
+		return self.__numericWidget
+
+	def _updateFromValue( self, value ) :
+
+		self.__numericWidget.setValue( type( self.__defaultValue )( value ) )
+
+	def __valueChanged( self, widget, reason ) :
+
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self._updateFromValue( self.defaultValue() )
+			return
+
+		if not widget.changesShouldBeMerged( self.__lastChangedReason, reason ) :
+			self.__mergeGroupId += 1
+		self.__lastChangedReason = reason
+
+		self._updateFromWidget(
+			self.__numericWidget.getValue(),
+			mergeGroup = "NumericMetadataWidget{}{}".format( id( self, ), self.__mergeGroupId )
+		)

@@ -35,7 +35,6 @@
 ##########################################################################
 
 import os
-import glob
 import unittest
 
 import IECore
@@ -49,8 +48,8 @@ class WedgeTest( GafferTest.TestCase ) :
 
 	def __dispatcher( self, frameRange = None ) :
 
-		result = GafferDispatch.LocalDispatcher()
-		result["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
+		result = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		result["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
 
 		if frameRange is not None :
 			result["framesMode"].setValue( result.FramesMode.CustomRange )
@@ -63,7 +62,7 @@ class WedgeTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name}.txt" )
 
 		script["wedge"] = GafferDispatch.Wedge()
 		script["wedge"]["preTasks"][0].setInput( script["writer"]["task"] )
@@ -71,14 +70,16 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.StringList ) )
 		script["wedge"]["strings"].setValue( IECore.StringVectorData( [ "tom", "dick", "harry" ] ) )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/tom.txt",
-				self.temporaryDirectory() + "/dick.txt",
-				self.temporaryDirectory() + "/harry.txt",
+				self.temporaryDirectory() / "tom.txt",
+				self.temporaryDirectory() / "dick.txt",
+				self.temporaryDirectory() / "harry.txt",
 			}
 		)
 
@@ -87,21 +88,23 @@ class WedgeTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:value}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:value}.txt" )
 
 		script["wedge"] = GafferDispatch.Wedge()
 		script["wedge"]["preTasks"][0].setInput( script["writer"]["task"] )
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.IntList ) )
 		script["wedge"]["ints"].setValue( IECore.IntVectorData( [ 1, 21, 44 ] ) )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/1.txt",
-				self.temporaryDirectory() + "/21.txt",
-				self.temporaryDirectory() + "/44.txt",
+				self.temporaryDirectory() / "1.txt",
+				self.temporaryDirectory() / "21.txt",
+				self.temporaryDirectory() / "44.txt",
 			}
 		)
 
@@ -110,7 +113,7 @@ class WedgeTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:index}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:index}.txt" )
 		script["writer"]["text"].setValue( "${wedge:value}" )
 
 		script["wedge"] = GafferDispatch.Wedge()
@@ -118,27 +121,29 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.FloatList ) )
 		script["wedge"]["floats"].setValue( IECore.FloatVectorData( [ 1.25, 2.75, 44.0 ] ) )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/0.txt",
-				self.temporaryDirectory() + "/1.txt",
-				self.temporaryDirectory() + "/2.txt",
+				self.temporaryDirectory() / "0.txt",
+				self.temporaryDirectory() / "1.txt",
+				self.temporaryDirectory() / "2.txt",
 			}
 		)
 
-		self.assertEqual( next( open( self.temporaryDirectory() + "/0.txt" ) ), "1.25" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/1.txt" ) ), "2.75" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/2.txt" ) ), "44" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "0.txt", encoding = "utf-8" ) ), "1.25" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "1.txt", encoding = "utf-8" ) ), "2.75" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "2.txt", encoding = "utf-8" ) ), "44" )
 
 	def testIntRange( self ) :
 
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${number}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${number}.txt" )
 
 		script["wedge"] = GafferDispatch.Wedge()
 		script["wedge"]["preTasks"][0].setInput( script["writer"]["task"] )
@@ -148,14 +153,16 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["intMax"].setValue( 7 )
 		script["wedge"]["intStep"].setValue( 2 )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/3.txt",
-				self.temporaryDirectory() + "/5.txt",
-				self.temporaryDirectory() + "/7.txt",
+				self.temporaryDirectory() / "3.txt",
+				self.temporaryDirectory() / "5.txt",
+				self.temporaryDirectory() / "7.txt",
 			}
 		)
 
@@ -164,7 +171,7 @@ class WedgeTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:index}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:index}.txt" )
 		script["writer"]["text"].setValue( "${wedge:value}" )
 
 		script["wedge"] = GafferDispatch.Wedge()
@@ -174,31 +181,33 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["floatMax"].setValue( 1 )
 		script["wedge"]["floatSteps"].setValue( 5 )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/0.txt",
-				self.temporaryDirectory() + "/1.txt",
-				self.temporaryDirectory() + "/2.txt",
-				self.temporaryDirectory() + "/3.txt",
-				self.temporaryDirectory() + "/4.txt",
+				self.temporaryDirectory() / "0.txt",
+				self.temporaryDirectory() / "1.txt",
+				self.temporaryDirectory() / "2.txt",
+				self.temporaryDirectory() / "3.txt",
+				self.temporaryDirectory() / "4.txt",
 			}
 		)
 
-		self.assertEqual( next( open( self.temporaryDirectory() + "/0.txt" ) ), "0" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/1.txt" ) ), "0.25" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/2.txt" ) ), "0.5" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/3.txt" ) ), "0.75" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/4.txt" ) ), "1" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "0.txt", encoding = "utf-8" ) ), "0" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "1.txt", encoding = "utf-8" ) ), "0.25" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "2.txt", encoding = "utf-8" ) ), "0.5" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "3.txt", encoding = "utf-8" ) ), "0.75" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "4.txt", encoding = "utf-8" ) ), "1" )
 
 	def testFloatByPointOne( self ) :
 
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:index}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:index}.txt" )
 		script["writer"]["text"].setValue( "${wedge:value}" )
 
 		script["wedge"] = GafferDispatch.Wedge()
@@ -208,43 +217,45 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["floatMax"].setValue( 1 )
 		script["wedge"]["floatSteps"].setValue( 11 )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/0.txt",
-				self.temporaryDirectory() + "/1.txt",
-				self.temporaryDirectory() + "/2.txt",
-				self.temporaryDirectory() + "/3.txt",
-				self.temporaryDirectory() + "/4.txt",
-				self.temporaryDirectory() + "/5.txt",
-				self.temporaryDirectory() + "/6.txt",
-				self.temporaryDirectory() + "/7.txt",
-				self.temporaryDirectory() + "/8.txt",
-				self.temporaryDirectory() + "/9.txt",
-				self.temporaryDirectory() + "/10.txt",
+				self.temporaryDirectory() / "0.txt",
+				self.temporaryDirectory() / "1.txt",
+				self.temporaryDirectory() / "2.txt",
+				self.temporaryDirectory() / "3.txt",
+				self.temporaryDirectory() / "4.txt",
+				self.temporaryDirectory() / "5.txt",
+				self.temporaryDirectory() / "6.txt",
+				self.temporaryDirectory() / "7.txt",
+				self.temporaryDirectory() / "8.txt",
+				self.temporaryDirectory() / "9.txt",
+				self.temporaryDirectory() / "10.txt",
 			}
 		)
 
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//0.txt" ) ) ), 0 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//1.txt" ) ) ), 0.1 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//2.txt" ) ) ), 0.2 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//3.txt" ) ) ), 0.3 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//4.txt" ) ) ), 0.4 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//5.txt" ) ) ), 0.5 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//6.txt" ) ) ), 0.6 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//7.txt" ) ) ), 0.7 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//8.txt" ) ) ), 0.8 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//9.txt" ) ) ), 0.9 )
-		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() + "//10.txt" ) ) ), 1 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "0.txt", encoding = "utf-8" ) ) ), 0 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "1.txt", encoding = "utf-8" ) ) ), 0.1 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "2.txt", encoding = "utf-8" ) ) ), 0.2 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "3.txt", encoding = "utf-8" ) ) ), 0.3 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "4.txt", encoding = "utf-8" ) ) ), 0.4 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "5.txt", encoding = "utf-8" ) ) ), 0.5 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "6.txt", encoding = "utf-8" ) ) ), 0.6 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "7.txt", encoding = "utf-8" ) ) ), 0.7 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "8.txt", encoding = "utf-8" ) ) ), 0.8 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "9.txt", encoding = "utf-8" ) ) ), 0.9 )
+		self.assertAlmostEqual( float( next( open( self.temporaryDirectory() / "10.txt", encoding = "utf-8" ) ) ), 1 )
 
 	def testColorRange( self ) :
 
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:index}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:index}.txt" )
 
 		script["expression"] = Gaffer.Expression()
 		script["expression"].setExpression( 'c = context["wedge:value"]; parent["writer"]["text"] = "%.1f %.1f %.1f" % ( c[0], c[1], c[2] )' )
@@ -254,27 +265,29 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.ColorRange ) )
 		script["wedge"]["colorSteps"].setValue( 3 )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/0.txt",
-				self.temporaryDirectory() + "/1.txt",
-				self.temporaryDirectory() + "/2.txt",
+				self.temporaryDirectory() / "0.txt",
+				self.temporaryDirectory() / "1.txt",
+				self.temporaryDirectory() / "2.txt",
 			}
 		)
 
-		self.assertEqual( next( open( self.temporaryDirectory() + "/0.txt" ) ), "0.0 0.0 0.0" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/1.txt" ) ), "0.5 0.5 0.5" )
-		self.assertEqual( next( open( self.temporaryDirectory() + "/2.txt" ) ), "1.0 1.0 1.0" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "0.txt", encoding = "utf-8" ) ), "0.0 0.0 0.0" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "1.txt", encoding = "utf-8" ) ), "0.5 0.5 0.5" )
+		self.assertEqual( next( open( self.temporaryDirectory() / "2.txt", encoding = "utf-8" ) ), "1.0 1.0 1.0" )
 
 	def test2DRange( self ) :
 
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${wedge:x}.${wedge:y}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${wedge:x}.${wedge:y}.txt" )
 
 		script["wedgeX"] = GafferDispatch.Wedge()
 		script["wedgeX"]["preTasks"][0].setInput( script["writer"]["task"] )
@@ -292,17 +305,19 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedgeY"]["intMax"].setValue( 2 )
 		script["wedgeY"]["intStep"].setValue( 1 )
 
-		self.__dispatcher().dispatch( [ script["wedgeY"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedgeY"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/1.1.txt",
-				self.temporaryDirectory() + "/1.2.txt",
-				self.temporaryDirectory() + "/2.1.txt",
-				self.temporaryDirectory() + "/2.2.txt",
-				self.temporaryDirectory() + "/3.1.txt",
-				self.temporaryDirectory() + "/3.2.txt",
+				self.temporaryDirectory() / "1.1.txt",
+				self.temporaryDirectory() / "1.2.txt",
+				self.temporaryDirectory() / "2.1.txt",
+				self.temporaryDirectory() / "2.2.txt",
+				self.temporaryDirectory() / "3.1.txt",
+				self.temporaryDirectory() / "3.2.txt",
 			}
 		)
 
@@ -311,7 +326,7 @@ class WedgeTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name}.####.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name}.####.txt" )
 
 		script["wedge"] = GafferDispatch.Wedge()
 		script["wedge"]["preTasks"][0].setInput( script["writer"]["task"] )
@@ -319,17 +334,19 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.StringList ) )
 		script["wedge"]["strings"].setValue( IECore.StringVectorData( [ "tom", "dick", "harry" ] ) )
 
-		self.__dispatcher( frameRange = "21-22" ).dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher( frameRange = "21-22" )
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/tom.0021.txt",
-				self.temporaryDirectory() + "/tom.0022.txt",
-				self.temporaryDirectory() + "/dick.0021.txt",
-				self.temporaryDirectory() + "/dick.0022.txt",
-				self.temporaryDirectory() + "/harry.0021.txt",
-				self.temporaryDirectory() + "/harry.0022.txt",
+				self.temporaryDirectory() / "tom.0021.txt",
+				self.temporaryDirectory() / "tom.0022.txt",
+				self.temporaryDirectory() / "dick.0021.txt",
+				self.temporaryDirectory() / "dick.0022.txt",
+				self.temporaryDirectory() / "harry.0021.txt",
+				self.temporaryDirectory() / "harry.0022.txt",
 			}
 		)
 
@@ -341,7 +358,7 @@ class WedgeTest( GafferTest.TestCase ) :
 
 		script["writer"] = GafferDispatchTest.TextWriter()
 		script["writer"]["preTasks"][0].setInput( script["constant"]["task"] )
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name}.txt" )
 
 		script["wedge"] = GafferDispatch.Wedge()
 		script["wedge"]["preTasks"][0].setInput( script["writer"]["task"] )
@@ -349,14 +366,16 @@ class WedgeTest( GafferTest.TestCase ) :
 		script["wedge"]["mode"].setValue( int( GafferDispatch.Wedge.Mode.StringList ) )
 		script["wedge"]["strings"].setValue( IECore.StringVectorData( [ "tom", "dick", "harry" ] ) )
 
-		self.__dispatcher().dispatch( [ script["wedge"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["wedge"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/tom.txt",
-				self.temporaryDirectory() + "/dick.txt",
-				self.temporaryDirectory() + "/harry.txt",
+				self.temporaryDirectory() / "tom.txt",
+				self.temporaryDirectory() / "dick.txt",
+				self.temporaryDirectory() / "harry.txt",
 			}
 		)
 

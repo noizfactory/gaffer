@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_CUSTOMATTRIBUTES_H
-#define GAFFERSCENE_CUSTOMATTRIBUTES_H
+#pragma once
 
 #include "GafferScene/Attributes.h"
 
@@ -47,15 +46,13 @@ class GAFFERSCENE_API CustomAttributes : public GafferScene::Attributes
 
 	public :
 
-		CustomAttributes( const std::string &name=defaultName<CustomAttributes>() );
+		explicit CustomAttributes( const std::string &name=defaultName<CustomAttributes>() );
 		~CustomAttributes() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::CustomAttributes,CustomAttributesTypeId, Attributes );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::CustomAttributes,CustomAttributesTypeId, Attributes );
 
 };
 
 IE_CORE_DECLAREPTR( CustomAttributes )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_CUSTOMATTRIBUTES_H

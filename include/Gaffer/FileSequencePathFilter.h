@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_FILESEQUENCEPATHFILTER_H
-#define GAFFER_FILESEQUENCEPATHFILTER_H
+#pragma once
 
 #include "Gaffer/PathFilter.h"
 #include "Gaffer/TypeIds.h"
@@ -67,7 +66,7 @@ class GAFFER_API FileSequencePathFilter : public PathFilter
 			All = Files | SequentialFiles | Sequences,
 		};
 
-		FileSequencePathFilter( Keep mode = Concise, IECore::CompoundDataPtr userData = nullptr );
+		explicit FileSequencePathFilter( Keep mode = Concise, IECore::CompoundDataPtr userData = nullptr );
 		~FileSequencePathFilter() override;
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::FileSequencePathFilter, FileSequencePathFilterTypeId, Gaffer::PathFilter );
@@ -77,7 +76,7 @@ class GAFFER_API FileSequencePathFilter : public PathFilter
 
 	protected :
 
-		void doFilter( std::vector<PathPtr> &paths ) const override;
+		void doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const override;
 
 	private :
 
@@ -90,5 +89,3 @@ class GAFFER_API FileSequencePathFilter : public PathFilter
 IE_CORE_DECLAREPTR( FileSequencePathFilter )
 
 } // namespace Gaffer
-
-#endif // GAFFER_FILESEQUENCEPATHFILTER_H

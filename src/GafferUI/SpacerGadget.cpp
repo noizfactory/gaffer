@@ -49,10 +49,6 @@ SpacerGadget::~SpacerGadget()
 {
 }
 
-void SpacerGadget::doRenderLayer( Layer layer, const Style *style ) const
-{
-}
-
 Imath::Box3f SpacerGadget::bound() const
 {
 	return m_bound;
@@ -70,7 +66,7 @@ void SpacerGadget::setSize( const Imath::Box3f &size )
 		return;
 	}
 	m_bound = size;
- 	requestRender();
+	dirty( DirtyType::Bound );
 }
 
 bool SpacerGadget::acceptsChild( const GraphComponent *potentialChild ) const

@@ -34,17 +34,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_METADATA_H
-#define GAFFER_METADATA_H
+#pragma once
 
-#include "Gaffer/CatchingSignalCombiner.h"
 #include "Gaffer/Export.h"
+#include "Gaffer/Signals.h"
 
 #include "IECore/Data.h"
 #include "IECore/InternedString.h"
 #include "IECore/StringAlgo.h"
-
-#include "boost/signals.hpp"
 
 #include <functional>
 
@@ -64,20 +61,9 @@ class GAFFER_API Metadata
 
 	public :
 
-		/// Type for a singal emitted when new metadata is registered.
-		typedef boost::signal<void ( IECore::InternedString target, IECore::InternedString key ), CatchingSignalCombiner<void> > ValueChangedSignal;
-		/// Type for a signal emitted when new node metadata is registered. The
-		/// node argument will be null when generic (rather than per-instance)
-		/// metadata is registered.
-		typedef boost::signal<void ( IECore::TypeId nodeTypeId, IECore::InternedString key, Gaffer::Node *node ), CatchingSignalCombiner<void> > NodeValueChangedSignal;
-		/// Type for a signal emitted when new plug metadata is registered. The
-		/// plug argument will be null when generic (rather than per-instance)
-		/// metadata is registered.
-		typedef boost::signal<void ( IECore::TypeId typeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, Gaffer::Plug *plug ), CatchingSignalCombiner<void> > PlugValueChangedSignal;
-
-		typedef std::function<IECore::ConstDataPtr ()> ValueFunction;
-		typedef std::function<IECore::ConstDataPtr ( const GraphComponent *graphComponent )> GraphComponentValueFunction;
-		typedef std::function<IECore::ConstDataPtr ( const Plug *plug )> PlugValueFunction;
+		using ValueFunction = std::function<IECore::ConstDataPtr ()>;
+		using GraphComponentValueFunction = std::function<IECore::ConstDataPtr ( const GraphComponent * )>;
+		using PlugValueFunction = std::function<IECore::ConstDataPtr ( const Plug * )>;
 
 		/// Value registration
 		/// ==================
@@ -108,11 +94,22 @@ class GAFFER_API Metadata
 		/// Registration queries
 		/// ====================
 
+		enum RegistrationTypes
+		{
+			None = 0,
+			TypeId = 1,
+			TypeIdDescendant = 2,
+			InstancePersistent = 4,
+			InstanceNonPersistent = 8,
+			Instance = InstancePersistent | InstanceNonPersistent,
+			All = TypeId | TypeIdDescendant | Instance
+		};
+
 		/// Fills the keys vector with keys for all values registered with the methods above.
 		static void registeredValues( IECore::InternedString target, std::vector<IECore::InternedString> &keys );
-		/// Fills the keys vector with keys for all values registered for the specified graphComponent.
-		/// If instanceOnly is true, then only the values registered for that exact instance are returned.
-		/// If persistentOnly is true, then non-persistent instance values are ignored.
+		/// Returns the keys for all values relevant to `target`, taking into account only the specified `registrationTypes`.
+		static std::vector<IECore::InternedString> registeredValues( const GraphComponent *target, unsigned registrationTypes = RegistrationTypes::All );
+		/// \deprecated Pass RegistrationTypes instead.
 		static void registeredValues( const GraphComponent *target, std::vector<IECore::InternedString> &keys, bool instanceOnly = false, bool persistentOnly = false );
 
 		/// Value retrieval
@@ -121,6 +118,11 @@ class GAFFER_API Metadata
 		/// Retrieves a value, returning null if none exists.
 		template<typename T=IECore::Data>
 		static typename T::ConstPtr value( IECore::InternedString target, IECore::InternedString key );
+		/// Ignores any values not included in `registrationTypes`.
+		template<typename T=IECore::Data>
+		static typename T::ConstPtr value( const GraphComponent *target, IECore::InternedString key, unsigned registrationTypes );
+		/// \deprecated Pass RegistrationTypes instead. When we remove this,
+		/// default `registrationTypes` to `All` in overload above.
 		template<typename T=IECore::Data>
 		static typename T::ConstPtr value( const GraphComponent *target, IECore::InternedString key, bool instanceOnly = false );
 
@@ -136,6 +138,10 @@ class GAFFER_API Metadata
 
 		/// Utilities
 		/// =========
+
+		/// Returns the names of all matching string targets with the specified
+		/// metadata key.
+		static std::vector<IECore::InternedString> targetsWithMetadata( const IECore::StringAlgo::MatchPattern &targetPattern, IECore::InternedString key );
 
 		/// Lists all node descendants of "root" with the specified metadata key.
 		/// If instanceOnly is true the search is restricted to instance metadata.
@@ -153,24 +159,58 @@ class GAFFER_API Metadata
 		/// with a GraphComponentValueFunction or PlugValueFunction then it is the
 		/// responsibility of the registrant to manually emit the signals
 		/// when necessary.
+
+		enum class ValueChangedReason
+		{
+			StaticRegistration,
+			StaticDeregistration,
+			InstanceRegistration,
+			InstanceDeregistration
+		};
+
+		using ValueChangedSignal = Signals::Signal<void ( IECore::InternedString target, IECore::InternedString key ), Signals::CatchingCombiner<void>>;
+		using NodeValueChangedSignal = Signals::Signal<void ( Node *node, IECore::InternedString key, ValueChangedReason reason ), Signals::CatchingCombiner<void>>;
+		using PlugValueChangedSignal = Signals::Signal<void ( Plug *plug, IECore::InternedString key, ValueChangedReason reason ), Signals::CatchingCombiner<void>>;
+
 		static ValueChangedSignal &valueChangedSignal();
-		static NodeValueChangedSignal &nodeValueChangedSignal();
-		static PlugValueChangedSignal &plugValueChangedSignal();
+		/// Returns a signal that will be emitted when metadata has changed for `node`.
+		static NodeValueChangedSignal &nodeValueChangedSignal( Node *node );
+		/// Returns a signal that will be emitted when metadata has changed for any plug on `node`.
+		static PlugValueChangedSignal &plugValueChangedSignal( Node *node );
+
+		/// Legacy signals
+		/// ==============
+		///
+		/// These signals are emitted when metadata is changed on _any_ node or
+		/// plug. Their usage leads to performance bottlenecks whereby all observers
+		/// are triggered by all edits. They will be removed in future.
+
+		using LegacyNodeValueChangedSignal = Signals::Signal<void ( IECore::TypeId nodeTypeId, IECore::InternedString key, Gaffer::Node *node ), Signals::CatchingCombiner<void>>;
+		using LegacyPlugValueChangedSignal = Signals::Signal<void ( IECore::TypeId typeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, Gaffer::Plug *plug ), Signals::CatchingCombiner<void>>;
+
+		/// Deprecated, but currently necessary for tracking inherited
+		/// changes to read-only metadata.
+		/// \deprecated
+		static LegacyNodeValueChangedSignal &nodeValueChangedSignal();
+		/// \deprecated
+		static LegacyPlugValueChangedSignal &plugValueChangedSignal();
 
 	private :
 
 		/// Per-instance Metadata is stored as a mapping from GraphComponent * to the
 		/// metadata values, and needs to be removed when the instance dies. Currently
 		/// there is no callback when a RefCounted object passes away, so we must rely
-		/// on the destructors for Node and Plug to call clearInstanceMetadata() for us.
+		/// on the destructors for Node and Plug to call instanceDestroyed() for us.
 		/// \todo This situation isn't particularly satisfactory - if we introduced
 		/// weak pointers and destruction callbacks for RefCounted objects then we could
 		/// tidy this up.
 		friend class Node;
 		friend class Plug;
-		static void clearInstanceMetadata( const GraphComponent *graphComponent );
+		static void instanceDestroyed( GraphComponent *graphComponent );
 
 		static IECore::ConstDataPtr valueInternal( IECore::InternedString target, IECore::InternedString key );
+		static IECore::ConstDataPtr valueInternal( const GraphComponent *target, IECore::InternedString key, unsigned registrationTypes );
+		/// \deprecated
 		static IECore::ConstDataPtr valueInternal( const GraphComponent *target, IECore::InternedString key, bool instanceOnly );
 
 };
@@ -178,5 +218,3 @@ class GAFFER_API Metadata
 } // namespace Gaffer
 
 #include "Gaffer/Metadata.inl"
-
-#endif // GAFFER_METADATA_H

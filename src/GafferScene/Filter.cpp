@@ -37,13 +37,14 @@
 #include "GafferScene/Filter.h"
 
 #include "GafferScene/FilterPlug.h"
+#include "GafferScene/ScenePlug.h"
 
 #include "Gaffer/Context.h"
 
 using namespace GafferScene;
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Filter );
+GAFFER_NODE_DEFINE_TYPE( Filter );
 
 const IECore::InternedString Filter::inputSceneContextName( "scene:filter:inputScene" );
 size_t Filter::g_firstPlugIndex = 0;
@@ -53,7 +54,19 @@ Filter::Filter( const std::string &name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new BoolPlug( "enabled", Gaffer::Plug::In, true ) );
-	addChild( new FilterPlug( "out", Gaffer::Plug::Out ) );
+	// FilteredSceneProcessor calls `Filter::affects()` via `FilterPlug::sceneAffects()`
+	// when the processor's input scene is dirtied. This allows a Filter to declare any
+	// scene dependencies of its own (see SetFilter for an example). But when the same
+	// filter is connected to multiple FilteredSceneProcessors in a row, this can lead
+	// to the declaration of circular dependencies as follows :
+	//
+	//    Processor1.in -> Filter.>out -> Processor1.out -> Processor2.in -> Filter.out
+	//
+	// This isn't actually a true dependency cycle, because the filter uses `Processor1.in`
+	// and `Processor2.in` in completely different contexts. Dirty propagation takes place
+	// independent of context though, so we use the `AcceptsDependencyCycles` flag to
+	// show that any cycle is expected and harmless.
+	addChild( new FilterPlug( "out", Gaffer::Plug::Out, Plug::Default | Plug::AcceptsDependencyCycles ) );
 }
 
 Filter::~Filter()
@@ -90,11 +103,6 @@ void Filter::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs
 	}
 }
 
-bool Filter::sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const
-{
-	return false;
-}
-
 void Filter::setInputScene( Gaffer::Context *context, const ScenePlug *scenePlug )
 {
 	context->set( inputSceneContextName, (uint64_t)scenePlug );
@@ -110,7 +118,7 @@ void Filter::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *conte
 	ComputeNode::hash( output, context, h );
 	if( output == outPlug() )
 	{
-		if( enabledPlug()->getValue() )
+		if( enabled( context ) )
 		{
 			/// \todo In SceneNode (and other enableable nodes) we
 			/// require methods like hashMatch() to call the base class
@@ -130,7 +138,7 @@ void Filter::compute( ValuePlug *output, const Context *context ) const
 	if( output == outPlug() )
 	{
 		unsigned match = IECore::PathMatcher::NoMatch;
-		if( enabledPlug()->getValue() )
+		if( enabled( context ) )
 		{
 			match = computeMatch( getInputScene( context ), context );
 		}
@@ -158,4 +166,31 @@ void Filter::hashMatch( const ScenePlug *scene, const Gaffer::Context *context, 
 unsigned Filter::computeMatch( const ScenePlug *scene, const Gaffer::Context *context ) const
 {
 	return IECore::PathMatcher::NoMatch;
+}
+
+bool Filter::enabled( const Gaffer::Context *context ) const
+{
+	const BoolPlug *plug = enabledPlug();
+	const BoolPlug *sourcePlug = plug->source<BoolPlug>();
+	if( !sourcePlug || sourcePlug->direction() == Plug::Out )
+	{
+		// Value may be computed. We use a global scope for two reasons :
+		//
+		// - Because our implementation assumes the result is constant across
+		//   the scene, and allowing it to vary by `scene:path` could produce
+		//   results where AncestorMatch and DescendantMatch are not consistent across locations.
+		// - To reduce pressure on the hash cache.
+		//
+		// > Note : `sourcePlug` will be null if the source is not a BoolPlug.
+		// > In this case we call `getValue()` on `plug` and it will perform the
+		// > appropriate type conversion.
+		ScenePlug::GlobalScope globalScope( context );
+		return sourcePlug ? sourcePlug->getValue() : plug->getValue();
+	}
+	else
+	{
+		// Value is not computed so context is irrelevant.
+		// Avoid overhead of context creation.
+		return sourcePlug->getValue();
+	}
 }

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_SAMPLER_H
-#define GAFFERIMAGE_SAMPLER_H
+#pragma once
 
 #include "GafferImage/ImagePlug.h"
 
@@ -49,9 +48,18 @@ namespace GafferImage
 /// access via pixel coordinates, dealing with pixels outside
 /// the data window by either clamping or returning black.
 ///
-/// The Sampler is sensitive to the Context which is current
-/// during its operation, so a sampler should only be used in
-/// the context in which it is constructed.
+/// By default, the Sampler populates its internal tile cache
+/// on demand, only querying tiles as they are needed by `sample()`
+/// or `visitPixels()`. This has two implications :
+///
+/// - It is not safe to call `sample()` or `visitPixels()`
+///   from multiple threads concurrently.
+/// - `sample()` and `visitPixels()` must be called with the
+///   same `Context` that was used to construct the sampler.
+///
+/// If concurrency is required or it is necessary to change
+/// Context while using the sampler, use the `populate()` method
+/// to fill the tile cache in advance.
 class GAFFERIMAGE_API Sampler
 {
 
@@ -75,12 +83,17 @@ class GAFFERIMAGE_API Sampler
 		/// @param boundingMode The method of handling samples that fall outside the data window.
 		Sampler( const GafferImage::ImagePlug *plug, const std::string &channelName, const Imath::Box2i &sampleWindow, BoundingMode boundingMode = Black );
 
+		/// Uses `parallelProcessTiles()` to fill the internal tile cache
+		/// with all tiles in the sample window. Allows `sample()` and
+		/// `visitPixels()` to subsequently be called concurrently.
+		void populate();
+
 		/// Samples the channel value at the specified
 		/// integer pixel coordinate. It is the caller's
 		/// responsibility to ensure that this point is
 		/// contained within the sample window passed
 		/// to the constructor.
-		inline float sample( int x, int y );
+		float sample( int x, int y );
 
 		/// Samples the channel value at the specified
 		/// subpixel location using bilinear interpolation.
@@ -93,7 +106,15 @@ class GAFFERIMAGE_API Sampler
 		/// pixel location. For instance, the centre of the
 		/// pixel at the bottom left of the image has coordinate
 		/// 0.5, 0.5.
-		inline float sample( float x, float y );
+		float sample( float x, float y );
+
+		/// Call a functor for all pixels in the region.
+		/// Much faster than calling sample(int,int) repeatedly for every pixel in the
+		/// region, up to 5 times faster in practical cases.
+		/// The signature of the functor must be `F( float value, int x, int y )`.
+		/// Each pixel is visited in order of increasing X, then increasing Y.
+		template<typename F>
+		inline void visitPixels( const Imath::Box2i &region, F &&lambda );
 
 		/// Appends a hash that represent all the pixel
 		/// values within the requested sample area.
@@ -107,8 +128,8 @@ class GAFFERIMAGE_API Sampler
 		/// Cached data access
 		/// @param p Any point within the cache that we wish to retrieve the data for.
 		/// @param tileData Is set to the tile's channel data.
-		/// @param tilePixelIndex XY indices that can be used to access the colour value of point 'p' from tileData.
-		inline void cachedData( Imath::V2i p, const float *& tileData, Imath::V2i &tilePixelIndex );
+		/// @param tilePixelIndex Is set to the index used to access the colour value of point 'p' from tileData.
+		void cachedData( Imath::V2i p, const float *& tileData, int &tilePixelIndex );
 
 		const ImagePlug *m_plug;
 		const std::string m_channelName;
@@ -118,6 +139,7 @@ class GAFFERIMAGE_API Sampler
 		std::vector< IECore::ConstFloatVectorDataPtr > m_dataCache;
 		std::vector< const float * > m_dataCacheRaw;
 		Imath::Box2i m_cacheWindow;
+		int m_cacheOriginIndex;
 		int m_cacheWidth;
 
 		int m_boundingMode;
@@ -127,5 +149,3 @@ class GAFFERIMAGE_API Sampler
 }; // namespace GafferImage
 
 #include "GafferImage/Sampler.inl"
-
-#endif

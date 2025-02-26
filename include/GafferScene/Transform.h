@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_TRANSFORM_H
-#define GAFFERSCENE_TRANSFORM_H
+#pragma once
 
 #include "GafferScene/SceneElementProcessor.h"
 
@@ -49,10 +48,10 @@ class GAFFERSCENE_API Transform : public SceneElementProcessor
 
 	public :
 
-		Transform( const std::string &name=defaultName<Transform>() );
+		explicit Transform( const std::string &name=defaultName<Transform>() );
 		~Transform() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Transform, TransformTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Transform, TransformTypeId, SceneElementProcessor );
 
 		enum Space
 		{
@@ -95,5 +94,3 @@ class GAFFERSCENE_API Transform : public SceneElementProcessor
 IE_CORE_DECLAREPTR( Transform )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_TRANSFORM_H

@@ -69,16 +69,15 @@ class ImageSwitchTest( GafferImageTest.ImageTestCase ) :
 		switch["index"].setInput( add["sum"] )
 
 		for p in [ switch["in"][0], switch["in"][1] ] :
-			for n in [ "format", "dataWindow", "metadata", "channelNames", "channelData" ] :
+			for n in [ "format", "dataWindow", "metadata", "deep", "sampleOffsets", "channelNames", "channelData" ] :
 				a = switch.affects( p[n] )
-				self.assertEqual( len( a ), 1 )
-				self.assertTrue( a[0].isSame( switch["out"][n] ) )
+				self.assertEqual( a, [ switch["out"][n], switch["connectedInputs"] ] )
 
 		a = set( [ plug.relativeName( plug.node() ) for plug in switch.affects( switch["enabled"] ) ] )
 		self.assertEqual(
 			a,
 			set( [
-				"out.format", "out.dataWindow", "out.metadata", "out.channelNames", "out.channelData",
+				"out.viewNames", "out.format", "out.dataWindow", "out.metadata", "out.deep", "out.sampleOffsets", "out.channelNames", "out.channelData",
 			] ),
 		)
 
@@ -86,7 +85,7 @@ class ImageSwitchTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual(
 			a,
 			set( [
-				"out.format", "out.dataWindow", "out.metadata", "out.channelNames", "out.channelData",
+				"out.viewNames", "out.format", "out.dataWindow", "out.metadata", "out.deep", "out.sampleOffsets", "out.channelNames", "out.channelData",
 			] ),
 		)
 

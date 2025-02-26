@@ -46,9 +46,12 @@
 #include "IECore/Exception.h"
 #include "IECore/MessageHandler.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
 
+#include "fmt/format.h"
+
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 
@@ -58,7 +61,7 @@ using namespace Gaffer;
 
 size_t Expression::g_firstPlugIndex;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Expression );
+GAFFER_NODE_DEFINE_TYPE( Expression );
 
 Expression::Expression( const std::string &name )
 	:	ComputeNode( name ), m_engine( nullptr )
@@ -71,7 +74,7 @@ Expression::Expression( const std::string &name )
 			Plug::In,
 			"",
 			Plug::Default & ~( Plug::AcceptsInputs | Plug::Serialisable ),
-			Context::NoSubstitutions
+			IECore::StringAlgo::NoSubstitutions
 		)
 	);
 	addChild(
@@ -80,7 +83,7 @@ Expression::Expression( const std::string &name )
 			Plug::In,
 			"",
 			Plug::Default & ~( Plug::AcceptsInputs | Plug::Serialisable ),
-			Context::NoSubstitutions
+			IECore::StringAlgo::NoSubstitutions
 		)
 	);
 
@@ -123,10 +126,8 @@ void Expression::setExpression( const std::string &expression, const std::string
 	EnginePtr engine = Engine::create( language );
 	if( !engine )
 	{
-		throw Exception( boost::str(
-			boost::format(
-				"Failed to create engine for language \"%s\""
-			) % language
+		throw Exception( fmt::format(
+			"Failed to create engine for language \"{}\"", language
 		) );
 	}
 
@@ -145,10 +146,9 @@ void Expression::setExpression( const std::string &expression, const std::string
 		{
 			if( std::binary_search( sortedInPlugs.begin(), sortedInPlugs.end(), *it ) )
 			{
-				throw Exception( boost::str(
-					boost::format(
-						"Cannot both read from and write to plug \"%s\""
-					) % (*it)->relativeName( parent() )
+				throw Exception( fmt::format(
+					"Cannot both read from and write to plug \"{}\"",
+					(*it)->relativeName( parent() )
 				) );
 			}
 		}
@@ -178,7 +178,16 @@ void Expression::setExpression( const std::string &expression, const std::string
 	// node/plug names in getExpression(), where we convert back
 	// to the external form.
 
-	expressionPlug()->setValue( transcribe( expression, /* toInternalForm = */ true ) );
+	const std::string internalExpression = transcribe( expression, /* toInternalForm = */ true );
+	if( internalExpression == expressionPlug()->getValue() )
+	{
+		// It is possible for two different expressions to map to the same
+		// internal form. If neither expression has any input plugs, then
+		// there would be no graph change to trigger dirty propagation for
+		// `executePlug()`, so we must force one.
+		expressionPlug()->setValue( "" );
+	}
+	expressionPlug()->setValue( internalExpression );
 
 	Action::enact(
 		this,
@@ -271,7 +280,7 @@ void Expression::affects( const Plug *input, AffectedPlugsContainer &outputs ) c
 	}
 	else if( input == executePlug() )
 	{
-		for( RecursiveValuePlugIterator it( outPlug() ); !it.done(); ++it )
+		for( ValuePlug::RecursiveIterator it( outPlug() ); !it.done(); ++it )
 		{
 			if( !(*it)->children().size() )
 			{
@@ -289,7 +298,7 @@ void Expression::hash( const ValuePlug *output, const Context *context, IECore::
 	{
 		enginePlug()->hash( h );
 		expressionPlug()->hash( h );
-		for( ValuePlugIterator it( inPlug() ); !it.done(); ++it )
+		for( ValuePlug::Iterator it( inPlug() ); !it.done(); ++it )
 		{
 			(*it)->hash( h );
 			// We must hash the types of the input plugs, because
@@ -297,7 +306,7 @@ void Expression::hash( const ValuePlug *output, const Context *context, IECore::
 			// types may yield a different result from Engine::execute().
 			h.append( (*it)->typeId() );
 		}
-		for( ValuePlugIterator it( outPlug() ); !it.done(); ++it )
+		for( ValuePlug::Iterator it( outPlug() ); !it.done(); ++it )
 		{
 			// We also need to hash the types of the output plugs,
 			// because an identical expression with different output
@@ -307,15 +316,7 @@ void Expression::hash( const ValuePlug *output, const Context *context, IECore::
 
 		for( std::vector<IECore::InternedString>::const_iterator it = m_contextNames.begin(); it != m_contextNames.end(); it++ )
 		{
-			const IECore::Data *d = context->get<IECore::Data>( *it, nullptr );
-			if( d )
-			{
-				d->hash( h );
-			}
-			else
-			{
-				h.append( 0 );
-			}
+			h.append( context->variableHash( *it ) );
 		}
 	}
 	else if( outPlug()->isAncestorOf( output ) )
@@ -327,6 +328,19 @@ void Expression::hash( const ValuePlug *output, const Context *context, IECore::
 	}
 }
 
+Gaffer::ValuePlug::CachePolicy Expression::computeCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	if( output == executePlug() )
+	{
+		if( m_engine )
+		{
+			return m_engine->executeCachePolicy();
+		}
+	}
+	return ComputeNode::computeCachePolicy( output );
+}
+
+
 void Expression::compute( ValuePlug *output, const Context *context ) const
 {
 	if( output == executePlug() )
@@ -334,7 +348,7 @@ void Expression::compute( ValuePlug *output, const Context *context ) const
 		if( m_engine )
 		{
 			std::vector<const ValuePlug *> inputs;
-			for( ValuePlugIterator it( inPlug() ); !it.done(); ++it )
+			for( ValuePlug::Iterator it( inPlug() ); !it.done(); ++it )
 			{
 				inputs.push_back( it->get() );
 			}
@@ -367,7 +381,7 @@ void Expression::compute( ValuePlug *output, const Context *context ) const
 	{
 		ConstObjectVectorPtr values = executePlug()->getValue();
 		size_t index = 0;
-		for( ValuePlugIterator it( outPlug() ); !it.done() && *it != outPlugChild; ++it )
+		for( ValuePlug::Iterator it( outPlug() ); !it.done() && *it != outPlugChild; ++it )
 		{
 			index++;
 		}
@@ -456,13 +470,13 @@ std::string Expression::transcribe( const std::string &expression, bool toIntern
 	}
 
 	std::vector<const ValuePlug *> internalPlugs, externalPlugs;
-	for( ValuePlugIterator it( inPlug() ); !it.done(); ++it )
+	for( ValuePlug::Iterator it( inPlug() ); !it.done(); ++it )
 	{
 		internalPlugs.push_back( it->get() );
 		externalPlugs.push_back( (*it)->getInput<ValuePlug>() );
 	}
 
-	for( ValuePlugIterator it( outPlug() ); !it.done(); ++it )
+	for( ValuePlug::Iterator it( outPlug() ); !it.done(); ++it )
 	{
 		internalPlugs.push_back( it->get() );
 		if( !(*it)->outputs().empty() )
@@ -500,7 +514,7 @@ void Expression::plugSet( const Plug *plug )
 	}
 
 	const ScriptNode *script = scriptNode();
-	if( !script || !script->isExecuting() )
+	if( script && !script->isExecuting() )
 	{
 		IECore::msg( IECore::Msg::Warning, "Expression::plugSet", "Unexpected change to __engine plug. Should you be calling setExpression() instead?" );
 		return;

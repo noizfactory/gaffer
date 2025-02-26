@@ -150,11 +150,10 @@ class SphereTest( GafferSceneTest.SceneTestCase ) :
 		ss = GafferTest.CapturingSlot( s.plugDirtiedSignal() )
 
 		s["name"].setValue( "ball" )
-		self.assertEqual( len( ss ), 4 )
-		self.failUnless( ss[0][0].isSame( s["name"] ) )
-		self.failUnless( ss[1][0].isSame( s["out"]["childNames"] ) )
-		self.failUnless( ss[2][0].isSame( s["out"]["set"] ) )
-		self.failUnless( ss[3][0].isSame( s["out"] ) )
+		self.assertEqual(
+			{ x[0] for x in ss if not x[0].getName().startswith( "__" ) },
+			{ s["name"], s["out"]["childNames"], s["out"]["exists"], s["out"]["childBounds"], s["out"]["set"], s["out"] }
+		)
 
 		del ss[:]
 
@@ -163,7 +162,7 @@ class SphereTest( GafferSceneTest.SceneTestCase ) :
 		for sss in ss :
 			if sss[0].isSame( s["out"] ) :
 				found = True
-		self.failUnless( found )
+		self.assertTrue( found )
 
 	def testTransform( self ) :
 
@@ -215,6 +214,32 @@ class SphereTest( GafferSceneTest.SceneTestCase ) :
 
 		s = GafferScene.Sphere()
 		self.assertTrue( s["out"]["bound"] in s.affects( s["transform"]["translate"]["x"] ) )
+
+	def testInvalidNames( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["sets"].setValue( "A" )
+
+		for name in [ "a/b", "a/", "/b", "/", "..", "...", "*", "a*", "b*", "[", "b[a-z]", r"\\" ] :
+			with self.subTest( name = name ) :
+				sphere["name"].setValue( name )
+				with self.assertRaises( Gaffer.ProcessException ) :
+					sphere["out"].childNames( "/" )
+				with self.assertRaises( Gaffer.ProcessException ) :
+					sphere["out"].set( "A" )
+
+	def testEmptyName( self ) :
+
+		# I think it would be better if we errored for empty names,
+		# but while we don't, we should at least check that the name
+		# we make up is used consistently.
+
+		sphere = GafferScene.Sphere()
+		sphere["name"].setValue( "" )
+		sphere["sets"].setValue( "A" )
+
+		self.assertEqual( sphere["out"].childNames( "/" ), IECore.InternedStringVectorData( [ "unnamed" ] ) )
+		self.assertEqual( sphere["out"].set( "A" ).value, IECore.PathMatcher( [ "/unnamed" ] ) )
 
 if __name__ == "__main__":
 	unittest.main()

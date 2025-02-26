@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDBACKGROUND_H
-#define GAFFERARNOLD_ARNOLDBACKGROUND_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -45,15 +44,15 @@
 namespace GafferArnold
 {
 
-class GAFFERSCENE_API ArnoldBackground : public GafferScene::GlobalShader
+class GAFFERARNOLD_API ArnoldBackground : public GafferScene::GlobalShader
 {
 
 	public :
 
-		ArnoldBackground( const std::string &name=defaultName<ArnoldBackground>() );
+		explicit ArnoldBackground( const std::string &name=defaultName<ArnoldBackground>() );
 		~ArnoldBackground() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldBackground, ArnoldBackgroundTypeId, GafferScene::GlobalShader );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldBackground, ArnoldBackgroundTypeId, GafferScene::GlobalShader );
 
 	protected :
 
@@ -70,5 +69,3 @@ class GAFFERSCENE_API ArnoldBackground : public GafferScene::GlobalShader
 IE_CORE_DECLAREPTR( ArnoldBackground )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDBACKGROUND_H

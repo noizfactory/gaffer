@@ -57,7 +57,7 @@ class SequencePath( Gaffer.Path ) :
 		self.__basePathSeed = path
 		self.__minSequenceSize = minSequenceSize
 
-	def isValid( self ) :
+	def isValid( self, canceller = None ) :
 
 		for p in self.__basePaths() :
 			if not p.isValid() :
@@ -65,7 +65,7 @@ class SequencePath( Gaffer.Path ) :
 
 		return True
 
-	def isLeaf( self ) :
+	def isLeaf( self, canceller = None ) :
 
 		for p in self.__basePaths() :
 			if not p.isLeaf() :
@@ -73,11 +73,11 @@ class SequencePath( Gaffer.Path ) :
 
 		return True
 
-	def propertyNames( self ) :
+	def propertyNames( self, canceller = None ) :
 
 		return self.__basePathSeed.propertyNames()
 
-	def property( self, name ) :
+	def property( self, name, canceller = None ) :
 
 		result = Gaffer.Path.property( self, name )
 		if result is not None :
@@ -105,7 +105,7 @@ class SequencePath( Gaffer.Path ) :
 		if combiner is None :
 			if isinstance( values[0], ( int, float ) ) :
 				combiner = average
-			elif isinstance( values[0], basestring ) :
+			elif isinstance( values[0], str ) :
 				combiner = mostCommon
 
 		if combiner is not None :
@@ -113,7 +113,7 @@ class SequencePath( Gaffer.Path ) :
 
 		return None
 
-	def _children( self ) :
+	def _children( self, canceller ) :
 
 		p = self.__basePath( self )
 
@@ -144,7 +144,7 @@ class SequencePath( Gaffer.Path ) :
 	def __basePath( self, path ) :
 
 		result = self.__basePathSeed.copy()
-		if isinstance( path, basestring ) :
+		if isinstance( path, str ) :
 			result.setFromString( path )
 		else :
 			result.setFromPath( path )

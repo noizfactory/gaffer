@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_BACKDROP_H
-#define GAFFER_BACKDROP_H
+#pragma once
 
 #include "Gaffer/Node.h"
 #include "Gaffer/NumericPlug.h"
@@ -52,10 +51,10 @@ class GAFFER_API Backdrop : public Node
 
 	public :
 
-		Backdrop( const std::string &name=defaultName<Backdrop>() );
+		explicit Backdrop( const std::string &name=defaultName<Backdrop>() );
 		~Backdrop() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Backdrop, BackdropTypeId, Node );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Backdrop, BackdropTypeId, Node );
 
 		StringPlug *titlePlug();
 		const StringPlug *titlePlug() const;
@@ -66,6 +65,9 @@ class GAFFER_API Backdrop : public Node
 		StringPlug *descriptionPlug();
 		const StringPlug *descriptionPlug() const;
 
+		IntPlug *depthPlug();
+		const IntPlug *depthPlug() const;
+
 	private :
 
 		static size_t g_firstPlugIndex;
@@ -74,9 +76,4 @@ class GAFFER_API Backdrop : public Node
 
 IE_CORE_DECLAREPTR( Backdrop )
 
-typedef FilteredChildIterator<TypePredicate<Backdrop> > BackdropIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<Backdrop> > RecursiveBackdropIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_BACKDROP_H

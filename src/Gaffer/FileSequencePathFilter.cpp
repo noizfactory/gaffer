@@ -41,10 +41,12 @@
 #include "IECore/FileSequence.h"
 #include "IECore/FileSequenceFunctions.h"
 
-#include "boost/bind.hpp"
-#include "boost/filesystem.hpp"
+#include "boost/bind/bind.hpp"
+
+#include <filesystem>
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 
@@ -75,7 +77,7 @@ void FileSequencePathFilter::setMode( Keep mode )
 	changedSignal()( this );
 }
 
-void FileSequencePathFilter::doFilter( std::vector<PathPtr> &paths ) const
+void FileSequencePathFilter::doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 	paths.erase(
 		std::remove_if(
@@ -96,7 +98,7 @@ bool FileSequencePathFilter::remove( PathPtr path ) const
 		return false;
 	}
 
-	if( m_mode == All || boost::filesystem::is_directory( fileSystemPath->string() ) )
+	if( m_mode == All || std::filesystem::is_directory( fileSystemPath->string() ) )
 	{
 		// always keep directories (and All)
 		return false;
@@ -108,7 +110,7 @@ bool FileSequencePathFilter::remove( PathPtr path ) const
 		return false;
 	}
 
-	std::vector<std::string> names( 1, fileSystemPath->string() );
+	std::vector<std::string> names( 1, fileSystemPath->names().back().string() );
 	std::vector<FileSequencePtr> sequences;
 	IECore::findSequences( names, sequences, /* minSequenceSize = */ 1 );
 	bool isSequentialFile = !sequences.empty();
@@ -119,7 +121,7 @@ bool FileSequencePathFilter::remove( PathPtr path ) const
 		return false;
 	}
 
-	if( ( m_mode & Files ) && !isSequentialFile && boost::filesystem::is_regular_file( fileSystemPath->string() ) )
+	if( ( m_mode & Files ) && !isSequentialFile && std::filesystem::is_regular_file( fileSystemPath->string() ) )
 	{
 		// its a real file on disk that isn't a sequential file, so keep it
 		return false;

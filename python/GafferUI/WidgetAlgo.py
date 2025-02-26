@@ -34,6 +34,7 @@
 #
 ##########################################################################
 
+import functools
 import os
 import sys
 
@@ -44,27 +45,39 @@ from Qt import QtCore
 from Qt import QtGui
 from Qt import QtWidgets
 
-def joinEdges( listContainer ) :
+def joinEdges( widgets, orientation = None ) :
 
-	if listContainer.orientation() == listContainer.Orientation.Horizontal :
+	if isinstance( widgets, GafferUI.ListContainer ) :
+		assert( orientation is None )
+		orientation = widgets.orientation()
+	else :
+		assert( orientation is not None )
+
+	if orientation == GafferUI.ListContainer.Orientation.Horizontal :
 		lowProperty = "gafferAdjoinedLeft"
 		highProperty = "gafferAdjoinedRight"
 	else :
 		lowProperty = "gafferAdjoinedTop"
 		highProperty = "gafferAdjoinedBottom"
 
-	visibleWidgets = [ w for w in listContainer if w.getVisible() ]
+	joinableTypes = ( QtWidgets.QAbstractButton, QtWidgets.QFrame )
+
+	visibleWidgets = [ w for w in widgets if w.getVisible() ]
 	l = len( visibleWidgets )
 	for i, widget in enumerate( visibleWidgets ) :
 
-		if isinstance( widget, GafferUI.BoolPlugValueWidget ) :
-			# Special case - we need to apply the rounding to
-			# the internal widget.
-			## \todo Is there a better approach here, perhaps
-			# using the stylesheet?
-			qtWidget = widget.boolWidget()._qtWidget()
-		else :
-			qtWidget = widget._qtWidget()
+		qtWidget = widget._qtWidget()
+		# The top-level `QWidget` may be a non-drawable container that
+		# doesn't respond to styling - one common example is when
+		# `GafferUI.Widget.__init__` wraps a `GafferUI.Widget` in a `QWidget``.
+		# In this case, search for a child that does accept styling,
+		# and style that instead.
+		while not isinstance( qtWidget, joinableTypes ) :
+			children = [ c for c in qtWidget.children() if isinstance( c, QtWidgets.QWidget ) ]
+			if len( children ) == 1 :
+				qtWidget = children[0]
+			else :
+				break
 
 		qtWidget.setProperty( lowProperty, i > 0 )
 		qtWidget.setProperty( highProperty, i < l - 1 )
@@ -84,30 +97,41 @@ def grab( widget, imagePath ) :
 	if imageDir and not os.path.isdir( imageDir ) :
 		os.makedirs( imageDir )
 
-	if Qt.__binding__ in ( "PySide2", "PyQt5" ) :
-		# Qt 5
-		screen = QtWidgets.QApplication.primaryScreen()
-		windowHandle = widget._qtWidget().windowHandle()
-		if windowHandle :
-			screen = windowHandle.screen()
+	# Qt 5
+	screen = QtWidgets.QApplication.primaryScreen()
+	windowHandle = widget._qtWidget().windowHandle()
+	if windowHandle :
+		screen = windowHandle.screen()
 
-		pixmap = screen.grabWindow( long( widget._qtWidget().winId() ) )
+	# On Windows the most reliable method of capturing a window with its
+	# popup menu is to capture the entire screen and crop to the widget.
+	pixmap = screen.grabWindow( 0 if sys.platform == "win32" else widget._qtWidget().winId() )
 
-		if sys.platform == "darwin" and pixmap.size() == screen.size() * screen.devicePixelRatio() :
-			# A bug means that the entire screen will have been captured,
-			# not just the widget we requested. Copy out just the widget.
-			topLeft = widget._qtWidget().mapToGlobal( QtCore.QPoint( 0, 0 ) )
-			bottomRight = widget._qtWidget().mapToGlobal( QtCore.QPoint( widget._qtWidget().width(), widget._qtWidget().height() ) )
-			size = bottomRight - topLeft
-			pixmap = pixmap.copy(
-				QtCore.QRect(
-					topLeft * screen.devicePixelRatio(),
-					QtCore.QSize( size.x(), size.y() ) * screen.devicePixelRatio()
-				)
+	if (
+		sys.platform == "win32" or
+		( sys.platform == "darwin" and pixmap.size() == screen.size() * screen.devicePixelRatio() )
+	) :
+		# A bug on macOS or our above workaround on Windows means that
+		# the entire screen will have been captured, not just the
+		# widget we requested. Copy out just the widget.
+		topLeft = widget._qtWidget().mapToGlobal( QtCore.QPoint( 0, 0 ) )
+		bottomRight = widget._qtWidget().mapToGlobal( QtCore.QPoint( widget._qtWidget().width(), widget._qtWidget().height() ) )
+		size = bottomRight - topLeft
+		pixmap = pixmap.copy(
+			QtCore.QRect(
+				topLeft * screen.devicePixelRatio(),
+				QtCore.QSize( size.x(), size.y() ) * screen.devicePixelRatio()
 			)
-
-	else :
-		# Qt 4
-		pixmap = QtGui.QPixmap.grabWindow( long( widget._qtWidget().winId() ) )
+		)
 
 	pixmap.save( imagePath )
+
+## Useful as a workaround when you want to dispose of a GafferUI.Widget immediately,
+# but Qt bugs prevent you from doing so.
+def keepUntilIdle( widget ) :
+
+	def keep( o ) :
+
+		return False # Removes idle callback
+
+	GafferUI.EventLoop.addIdleCallback( functools.partial( keep, widget ) )

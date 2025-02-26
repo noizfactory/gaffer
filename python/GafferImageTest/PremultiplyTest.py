@@ -47,7 +47,7 @@ import GafferImageTest
 
 class PremultiplyTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/rgbOverChecker.100x100.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "rgbOverChecker.100x100.exr"
 
 	def testAlphaChannel( self ) :
 		# Test that changing the channel to use as the alpha channel changes the hash
@@ -63,6 +63,13 @@ class PremultiplyTest( GafferImageTest.ImageTestCase ) :
 		premult["alphaChannel"].setValue("B")
 		h2 = premult["out"].channelData( "R", imath.V2i( 0 ) ).hash()
 		self.assertNotEqual( h1, h2 )
+
+		premult["alphaChannel"].setValue("doesNotExist")
+		with self.assertRaisesRegex( Gaffer.ProcessException, "Channel 'doesNotExist' does not exist" ) :
+			GafferImageTest.processTiles( premult["out"] )
+
+		premult["ignoreMissingAlpha"].setValue( True )
+		self.assertImagesEqual( premult["out"], premult["in"] )
 
 	def testEnableBehaviour( self ) :
 

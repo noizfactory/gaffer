@@ -34,15 +34,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_KEYEVENT_H
-#define GAFFERUI_KEYEVENT_H
+#pragma once
 
 #include "GafferUI/ModifiableEvent.h"
 
 #include "IECore/Export.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathVec.h"
+#include "Imath/ImathVec.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 namespace GafferUI
@@ -51,7 +50,7 @@ namespace GafferUI
 /// A class to represent events involving keyboard keys.
 struct GAFFERUI_API KeyEvent : public ModifiableEvent
 {
-	KeyEvent(
+	explicit KeyEvent(
 		const char *k = "a",
 		Modifiers m = ModifiableEvent::None
 	)
@@ -75,5 +74,3 @@ inline bool operator != ( const KeyEvent &lhs, const KeyEvent &rhs )
 }
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_KEYEVENT_H

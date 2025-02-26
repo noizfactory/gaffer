@@ -35,16 +35,22 @@
 #
 ##########################################################################
 
+import contextlib
+import io
+import sys
 import unittest
+import warnings
 import weakref
 import imath
 
 import IECore
 
 import Gaffer
+import GafferTest
 import GafferUI
 import GafferUITest
 
+from Qt import QtGui
 from Qt import QtWidgets
 
 class TestWidget( GafferUI.Widget ) :
@@ -72,18 +78,18 @@ class WindowTest( GafferUITest.TestCase ) :
 		self.assertEqual( w.getChild(), None )
 
 		w.setChild( TestWidget() )
-		self.assert_( not w.getChild() is None )
-		self.assert_( isinstance( w.getChild(), TestWidget ) )
+		self.assertIsNotNone( w.getChild() )
+		self.assertIsInstance( w.getChild(), TestWidget )
 
 		t = TestWidget()
 		w.setChild( t )
-		self.assert_( w.getChild() is t )
-		self.assert_( w.getChild()._qtWidget() is t._qtWidget() )
-		self.assert_( t.parent() is w )
+		self.assertTrue( w.getChild() is t )
+		self.assertTrue( w.getChild()._qtWidget() is t._qtWidget() )
+		self.assertTrue( t.parent() is w )
 
 		w.setChild( None )
-		self.assert_( w.getChild() is None )
-		self.assert_( t.parent() is None )
+		self.assertIsNone( w.getChild() )
+		self.assertIsNone( t.parent() )
 
 	def testReparent( self ) :
 
@@ -93,16 +99,16 @@ class WindowTest( GafferUITest.TestCase ) :
 		t = TestWidget()
 
 		w1.setChild( t )
-		self.assert_( t.parent() is w1 )
-		self.assert_( w1.getChild() is t )
-		self.assert_( w2.getChild() is None )
-		self.assert_( GafferUI.Widget._owner( t._qtWidget() ) is t )
+		self.assertTrue( t.parent() is w1 )
+		self.assertTrue( w1.getChild() is t )
+		self.assertIsNone( w2.getChild() )
+		self.assertTrue( GafferUI.Widget._owner( t._qtWidget() ) is t )
 
 		w2.setChild( t )
-		self.assert_( t.parent() is w2 )
-		self.assert_( w1.getChild() is None )
-		self.assert_( w2.getChild() is t )
-		self.assert_( GafferUI.Widget._owner( t._qtWidget() ) is t )
+		self.assertTrue( t.parent() is w2 )
+		self.assertIsNone( w1.getChild() )
+		self.assertTrue( w2.getChild() is t )
+		self.assertTrue( GafferUI.Widget._owner( t._qtWidget() ) is t )
 
 	def testWindowParent( self ) :
 
@@ -111,36 +117,36 @@ class WindowTest( GafferUITest.TestCase ) :
 		childWindow = GafferUI.Window()
 		childWindowWeakRef = weakref.ref( childWindow )
 
-		self.failUnless( parentWindow1.parent() is None )
-		self.failUnless( parentWindow2.parent() is None )
-		self.failUnless( childWindow.parent() is None )
+		self.assertIsNone( parentWindow1.parent() )
+		self.assertIsNone( parentWindow2.parent() )
+		self.assertIsNone( childWindow.parent() )
 
 		parentWindow1.addChildWindow( childWindow )
-		self.failUnless( parentWindow1.parent() is None )
-		self.failUnless( parentWindow2.parent() is None )
-		self.failUnless( childWindow.parent() is parentWindow1 )
+		self.assertIsNone( parentWindow1.parent() )
+		self.assertIsNone( parentWindow2.parent() )
+		self.assertTrue( childWindow.parent() is parentWindow1 )
 
 		parentWindow1.setVisible( True )
 		childWindow.setVisible( True )
 		self.waitForIdle( 1000 )
 
 		parentWindow2.addChildWindow( childWindow )
-		self.failUnless( parentWindow1.parent() is None )
-		self.failUnless( parentWindow2.parent() is None )
-		self.failUnless( childWindow.parent() is parentWindow2 )
+		self.assertIsNone( parentWindow1.parent() )
+		self.assertIsNone( parentWindow2.parent() )
+		self.assertTrue( childWindow.parent() is parentWindow2 )
 
 		parentWindow2.setVisible( True )
 		self.waitForIdle( 1000 )
 
 		parentWindow2.removeChild( childWindow )
-		self.failUnless( parentWindow1.parent() is None )
-		self.failUnless( parentWindow2.parent() is None )
-		self.failUnless( childWindow.parent() is None )
+		self.assertIsNone( parentWindow1.parent() )
+		self.assertIsNone( parentWindow2.parent() )
+		self.assertIsNone( childWindow.parent() )
 
 		self.waitForIdle( 1000 )
 
 		parentWindow1.addChildWindow( childWindow )
-		self.failUnless( childWindow.parent() is parentWindow1 )
+		self.assertTrue( childWindow.parent() is parentWindow1 )
 
 		self.waitForIdle( 1000 )
 
@@ -148,7 +154,7 @@ class WindowTest( GafferUITest.TestCase ) :
 
 		del childWindow
 
-		self.failUnless( childWindowWeakRef() is None )
+		self.assertIsNone( childWindowWeakRef() )
 
 	def testWindowHoldsReferenceToChildWindows( self ) :
 
@@ -160,11 +166,11 @@ class WindowTest( GafferUITest.TestCase ) :
 
 		del childWindow
 
-		self.failUnless( childWindowWeakRef() is not None )
+		self.assertIsNotNone( childWindowWeakRef() )
 
 		del parentWindow
 
-		self.failUnless( childWindowWeakRef() is None )
+		self.assertIsNone( childWindowWeakRef() )
 
 	def testCloseMethod( self ) :
 
@@ -178,7 +184,7 @@ class WindowTest( GafferUITest.TestCase ) :
 		w.setVisible( True )
 		self.assertEqual( w.getVisible(), True )
 
-		c = w.closedSignal().connect( closeFn )
+		w.closedSignal().connect( closeFn )
 
 		self.assertEqual( w.close(), True )
 		self.assertEqual( w.getVisible(), False )
@@ -195,7 +201,7 @@ class WindowTest( GafferUITest.TestCase ) :
 		w.setVisible( True )
 		self.assertEqual( w.getVisible(), True )
 
-		c = w.closedSignal().connect( closeFn )
+		w.closedSignal().connect( closeFn )
 
 		# simulate user clicking on the x
 		w._qtWidget().close()
@@ -224,7 +230,7 @@ class WindowTest( GafferUITest.TestCase ) :
 		w.setVisible( True )
 		self.assertEqual( w.getVisible(), True )
 
-		c = w.closedSignal().connect( closeFn )
+		w.closedSignal().connect( closeFn )
 
 		self.assertEqual( w.close(), False )
 		self.assertEqual( w.getVisible(), True )
@@ -247,9 +253,9 @@ class WindowTest( GafferUITest.TestCase ) :
 			# should accept any number of child windows though
 			d2 = GafferUI.Window()
 
-		self.failUnless( d.parent() is w )
-		self.failUnless( f.parent() is w )
-		self.failUnless( d2.parent() is w )
+		self.assertTrue( d.parent() is w )
+		self.assertTrue( f.parent() is w )
+		self.assertTrue( d2.parent() is w )
 
 	def testSizeMode( self ) :
 
@@ -264,20 +270,75 @@ class WindowTest( GafferUITest.TestCase ) :
 
 	def testResizeable( self ) :
 
-		w = GafferUI.Window()
-		self.failUnless( w.getResizeable() )
+		# The methods we are testing are deprecated, so we must
+		# ignore the deprecation warnings they emit, as otherwise
+		# they would become exceptions.
+		with warnings.catch_warnings() :
 
-		w.setResizeable( False )
-		self.failIf( w.getResizeable() )
+			warnings.simplefilter( "ignore", DeprecationWarning )
 
-		w.setResizeable( True )
-		self.failUnless( w.getResizeable() )
+			w = GafferUI.Window()
+			self.assertTrue( w.getResizeable() )
+
+			w.setResizeable( False )
+			self.assertFalse( w.getResizeable() )
+
+			w.setResizeable( True )
+			self.assertTrue( w.getResizeable() )
 
 	def testPosition( self ) :
 
 		w = GafferUI.Window()
-		w.setPosition( imath.V2i( 10, 20 ) )
-		self.assertEqual( w.getPosition(), imath.V2i( 10, 20 ) )
+		w._qtWidget().resize( 200, 100 )
+		self.assertEqual( ( w._qtWidget().width(), w._qtWidget().height() ), ( 200, 100 ) )
+
+		w.setPosition( imath.V2i( 100, 30 ) )
+		self.assertEqual( w.getPosition(), imath.V2i( 100, 30 ) )
+
+		desktop = QtWidgets.QApplication.desktop()
+
+		screenRect = desktop.availableGeometry( w._qtWidget() )
+		windowRect = w._qtWidget().frameGeometry()
+
+		# Smaller, off-screen bottom right
+
+		w.setPosition( imath.V2i( screenRect.right() - 50, screenRect.bottom() - 75 ) )
+		self.assertEqual(
+			w.getPosition(),
+			imath.V2i(
+				screenRect.right() - windowRect.width() + 1,
+				screenRect.bottom() - windowRect.height() + 1
+			)
+		)
+
+		# Smaller, off-screen top left
+
+		w.setPosition( imath.V2i( screenRect.left() - 25 , screenRect.top() - 15 ) )
+		self.assertEqual( w.getPosition(), imath.V2i( screenRect.left(), screenRect.top() ) )
+
+		# Bigger width only
+
+		w._qtWidget().resize( screenRect.width() + 300, 200 )
+		windowRect = w._qtWidget().frameGeometry()
+
+		w.setPosition( imath.V2i( 100, 100 ) )
+		self.assertEqual( w.getPosition(), imath.V2i( screenRect.left(), 100 ) )
+		self.assertEqual( w._qtWidget().frameGeometry().size(), windowRect.size() )
+
+		# Bigger
+
+		w._qtWidget().resize( screenRect.width() + 300, screenRect.height() + 200 )
+		windowRect = w._qtWidget().frameGeometry()
+
+		w.setPosition( imath.V2i( 100, 100 ) )
+		self.assertEqual( w.getPosition(), imath.V2i( screenRect.left(), screenRect.top() ) )
+		self.assertEqual( w._qtWidget().frameGeometry().size(), windowRect.size() )
+
+		# Force position
+
+		w.setPosition( imath.V2i( 100, 100 ), forcePosition = True )
+		self.assertEqual( w.getPosition(), imath.V2i( 100, 100 ) )
+		self.assertEqual( w._qtWidget().frameGeometry().size(), windowRect.size() )
 
 	def testChildWindowsMethod( self ) :
 
@@ -291,15 +352,15 @@ class WindowTest( GafferUITest.TestCase ) :
 		wc2 = GafferUI.Window()
 		w.addChildWindow( wc2 )
 		self.assertEqual( len( w.childWindows() ), 2 )
-		self.failUnless( wc1 in w.childWindows() )
-		self.failUnless( wc2 in w.childWindows() )
+		self.assertIn( wc1, w.childWindows() )
+		self.assertIn( wc2, w.childWindows() )
 
 		c = w.childWindows()
 		c.remove( wc1 )
 		# editing the list itself should have no effect
 		self.assertEqual( len( w.childWindows() ), 2 )
-		self.failUnless( wc1 in w.childWindows() )
-		self.failUnless( wc2 in w.childWindows() )
+		self.assertIn( wc1, w.childWindows() )
+		self.assertIn( wc2, w.childWindows() )
 
 		w.removeChild( wc1 )
 		self.assertEqual( w.childWindows(), [ wc2 ] )
@@ -335,6 +396,94 @@ class WindowTest( GafferUITest.TestCase ) :
 		w = weakref.ref( child )
 		del child
 		self.assertEqual( w(), None )
+
+	def testRemoveOnCloseCrash( self ) :
+
+		parent = GafferUI.Window()
+		parent.setChild( GafferUI.Label( "\n".join( [ "Hello" * 10 ] * 10 ) ) )
+		parent.setVisible( True )
+
+		for i in range( 0, 50 ) :
+
+			child = GafferUI.Window()
+			child.setChild( GafferUI.Label( "World" ) )
+
+			parent.addChildWindow( child, removeOnClose = True )
+			child.setVisible( True )
+			self.waitForIdle()
+
+			qWindow = child._qtWidget().windowHandle()
+			weakChild = weakref.ref( child )
+			del child
+
+			# Simulate a click on the close button of the QWindow for the child
+			# window. This ripples down to the close handling in GafferUI.Window,
+			# and should remove the child window cleanly.
+			QtWidgets.QApplication.sendEvent( qWindow, QtGui.QCloseEvent() )
+			self.waitForIdle( 1000 )
+			self.assertEqual( parent.childWindows(), [] )
+			self.assertEqual( weakChild(), None )
+
+	def testChildWindowDuringShutdown( self ) :
+
+		# On Mac we get intermittent "Window position outside any known screen" messages
+		# from Qt, which we suppress since they're not what we're testing here.
+		contextManager = IECore.CapturingMessageHandler() if sys.platform == "darwin" else contextlib.nullcontext()
+
+		with contextManager :
+
+			with GafferUI.Window( "Parent" ) as parent :
+
+				GafferUI.Label( "Parent\n" * 10 )
+
+			with GafferUI.Window( "Child" ) as child :
+
+				GafferUI.Label( "child\n" * 4 )
+
+			parent.setVisible( True )
+			parent.addChildWindow( child )
+			child.setVisible( True )
+
+			# Delete the child and parent windows, while capturing `sys.stderr`.
+			# This demonstrated a bug which caused Widget's `_EventFilter` to access
+			# an already-deleted QObject, causing PySide to print an exception to
+			# `stderr`.
+
+			tmpStdErr = io.StringIO()
+			sys.stderr = tmpStdErr
+			try :
+				del child
+				del parent
+			finally :
+				sys.stderr = sys.__stderr__
+
+			# If the bug is fixed, nothing should have been printed.
+			self.assertEqual( tmpStdErr.getvalue(), "" )
+
+	def testPreCloseSignal( self ) :
+
+		window = GafferUI.Window()
+		window.setVisible( True )
+
+		preCloseSlotResult = True
+		def preCloseSlot( w ) :
+
+			nonlocal preCloseSlotResult
+			return preCloseSlotResult
+
+		window.preCloseSignal().connect( preCloseSlot )
+		preCloseCapturingSlot = GafferTest.CapturingSlot( window.preCloseSignal() )
+		closedSlot = GafferTest.CapturingSlot( window.closedSignal() )
+
+		self.assertFalse( window.close() )
+		self.assertEqual( len( preCloseCapturingSlot ), 0 )
+		self.assertEqual( len( closedSlot ), 0 )
+
+		preCloseSlotResult = False
+
+		self.assertTrue( window.close() )
+		self.assertEqual( len( preCloseCapturingSlot ), 1 )
+		self.assertEqual( len( closedSlot ), 1 )
 
 if __name__ == "__main__":
 	unittest.main()

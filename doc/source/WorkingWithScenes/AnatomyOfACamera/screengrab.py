@@ -1,4 +1,5 @@
 # BuildTarget: images/interfaceCameraParameters.png
+# BuildTarget: images/interfaceCameraSets.png
 
 import IECore
 import time
@@ -9,8 +10,6 @@ import GafferUI
 
 import GafferScene
 import GafferSceneUI
-import GafferOSL
-import GafferAppleseed
 
 # Interface: the object and set sections of a camera in the Scene Inspector
 script["Camera"] = GafferScene.Camera()
@@ -30,8 +29,7 @@ script["Camera"]["renderSettingOverrides"]["overscanBottom"]["enabled"].setValue
 
 script.selection().add( script["Camera"] )
 __path = "/camera"
-__paths = IECore.PathMatcher( [ __path ] )
-GafferSceneUI.ContextAlgo.expand( script.context(), __paths )
+GafferSceneUI.ScriptNodeAlgo.expandInVisibleSet( script, IECore.PathMatcher( [ __path ] ) )
 
 from GafferSceneUI.SceneInspector import __TransformSection, __BoundSection, __ObjectSection, __AttributesSection, __SetMembershipSection
 
@@ -51,5 +49,6 @@ for imageName, sectionClass in [
 
 	window.resizeToFitChild()
 	window.setVisible( True )
+	window.setPosition( imath.V2i( 0, 0 ) )
 
 	GafferUI.WidgetAlgo.grab( widget = sceneInspector, imagePath = "images/interfaceCamera" + imageName )

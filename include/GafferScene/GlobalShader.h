@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_GLOBALSHADER_H
-#define GAFFERSCENE_GLOBALSHADER_H
+#pragma once
 
 #include "GafferScene/GlobalsProcessor.h"
 
@@ -49,10 +48,10 @@ class GAFFERSCENE_API GlobalShader : public GlobalsProcessor
 
 	public :
 
-		GlobalShader( const std::string &name=defaultName<GlobalShader>() );
+		explicit GlobalShader( const std::string &name=defaultName<GlobalShader>() );
 		~GlobalShader() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::GlobalShader, GlobalShaderTypeId, GlobalsProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::GlobalShader, GlobalShaderTypeId, GlobalsProcessor );
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -77,5 +76,3 @@ class GAFFERSCENE_API GlobalShader : public GlobalsProcessor
 IE_CORE_DECLAREPTR( GlobalShader )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_GLOBALSHADER_H

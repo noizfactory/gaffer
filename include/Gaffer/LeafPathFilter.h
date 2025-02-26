@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_LEAFPATHFILTER_H
-#define GAFFER_LEAFPATHFILTER_H
+#pragma once
 
 #include "Gaffer/PathFilter.h"
 
@@ -52,14 +51,14 @@ class GAFFER_API LeafPathFilter : public Gaffer::PathFilter
 		/// one or more of the patterns (using StringAlgo match()).
 		/// If leafOnly is true then directories will always be passed
 		/// through.
-		LeafPathFilter( IECore::CompoundDataPtr userData = nullptr );
+		explicit LeafPathFilter( IECore::CompoundDataPtr userData = nullptr );
 		~LeafPathFilter() override;
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( Gaffer::LeafPathFilter, LeafPathFilterTypeId, PathFilter );
 
 	protected :
 
-		void doFilter( std::vector<PathPtr> &paths ) const override;
+		void doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const override;
 
 	private :
 
@@ -70,5 +69,3 @@ class GAFFER_API LeafPathFilter : public Gaffer::PathFilter
 IE_CORE_DECLAREPTR( LeafPathFilter )
 
 } // namespace Gaffer
-
-#endif // GAFFER_LEAFPATHFILTER_H

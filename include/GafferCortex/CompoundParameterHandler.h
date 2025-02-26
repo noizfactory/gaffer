@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_COMPOUNDPARAMETERHANDLER_H
-#define GAFFERCORTEX_COMPOUNDPARAMETERHANDLER_H
+#pragma once
 
 #include "GafferCortex/ParameterHandler.h"
 
@@ -52,7 +51,7 @@ class GAFFERCORTEX_API CompoundParameterHandler : public ParameterHandler
 
 		IE_CORE_DECLAREMEMBERPTR( CompoundParameterHandler );
 
-		CompoundParameterHandler( IECore::CompoundParameterPtr parameter );
+		explicit CompoundParameterHandler( IECore::CompoundParameterPtr parameter );
 		~CompoundParameterHandler() override;
 
 		IECore::Parameter *parameter() override;
@@ -81,7 +80,7 @@ class GAFFERCORTEX_API CompoundParameterHandler : public ParameterHandler
 		Gaffer::PlugPtr m_plug;
 
 		ParameterHandler *handler( IECore::Parameter *child, bool createIfMissing = false );
-		typedef std::map<IECore::ParameterPtr, ParameterHandlerPtr> HandlerMap;
+		using HandlerMap = std::map<IECore::ParameterPtr, ParameterHandlerPtr>;
 		HandlerMap m_handlers;
 
 		static ParameterHandlerDescription<CompoundParameterHandler, IECore::CompoundParameter> g_description;
@@ -89,5 +88,3 @@ class GAFFERCORTEX_API CompoundParameterHandler : public ParameterHandler
 };
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_COMPOUNDPARAMETERHANDLER_H

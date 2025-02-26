@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_MONITOR_H
-#define GAFFER_MONITOR_H
+#pragma once
 
 #include "Gaffer/Export.h"
 #include "Gaffer/ThreadState.h"
@@ -53,27 +52,29 @@ class GAFFER_API Monitor : public IECore::RefCounted
 
 	public :
 
-		virtual ~Monitor();
+		~Monitor() override;
 
 		IE_CORE_DECLAREMEMBERPTR( Monitor )
 
 		using MonitorSet = boost::container::flat_set<MonitorPtr>;
 
-		class Scope : private ThreadState::Scope
+		class GAFFER_API Scope : private ThreadState::Scope
 		{
 
 			public :
 
 				/// Constructs a Scope where the monitor has the specified
 				/// active state. If monitor is null, the scope is a no-op.
-				Scope( const MonitorPtr &monitor, bool active = true );
+				explicit Scope( const MonitorPtr &monitor, bool active = true );
 				/// Constructs a Scope where each of `monitors` has the
 				/// specified `active` state.
-				Scope( const MonitorSet &monitors, bool active = true );
+				explicit Scope( const MonitorSet &monitors, bool active = true );
 				/// Returns to the previously active set of monitors.
 				~Scope();
 
 			private :
+
+				void initializeMightForce();
 
 				MonitorSet m_monitors;
 
@@ -94,10 +95,18 @@ class GAFFER_API Monitor : public IECore::RefCounted
 		/// Implementations must be safe to call concurrently.
 		virtual void processFinished( const Process *process ) = 0;
 
+		/// Must return true if forceMonitoring will ever return true from this Monitor
+		/// \todo : In order to efficently support a monitor that only forces monitoring during
+		/// compute processes, we would need to make this specific to processType - this will
+		/// perhaps be easier if we switch to using a type id instead of a string.
+		virtual bool mightForceMonitoring();
+
+		/// Return true to force the monitored process to run, rather than using employing caches that
+		/// may allow skipping the execution ( obviously, this is much slower than using the caches )
+		virtual bool forceMonitoring( const Gaffer::Plug *plug, const IECore::InternedString &processType );
+
 };
 
 IE_CORE_DECLAREPTR( Monitor )
 
 } // namespace Gaffer
-
-#endif // GAFFER_MONITOR_H

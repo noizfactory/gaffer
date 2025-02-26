@@ -35,8 +35,6 @@
 ##########################################################################
 
 import unittest
-import sys
-import StringIO
 
 import IECore
 
@@ -72,8 +70,8 @@ class EventSignalCombinerTest( GafferUITest.TestCase ) :
 	def testShortCutting( self ) :
 
 		s = GafferUI.Gadget.ButtonSignal()
-		c1 = s.connect( self.trueSlot )
-		c2 = s.connect( self.falseSlot )
+		s.connect( self.trueSlot )
+		s.connect( self.falseSlot )
 
 		self.assertEqual( self.trueSlotCalled, False )
 		self.assertEqual( self.falseSlotCalled, False )
@@ -86,8 +84,8 @@ class EventSignalCombinerTest( GafferUITest.TestCase ) :
 	def testNoShortCutting( self ) :
 
 		s = GafferUI.Gadget.ButtonSignal()
-		c1 = s.connect( self.falseSlot )
-		c2 = s.connect( self.trueSlot )
+		s.connect( self.falseSlot )
+		s.connect( self.trueSlot )
 
 		self.assertEqual( self.trueSlotCalled, False )
 		self.assertEqual( self.falseSlotCalled, False )
@@ -101,25 +99,25 @@ class EventSignalCombinerTest( GafferUITest.TestCase ) :
 
 		# We don't want exceptions in one slot to prevent the
 		# invocation of other slots. But we do want the errors from
-		# those slots being printed to stderr.
+		# those slots to be printed as warnings.
 
 		s = GafferUI.Gadget.ButtonSignal()
-		c1 = s.connect( self.exceptionSlot )
-		c2 = s.connect( self.trueSlot )
+		s.connect( self.exceptionSlot )
+		s.connect( self.trueSlot )
 
 		self.assertEqual( self.exceptionSlotCalled, False )
 		self.assertEqual( self.trueSlotCalled, False )
 
-		tmpStdErr = StringIO.StringIO()
-		sys.stderr = tmpStdErr
-		try :
+		with IECore.CapturingMessageHandler() as mh :
 			self.assertEqual( s( None, GafferUI.ButtonEvent() ), True )
-		finally :
-			sys.stderr = sys.__stderr__
 
-		self.assert_( "oops" in tmpStdErr.getvalue() )
 		self.assertEqual( self.exceptionSlotCalled, True )
 		self.assertEqual( self.trueSlotCalled, True )
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Error )
+		self.assertEqual( mh.messages[0].context, "EventSignalCombiner", IECore.Msg.Level.Error )
+		self.assertIn( "Exception", mh.messages[0].message )
+		self.assertIn( "oops", mh.messages[0].message )
 
 if __name__ == "__main__":
 	unittest.main()

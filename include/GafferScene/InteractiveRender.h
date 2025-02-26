@@ -34,14 +34,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_INTERACTIVERENDER_H
-#define GAFFERSCENE_INTERACTIVERENDER_H
+#pragma once
 
 #include "GafferScene/Private/IECoreScenePreview/Renderer.h"
 #include "GafferScene/RenderController.h"
 #include "GafferScene/ScenePlug.h"
 
-#include "Gaffer/Node.h"
+#include "Gaffer/ComputeNode.h"
+#include "Gaffer/TypedObjectPlug.h"
 
 namespace Gaffer
 {
@@ -54,15 +54,15 @@ IE_CORE_FORWARDDECLARE( StringPlug )
 namespace GafferScene
 {
 
-class GAFFERSCENE_API InteractiveRender : public Gaffer::Node
+class GAFFERSCENE_API InteractiveRender : public Gaffer::ComputeNode
 {
 
 	public :
 
-		InteractiveRender( const std::string &name=defaultName<InteractiveRender>() );
+		explicit InteractiveRender( const std::string &name=defaultName<InteractiveRender>() );
 		~InteractiveRender() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::InteractiveRender, GafferScene::InteractiveRenderTypeId, Gaffer::Node );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::InteractiveRender, GafferScene::InteractiveRenderTypeId, Gaffer::ComputeNode );
 
 		enum State
 		{
@@ -83,6 +83,12 @@ class GAFFERSCENE_API InteractiveRender : public Gaffer::Node
 		GafferScene::ScenePlug *outPlug();
 		const GafferScene::ScenePlug *outPlug() const;
 
+		Gaffer::StringPlug *resolvedRendererPlug();
+		const Gaffer::StringPlug *resolvedRendererPlug() const;
+
+		Gaffer::ObjectPlug *messagesPlug();
+		const Gaffer::ObjectPlug *messagesPlug() const;
+
 		/// Specifies a context in which the InteractiveRender should operate.
 		/// The default is null, meaning that the context of the ancestor
 		/// ScriptNode will be used, or failing that, a default context.
@@ -90,20 +96,35 @@ class GAFFERSCENE_API InteractiveRender : public Gaffer::Node
 		Gaffer::Context *getContext();
 		const Gaffer::Context *getContext() const;
 
+		/// If a render is currently active, calls `Renderer::command()`,
+		/// pausing the renderer temporarily if necessary.
+		IECore::DataPtr command( const IECore::InternedString name, const IECore::CompoundDataMap &parameters = IECore::CompoundDataMap() );
+
+		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+
 	protected :
 
-		// Constructor for derived classes which wish to hardcode the renderer type. Perhaps
-		// at some point we won't even have derived classes, but instead will always use the
-		// base class? At the moment the main purpose of the derived classes is to force the
-		// loading of the module which registers the required renderer type.
-		InteractiveRender( const IECore::InternedString &rendererType, const std::string &name );
+		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
+
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
+
+		bool acceptsInput( const Gaffer::Plug *plug, const Gaffer::Plug *inputPlug ) const override;
+
+		IECoreScenePreview::Renderer *renderer() { return m_renderer.get(); }
 
 	private :
 
 		ScenePlug *adaptedInPlug();
 		const ScenePlug *adaptedInPlug() const;
 
-		void plugDirtied( const Gaffer::Plug *plug );
+		Gaffer::IntPlug *messageUpdateCountPlug();
+		const Gaffer::IntPlug *messageUpdateCountPlug() const;
+
+		void messagesChanged();
+		static void messagesChangedUI();
+
+		void plugSet( const Gaffer::Plug *plug );
 
 		void update();
 		Gaffer::ConstContextPtr effectiveContext();
@@ -115,15 +136,13 @@ class GAFFERSCENE_API InteractiveRender : public Gaffer::Node
 
 		Gaffer::ContextPtr m_context;
 
+		IE_CORE_FORWARDDECLARE( RenderMessageHandler )
+		RenderMessageHandlerPtr  m_messageHandler;
+
 		static size_t g_firstPlugIndex;
 
 };
 
 IE_CORE_DECLAREPTR( InteractiveRender );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<InteractiveRender> > InteractiveRenderIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<InteractiveRender> > RecursiveInteractiveRenderIterator;
-
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_INTERACTIVERENDER_H

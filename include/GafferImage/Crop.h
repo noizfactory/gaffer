@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_CROP_H
-#define GAFFERIMAGE_CROP_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -51,10 +50,10 @@ class GAFFERIMAGE_API Crop : public ImageProcessor
 {
 	public :
 
-		Crop( const std::string &name=defaultName<Crop>() );
+		explicit Crop( const std::string &name=defaultName<Crop>() );
 		~Crop() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Crop, CropTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Crop, CropTypeId, ImageProcessor );
 
 		enum AreaSource
 		{
@@ -90,10 +89,8 @@ class GAFFERIMAGE_API Crop : public ImageProcessor
 	protected :
 
 		void hashFormat( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		void hashDataWindow( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 
 		GafferImage::Format computeFormat( const Gaffer::Context *context, const ImagePlug *parent ) const override;
-		Imath::Box2i computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
@@ -102,6 +99,9 @@ class GAFFERIMAGE_API Crop : public ImageProcessor
 
 		Gaffer::AtomicBox2iPlug *cropWindowPlug();
 		const Gaffer::AtomicBox2iPlug *cropWindowPlug() const;
+
+		Gaffer::AtomicBox2iPlug *cropDataWindowPlug();
+		const Gaffer::AtomicBox2iPlug *cropDataWindowPlug() const;
 
 		Gaffer::V2iPlug *offsetPlug();
 		const Gaffer::V2iPlug *offsetPlug() const;
@@ -112,5 +112,3 @@ class GAFFERIMAGE_API Crop : public ImageProcessor
 IE_CORE_DECLAREPTR( Crop )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_CROP_H

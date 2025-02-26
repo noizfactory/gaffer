@@ -34,8 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_EVENTSIGNALCOMBINER_INL
-#define GAFFERUI_EVENTSIGNALCOMBINER_INL
+#pragma once
+
+#include "IECore/MessageHandler.h"
 
 namespace GafferUI
 {
@@ -46,16 +47,25 @@ typename EventSignalCombiner<T>::result_type EventSignalCombiner<T>::operator()(
 {
 	while( first != last )
 	{
-		result_type r = *first;
-		if( r )
+		try
 		{
-			return r;
+			result_type r = *first;
+			if( r )
+			{
+				return r;
+			}
 		}
-		first++;
+		catch( const std::exception &e )
+		{
+			IECore::msg( IECore::Msg::Error, "EventSignalCombiner", e.what() );
+		}
+		catch( ... )
+		{
+			IECore::msg( IECore::Msg::Error, "EventSignalCombiner", "Unknown error" );
+		}
+		++first;
 	}
 	return 0;
 };
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_EVENTSIGNALCOMBINER_INL

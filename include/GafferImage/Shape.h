@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_SHAPE_H
-#define GAFFERIMAGE_SHAPE_H
+#pragma once
 
-#include "GafferImage/ImageProcessor.h"
+#include "GafferImage/FlatImageProcessor.h"
 
 #include "Gaffer/CompoundNumericPlug.h"
 
@@ -51,15 +50,15 @@ IE_CORE_FORWARDDECLARE( ImageTransform )
 /// Derived classes are responsible only for generating a mask for the
 /// shape, and the base class takes care of colouring it and compositing
 /// it over the input.
-class GAFFERIMAGE_API Shape : public ImageProcessor
+class GAFFERIMAGE_API Shape : public FlatImageProcessor
 {
 
 	public :
 
-		Shape( const std::string &name=defaultName<Shape>() );
+		explicit Shape( const std::string &name=defaultName<Shape>() );
 		~Shape() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Shape, ShapeTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Shape, ShapeTypeId, FlatImageProcessor );
 
 		Gaffer::Color4fPlug *colorPlug();
 		const Gaffer::Color4fPlug *colorPlug() const;
@@ -80,10 +79,12 @@ class GAFFERIMAGE_API Shape : public ImageProcessor
 
 	protected :
 
+		void hashViewNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashDataWindow( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 
+		IECore::ConstStringVectorDataPtr computeViewNames( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 		Imath::Box2i computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 		IECore::ConstStringVectorDataPtr computeChannelNames( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
@@ -123,5 +124,3 @@ class GAFFERIMAGE_API Shape : public ImageProcessor
 IE_CORE_DECLAREPTR( Shape )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_SHAPE_H

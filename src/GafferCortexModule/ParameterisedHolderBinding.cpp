@@ -48,7 +48,7 @@
 #include "GafferBindings/DependencyNodeBinding.h"
 #include "GafferBindings/Serialisation.h"
 
-#include "boost/format.hpp"
+#include "fmt/format.h"
 
 using namespace boost::python;
 using namespace GafferBindings;
@@ -59,16 +59,16 @@ using namespace GafferCortexModule;
 namespace
 {
 
-typedef ParameterisedHolderWrapper<NodeWrapper<ParameterisedHolderNode> > ParameterisedHolderNodeWrapper;
-typedef ParameterisedHolderWrapper<DependencyNodeWrapper<ParameterisedHolderDependencyNode> > ParameterisedHolderDependencyNodeWrapper;
-typedef ParameterisedHolderWrapper<ComputeNodeWrapper<ParameterisedHolderComputeNode> > ParameterisedHolderComputeNodeWrapper;
-typedef ParameterisedHolderWrapper<TaskNodeWrapper<ParameterisedHolderTaskNode> > ParameterisedHolderTaskNodeWrapper;
+using ParameterisedHolderNodeWrapper = ParameterisedHolderWrapper<NodeWrapper<ParameterisedHolderNode> >;
+using ParameterisedHolderDependencyNodeWrapper = ParameterisedHolderWrapper<DependencyNodeWrapper<ParameterisedHolderDependencyNode> >;
+using ParameterisedHolderComputeNodeWrapper = ParameterisedHolderWrapper<ComputeNodeWrapper<ParameterisedHolderComputeNode> >;
+using ParameterisedHolderTaskNodeWrapper = ParameterisedHolderWrapper<TaskNodeWrapper<ParameterisedHolderTaskNode> >;
 
 template<typename T>
 class ParameterisedHolderSerialiser : public NodeSerialiser
 {
 
-	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		const T *parameterisedHolder = static_cast<const T *>( graphComponent );
 
@@ -79,7 +79,7 @@ class ParameterisedHolderSerialiser : public NodeSerialiser
 
 		if( className.size() )
 		{
-			return boost::str( boost::format( "%s.setParameterised( \"%s\", %d, \"%s\", keepExistingValues=True )\n" ) % identifier % className % classVersion % searchPathEnvVar );
+			return fmt::format( "{}.setParameterised( \"{}\", {}, \"{}\", keepExistingValues=True )\n", identifier, className, classVersion, searchPathEnvVar );
 		}
 
 		return "";

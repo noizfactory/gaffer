@@ -46,6 +46,8 @@
 #include "GafferBindings/ComputeNodeBinding.h"
 #include "GafferBindings/PlugBinding.h"
 
+#include "boost/python/suite/indexing/container_utils.hpp"
+
 using namespace boost::python;
 using namespace IECore;
 using namespace Gaffer;
@@ -55,7 +57,7 @@ using namespace GafferScene;
 namespace
 {
 
-// ScenePlug::ScenePath is just a typedef for std::vector<InternedString>,
+// ScenePlug::ScenePath is just an alias for `std::vector<InternedString>`,
 // which doesn't exist in Python. So we register a conversion from
 // InternedStringVectorData which contains just such a vector.
 /// \todo We could instead do this in the Cortex bindings for all
@@ -105,7 +107,8 @@ struct ScenePathFromString
 
 	static void *convertible( PyObject *obj )
 	{
-		if( PyString_Check( obj ) )
+		extract<std::string> e( obj );
+		if( e.check() )
 		{
 			return obj;
 		}
@@ -119,12 +122,49 @@ struct ScenePathFromString
 		data->convertible = storage;
 
 		std::string s = extract<std::string>( obj );
-		typedef boost::tokenizer<boost::char_separator<char> > Tokenizer;
+		using Tokenizer = boost::tokenizer<boost::char_separator<char> >;
 		Tokenizer t( s, boost::char_separator<char>( "/" ) );
 		for( Tokenizer::const_iterator it = t.begin(), eIt = t.end(); it != eIt; it++ )
 		{
 			path->push_back( *it );
 		}
+	}
+
+};
+
+// As a convenience we also accept lists in place of ScenePaths when
+// calling from python.
+struct ScenePathFromList
+{
+
+	ScenePathFromList()
+	{
+		boost::python::converter::registry::push_back(
+			&convertible,
+			&construct,
+			boost::python::type_id<ScenePlug::ScenePath>()
+		);
+	}
+
+	static void *convertible( PyObject *obj )
+	{
+		extract<boost::python::list> e( obj );
+		if( e.check() )
+		{
+			return obj;
+		}
+
+		return nullptr;
+	}
+
+	static void construct( PyObject *obj, boost::python::converter::rvalue_from_python_stage1_data *data )
+	{
+		void *storage = (( converter::rvalue_from_python_storage<ScenePlug::ScenePath>* ) data )->storage.bytes;
+		ScenePlug::ScenePath *path = new( storage ) ScenePlug::ScenePath();
+		data->convertible = storage;
+
+		boost::python::list l = extract<boost::python::list>( obj );
+		boost::python::container_utils::extend_container( *path, l );
 	}
 
 };
@@ -255,6 +295,30 @@ IECore::MurmurHash setHashWrapper( const ScenePlug &plug, const IECore::Interned
 	return plug.setHash( setName );
 }
 
+bool existsWrapper1( const ScenePlug &plug, const ScenePlug::ScenePath &scenePath )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return plug.exists( scenePath );
+}
+
+bool existsWrapper2( const ScenePlug &plug )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return plug.exists();
+}
+
+Imath::Box3f childBoundsWrapper( const ScenePlug &plug, const ScenePlug::ScenePath &scenePath )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return plug.childBounds( scenePath );
+}
+
+IECore::MurmurHash childBoundsHashWrapper( const ScenePlug &plug, const ScenePlug::ScenePath &scenePath )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return plug.childBoundsHash( scenePath );
+}
+
 IECore::InternedStringVectorDataPtr stringToPathWrapper( const char *s )
 {
 	IECore::InternedStringVectorDataPtr p = new IECore::InternedStringVectorData;
@@ -268,6 +332,58 @@ std::string pathToStringWrapper( const ScenePlug::ScenePath &scenePath )
 	ScenePlug::pathToString( scenePath, result );
 	return result;
 }
+
+// Custom serialiser to allow scripts to construct SceneProcessors
+// with internal subgraphs and have them serialise correctly. This
+// provides a half-way house between implementing a new node type
+// and using a Box.
+class SceneProcessorSerialiser : public NodeSerialiser
+{
+
+	bool childNeedsSerialisation( const Gaffer::GraphComponent *child, const Serialisation &serialisation ) const override
+	{
+		const auto sceneProcessor = static_cast<const SceneProcessor *>( child->parent() );
+		const bool isSubclassed = sceneProcessor->typeId() != SceneProcessor::staticTypeId();
+
+		if( !isSubclassed && runTimeCast<const Node>( child ) )
+		{
+			// SceneProcessor doesn't add any nodes in the constructor, so we
+			// know that any nodes added subsequently will need manual
+			// serialisation.
+			return true;
+		}
+
+		if( isSubclassed && child == sceneProcessor->outPlug() )
+		{
+			// Internal connections shouldn't be serialised for custom node
+			// types, because that leaks their implementation, making it
+			// harder to change internals in future.
+			return false;
+		}
+
+		return NodeSerialiser::childNeedsSerialisation( child, serialisation );
+	}
+
+	bool childNeedsConstruction( const Gaffer::GraphComponent *child, const Serialisation &serialisation ) const override
+	{
+		if( child->parent()->typeId() == SceneProcessor::staticTypeId() )
+		{
+			// Parent is exactly a SceneProcessor, not a subclass. Since the "in" plug
+			// is the last child to be added in the constructor, we know anything added after
+			// that will need manual construction in the serialisation.
+			const auto &children = child->parent()->children();
+			const auto childIt = find( children.begin(), children.end(), child );
+			const auto inIt = find( children.begin(), children.end(), child->parent()->getChild( "in" ) );
+			if( childIt > inIt )
+			{
+				return true;
+			}
+		}
+
+		return NodeSerialiser::childNeedsConstruction( child, serialisation );
+	}
+
+};
 
 } // namespace
 
@@ -305,6 +421,12 @@ void GafferSceneModule::bindCore()
 		.def( "globalsHash", &globalsHashWrapper )
 		.def( "setNamesHash", &setNamesHashWrapper )
 		.def( "setHash", &setHashWrapper )
+		// existence queries
+		.def( "exists", &existsWrapper1 )
+		.def( "exists", &existsWrapper2 )
+		// child bounds queries
+		.def( "childBounds", &childBoundsWrapper )
+		.def( "childBoundsHash", &childBoundsHashWrapper )
 		// string utilities
 		.def( "stringToPath", &stringToPathWrapper )
 		.staticmethod( "stringToPath" )
@@ -314,20 +436,22 @@ void GafferSceneModule::bindCore()
 
 	ScenePathFromInternedStringVectorData();
 	ScenePathFromString();
+	ScenePathFromList();
 
-	typedef ComputeNodeWrapper<SceneNode> SceneNodeWrapper;
+	using SceneNodeWrapper = ComputeNodeWrapper<SceneNode>;
 	GafferBindings::DependencyNodeClass<SceneNode, SceneNodeWrapper>();
 
-	typedef ComputeNodeWrapper<SceneProcessor> SceneProcessorWrapper;
+	using SceneProcessorWrapper = ComputeNodeWrapper<SceneProcessor>;
 	GafferBindings::DependencyNodeClass<SceneProcessor, SceneProcessorWrapper>()
 	.def( init<const std::string &, size_t, size_t>(
 				(
 					arg( "name" ) = GraphComponent::defaultName<SceneProcessor>(),
 					arg( "minInputs" ),
-					arg( "maxInputs" ) = Imath::limits<size_t>::max()
+					arg( "maxInputs" ) = std::numeric_limits<size_t>::max()
 				)
 			)
 		)
 	;
 
+	Serialisation::registerSerialiser( SceneProcessor::staticTypeId(), new SceneProcessorSerialiser );
 }

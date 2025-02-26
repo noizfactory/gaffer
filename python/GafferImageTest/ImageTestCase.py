@@ -35,6 +35,8 @@
 ##########################################################################
 
 import imath
+import os
+import pathlib
 
 import IECore
 import IECoreImage
@@ -46,7 +48,6 @@ import GafferImageTest
 
 class ImageTestCase( GafferTest.TestCase ) :
 
-
 	def setUp( self ) :
 
 		GafferTest.TestCase.setUp( self )
@@ -55,67 +56,224 @@ class ImageTestCase( GafferTest.TestCase ) :
 		sanitiser.__enter__()
 		self.addCleanup( sanitiser.__exit__, None, None, None )
 
+	def tearDown( self ) :
+
+		# Clear the file cache to prevent Windows from refusing to delete open files,
+		# then reset it to the original value to allow caching within subsequent tests.
+		fLimit = GafferImage.OpenImageIOReader.getOpenFilesLimit()
+		GafferImage.OpenImageIOReader.setOpenFilesLimit( 0 )
+		GafferImage.OpenImageIOReader.setOpenFilesLimit( fLimit )
+
+		GafferTest.TestCase.tearDown( self )
+
 	def assertImageHashesEqual( self, imageA, imageB ) :
 
-		self.assertEqual( imageA["format"].hash(), imageB["format"].hash() )
-		self.assertEqual( imageA["dataWindow"].hash(), imageB["dataWindow"].hash() )
-		self.assertEqual( imageA["metadata"].hash(), imageB["metadata"].hash() )
-		self.assertEqual( imageA["channelNames"].hash(), imageB["channelNames"].hash() )
+		self.assertEqual( imageA.viewNamesHash(), imageB.viewNamesHash() )
 
-		dataWindow = imageA["dataWindow"].getValue()
-		self.assertEqual( dataWindow, imageB["dataWindow"].getValue() )
+		for view in imageA.viewNames():
 
-		channelNames = imageA["channelNames"].getValue()
-		self.assertEqual( channelNames, imageB["channelNames"].getValue() )
+			with Gaffer.Context( Gaffer.Context.current() ) as context :
+				context["image:viewName"] = view
 
-		tileOrigin = GafferImage.ImagePlug.tileOrigin( dataWindow.min() )
-		while tileOrigin.y < dataWindow.max().y :
-			tileOrigin.x = GafferImage.ImagePlug.tileOrigin( dataWindow.min() ).x
-			while tileOrigin.x < dataWindow.max().x :
-				for channelName in channelNames :
-					self.assertEqual(
-						imageA.channelDataHash( channelName, tileOrigin ),
-						imageB.channelDataHash( channelName, tileOrigin )
-					)
-				tileOrigin.x += GafferImage.ImagePlug.tileSize()
-			tileOrigin.y += GafferImage.ImagePlug.tileSize()
+				self.assertEqual( imageA["format"].hash(), imageB["format"].hash() )
+				self.assertEqual( imageA["dataWindow"].hash(), imageB["dataWindow"].hash() )
+				self.assertEqual( imageA["metadata"].hash(), imageB["metadata"].hash() )
+				self.assertEqual( imageA["channelNames"].hash(), imageB["channelNames"].hash() )
 
-	def assertImagesEqual( self, imageA, imageB, maxDifference = 0.0, ignoreMetadata = False, ignoreDataWindow = False ) :
+				dataWindow = imageA["dataWindow"].getValue()
+				self.assertEqual( dataWindow, imageB["dataWindow"].getValue() )
 
-		self.assertEqual( imageA["format"].getValue(), imageB["format"].getValue() )
-		if not ignoreDataWindow :
-			self.assertEqual( imageA["dataWindow"].getValue(), imageB["dataWindow"].getValue() )
-		if not ignoreMetadata :
-			self.assertEqual( imageA["metadata"].getValue(), imageB["metadata"].getValue() )
-		self.assertEqual( imageA["channelNames"].getValue(), imageB["channelNames"].getValue() )
+				channelNames = imageA["channelNames"].getValue()
+				self.assertEqual( channelNames, imageB["channelNames"].getValue() )
 
-		difference = GafferImage.Merge()
-		difference["in"][0].setInput( imageA )
-		difference["in"][1].setInput( imageB )
-		difference["operation"].setValue( GafferImage.Merge.Operation.Difference )
+				tileOrigin = GafferImage.ImagePlug.tileOrigin( dataWindow.min() )
+				while tileOrigin.y < dataWindow.max().y :
+					tileOrigin.x = GafferImage.ImagePlug.tileOrigin( dataWindow.min() ).x
+					while tileOrigin.x < dataWindow.max().x :
+						for channelName in channelNames :
+							self.assertEqual(
+								imageA.channelDataHash( channelName, tileOrigin ),
+								imageB.channelDataHash( channelName, tileOrigin )
+							)
+						tileOrigin.x += GafferImage.ImagePlug.tileSize()
+					tileOrigin.y += GafferImage.ImagePlug.tileSize()
 
-		stats = GafferImage.ImageStats()
-		stats["in"].setInput( difference["out"] )
-		stats["area"].setValue( imageA["format"].getValue().getDisplayWindow() )
+	# maxDifference specifies the acceptable range in which pixels in B can differ from A. Optionally, you may
+	# pass a two element tuple instead of a float, in which case it specifies the minimum and maximum permitted
+	# deviation. For example, if `maxDifference = ( -0.1, 0.3 )`, then the test will pass if all pixels in
+	# imageB are no less than the corresponding pixel in imageA minus 0.1, and no more than the corresponding
+	# pixel in imageA plus 0.3.
 
-		for channelName in imageA["channelNames"].getValue() :
+	def assertImagesEqual( self, imageA, imageB, maxDifference = 0.0, ignoreMetadata = False, ignoreDataWindow = False, ignoreChannelNamesOrder = False, ignoreViewNamesOrder = False, metadataBlacklist = [] ) :
 
-			stats["channels"].setValue( IECore.StringVectorData( [ channelName ] * 4 ) )
-			self.assertLessEqual( stats["max"]["r"].getValue(), maxDifference, "Channel {0}".format( channelName ) )
+		self.longMessage = True
+
+		if not ignoreViewNamesOrder :
+			self.assertEqual( list( imageA.viewNames() ), list( imageB.viewNames() ) )
+		else :
+			self.assertEqual( set( imageA.viewNames() ), set( imageB.viewNames() ) )
+
+		maxDifferenceRange = None
+		if type( maxDifference ) == tuple and len( maxDifference ) == 2:
+			maxDifferenceRange = maxDifference
+			maxDifference = max( abs( maxDifference[0] ), abs( maxDifference[1] ) )
+
+		for view in imageA.viewNames():
+
+			with Gaffer.Context( Gaffer.Context.current() ) as context :
+				context["image:viewName"] = view
+
+				self.assertEqual( imageA["format"].getValue(), imageB["format"].getValue() )
+				dataWindowA = imageA["dataWindow"].getValue()
+				dataWindowB = imageB["dataWindow"].getValue()
+				if not ignoreDataWindow :
+					self.assertEqual( dataWindowA, dataWindowB )
+				if not ignoreMetadata :
+					# Converting to dict allows us to remove some items, and also gives a more informative
+					# exception if they don't match, since assertEqual has a special case for dicts
+					metaA = dict( imageA["metadata"].getValue() )
+					metaB = dict( imageB["metadata"].getValue() )
+					for i in metadataBlacklist:
+						metaA.pop( i, None )
+						metaB.pop( i, None )
+
+					self.assertEqual( metaA, metaB )
+
+				if not ignoreChannelNamesOrder :
+					self.assertEqual( list( imageA["channelNames"].getValue() ), list( imageB["channelNames"].getValue() ) )
+				else :
+					self.assertEqual( set( imageA["channelNames"].getValue() ), set( imageB["channelNames"].getValue() ) )
+
+				deep = imageA["deep"].getValue()
+				self.assertEqual( deep, imageB["deep"].getValue() )
+
+				if not deep:
+
+					difference = GafferImage.Merge()
+					difference["in"][0].setInput( imageA )
+					difference["in"][1].setInput( imageB )
+
+					unionDataWindow = imath.Box2i( dataWindowA )
+					unionDataWindow.extendBy( dataWindowB )
+					stats = GafferImage.ImageStats()
+					stats["view"].setValue( view )
+					stats["in"].setInput( difference["out"] )
+					stats["area"].setValue( unionDataWindow )
+
+					for channelName in imageA["channelNames"].getValue() :
+
+						stats["channels"].setValue( IECore.StringVectorData( [ channelName ] * 4 ) )
+
+						# It's important to always do a first test in Difference mode, which
+						# has special handling of NaN and inf values
+						difference["operation"].setValue( GafferImage.Merge.Operation.Difference )
+						self.assertLessEqual( stats["max"]["r"].getValue(), maxDifference, "Channel {0}".format( channelName ) )
+
+						# If an accepted difference range was specified, then do a second test with
+						# Subtract instead of Difference so we can tell the direction
+						if maxDifferenceRange:
+							difference["operation"].setValue( GafferImage.Merge.Operation.Subtract )
+							self.assertGreaterEqual( stats["min"]["r"].getValue(), maxDifferenceRange[0], "Channel {0}".format( channelName ) )
+							self.assertLessEqual( stats["max"]["r"].getValue(), maxDifferenceRange[1], "Channel {0}".format( channelName ) )
+					# Access the tiles, because this will throw an error if the sample offsets are bogus
+					GafferImage.ImageAlgo.tiles( imageA )
+					GafferImage.ImageAlgo.tiles( imageB )
+				else:
+					pixelDataA = GafferImage.ImageAlgo.tiles( imageA )
+					pixelDataB = GafferImage.ImageAlgo.tiles( imageB )
+					if pixelDataA != pixelDataB:
+						self.assertEqual( pixelDataA.keys(), pixelDataB.keys() )
+						self.assertEqual( pixelDataA["tileOrigins"], pixelDataB["tileOrigins"] )
+						for k in pixelDataA.keys():
+							if k == "tileOrigins":
+								continue
+							for i in range( len( pixelDataA[k] ) ):
+								if pixelDataA[k][i] != pixelDataB[k][i]:
+									tileStr = str( pixelDataA["tileOrigins"][i] )
+									self.assertEqual( len( pixelDataA[k][i] ), len( pixelDataB[k][i] ), " while checking pixel data %s : %s" % ( k, tileStr ) )
+									for j in range( len( pixelDataA[k][i] ) ):
+										self.assertEqual( pixelDataA[k][i][j], pixelDataB[k][i][j] , " while checking pixel data %s : %s at index %i" % ( k, tileStr, j ) )
 
 	## Returns an image node with an empty data window. This is useful in
 	# verifying that nodes deal correctly with such inputs.
 	def emptyImage( self ) :
 
-		image = IECoreImage.ImagePrimitive( imath.Box2i(), imath.Box2i( imath.V2i( 0 ), imath.V2i( 100 ) ) )
-		image["R"] = IECore.FloatVectorData()
-		image["G"] = IECore.FloatVectorData()
-		image["B"] = IECore.FloatVectorData()
-		image["A"] = IECore.FloatVectorData()
+		emptyCrop = GafferImage.Crop( "Crop" )
+		emptyCrop["Constant"] = GafferImage.Constant()
+		emptyCrop["Constant"]["format"].setValue( GafferImage.Format( 100, 100, 1.000 ) )
+		emptyCrop["in"].setInput( emptyCrop["Constant"]["out"] )
+		emptyCrop["area"].setValue( imath.Box2i() )
+		emptyCrop["affectDisplayWindow"].setValue( False )
 
-		result = GafferImage.ObjectToImage()
-		result["object"].setValue( image )
+		self.assertEqual( emptyCrop["out"]["dataWindow"].getValue(), imath.Box2i() )
 
-		self.assertEqual( result["out"]["dataWindow"].getValue(), imath.Box2i() )
+		return emptyCrop
 
-		return result
+	def deepImage( self ):
+		return self.DeepImage()
+
+	## Returns an image node with a set of channels that is good for testing read/write
+	def channelTestImage( self ) :
+
+		channelTestImage = GafferImage.CollectImages()
+		channelTestImage["Constant"] = GafferImage.Constant()
+		channelTestImage["Constant"]["format"].setValue( GafferImage.Format( 16, 16, 1.000 ) )
+		channelTestImage["Constant"]["Expression"] = Gaffer.Expression()
+		channelTestImage["Constant"]["Expression"].setExpression( """
+import imath
+parent["color"] = imath.Color4f( 0.5, 0.6, 0.7, 0.8 ) if context.get( "collect:layerName", "" ) != "" else imath.Color4f( 0.1, 0.2, 0.3, 0.4 )
+""" )
+
+		channelTestImage["Shuffle"] = GafferImage.Shuffle()
+		channelTestImage["Shuffle"]["shuffles"].addChild( Gaffer.ShufflePlug( "R", "Z" ) )
+		channelTestImage["Shuffle"]["shuffles"].addChild( Gaffer.ShufflePlug( "G", "ZBack" ) )
+		channelTestImage["Shuffle"]["shuffles"].addChild( Gaffer.ShufflePlug( "A", "custom" ) )
+		channelTestImage["Shuffle"]["shuffles"].addChild( Gaffer.ShufflePlug( "B", "mask" ) )
+		channelTestImage["Shuffle"]["in"].setInput( channelTestImage["Constant"]["out"] )
+
+		channelTestImage["in"].setInput( channelTestImage["Shuffle"]["out"] )
+		channelTestImage["rootLayers"].setValue( IECore.StringVectorData( [ '', 'character' ] ) )
+
+		return channelTestImage
+
+	## Convert the test image to a stereo test
+	def channelTestImageMultiView( self ) :
+
+		channelTestImageMultiView = GafferImage.CreateViews()
+		channelTestImageMultiView["views"].resize( 2 )
+		channelTestImageMultiView["views"][0]["name"].setValue( "left" )
+		channelTestImageMultiView["views"][1]["name"].setValue( "right" )
+
+		channelTestImageMultiView["TestImage"] = self.channelTestImage()
+
+		channelTestImageMultiView["DeleteChannels"] = GafferImage.DeleteChannels()
+		channelTestImageMultiView["DeleteChannels"]["in"].setInput( channelTestImageMultiView["TestImage"]["out"] )
+		channelTestImageMultiView["DeleteChannels"]["channels"].setValue( 'custom character.custom' )
+
+		channelTestImageMultiView["ImageTransform"] = GafferImage.ImageTransform()
+		channelTestImageMultiView["ImageTransform"]["in"].setInput( channelTestImageMultiView["TestImage"]["out"] )
+		channelTestImageMultiView["ImageTransform"]["transform"]["translate"]["x"].setValue( -10 )
+
+		channelTestImageMultiView["views"][0]["value"].setInput( channelTestImageMultiView["DeleteChannels"]["out"] )
+		channelTestImageMultiView["views"][1]["value"].setInput( channelTestImageMultiView["ImageTransform"]["out"] )
+
+		return channelTestImageMultiView
+
+	def assertRaisesDeepNotSupported( self, node ) :
+
+		flat = GafferImage.Constant()
+		node["in"].setInput( flat["out"] )
+
+		self.assertNotEqual( GafferImage.ImageAlgo.imageHash( flat["out"] ), GafferImage.ImageAlgo.imageHash( node["out"] ) )
+
+		deep = GafferImage.Empty()
+		node["in"].setInput( deep["out"] )
+		self.assertRaisesRegex( RuntimeError, 'Deep data not supported in input "in*', GafferImage.ImageAlgo.image, node["out"] )
+
+	@staticmethod
+	def imagesPath() :
+		return Gaffer.rootPath() / "python" / "GafferImageTest" / "images"
+
+	@staticmethod
+	def openColorIOPath() :
+		return Gaffer.rootPath() / "python" / "GafferImageTest" / "openColorIO"

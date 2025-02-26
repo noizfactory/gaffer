@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_SCRIPTNODE_H
-#define GAFFER_SCRIPTNODE_H
+#pragma once
 
 #include "Gaffer/Action.h"
 #include "Gaffer/Node.h"
@@ -46,6 +45,9 @@
 #include "Gaffer/TypedPlug.h"
 #include "Gaffer/UndoScope.h"
 
+#include "boost/container/flat_set.hpp"
+
+#include <filesystem>
 #include <functional>
 #include <stack>
 
@@ -67,7 +69,7 @@ IE_CORE_FORWARDDECLARE( StandardSet );
 IE_CORE_FORWARDDECLARE( CompoundDataPlug );
 IE_CORE_FORWARDDECLARE( StringPlug );
 
-typedef Container<GraphComponent, ScriptNode> ScriptContainer;
+using ScriptContainer = Container<GraphComponent, ScriptNode>;
 IE_CORE_DECLAREPTR( ScriptContainer );
 
 /// The ScriptNode class represents a script - that is a single collection of
@@ -77,10 +79,10 @@ class GAFFER_API ScriptNode : public Node
 
 	public :
 
-		ScriptNode( const std::string &name=defaultName<Node>() );
+		explicit ScriptNode( const std::string &name=defaultName<Node>() );
 		~ScriptNode() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::ScriptNode, ScriptNodeTypeId, Node );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::ScriptNode, ScriptNodeTypeId, Node );
 
 		/// Accepts parenting only to a ScriptContainer.
 		bool acceptsParent( const GraphComponent *potentialParent ) const override;
@@ -99,6 +101,25 @@ class GAFFER_API ScriptNode : public Node
 		const StandardSet *selection() const;
 		//@}
 
+		//! @name Focus
+		/// The ScriptNode maintains an optional, single, 'focus' node. This
+		/// may be set by the user to the node whose output they are currently
+		/// considering in their actions. This can be used by tools and scripts
+		/// as an anchor for informational displays or programmatic operations.
+		/// The focus set provides a read-only view of the focus node, primarily
+		/// for use with NodeSetEditor.setNodeSet().
+		////////////////////////////////////////////////////////////////////
+		//@{
+		using FocusChangedSignal = Signals::Signal<void ( ScriptNode *, Node * ), Signals::CatchingCombiner<void>>;
+		void setFocus( Node *node );
+		Node *getFocus();
+		const Node *getFocus() const;
+		FocusChangedSignal &focusChangedSignal();
+		Set *focusSet();
+		const Set *focusSet() const;
+		//@}
+
+
 		//! @name History and undo
 		/// Certain methods in the graph API are undoable on request.
 		/// These methods are implemented in terms of the Action class -
@@ -108,8 +129,8 @@ class GAFFER_API ScriptNode : public Node
 		/// be active while those operations are being performed.
 		////////////////////////////////////////////////////////////////////
 		//@{
-		typedef boost::signal<void ( ScriptNode *, const Action *, Action::Stage stage )> ActionSignal;
-		typedef boost::signal<void ( ScriptNode * )> UndoAddedSignal;
+		using ActionSignal = Signals::Signal<void ( ScriptNode *, const Action *, Action::Stage stage ), Signals::CatchingCombiner<void>>;
+		using UndoAddedSignal = Signals::Signal<void ( ScriptNode * ), Signals::CatchingCombiner<void>>;
 		bool undoAvailable() const;
 		void undo();
 		bool redoAvailable() const;
@@ -143,8 +164,8 @@ class GAFFER_API ScriptNode : public Node
 		void cut( Node *parent = nullptr, const Set *filter = nullptr );
 		/// Pastes the contents of the global clipboard into the script below
 		/// the specified parent. If parent is unspecified then it defaults
-		/// to the script itself. The continueOnError argument behaves as
-		/// for `execute()`.
+		/// to the script itself. Cancellation and `continueOnError` behave
+		/// as for `execute()`.
 		/// \undoable
 		void paste( Node *parent = nullptr, bool continueOnError = false );
 		/// Removes Nodes from the parent node, making sure they are
@@ -161,9 +182,15 @@ class GAFFER_API ScriptNode : public Node
 
 		//! @name Serialisation and execution
 		///
-		/// Scripts may be serialised into a string form, which will rebuild
-		/// the node network when executed. This process is used for both the
-		/// saving and loading of scripts and for the cut and paste mechanism.
+		/// Scripts may be serialised into a string form, which will rebuild the
+		/// node network when executed. This process is used for both the saving
+		/// and loading of scripts and for the cut and paste mechanism.
+		///
+		/// > Note : Cancellation is supported for both serialisation and
+		/// > execution via the usual mechanism of scoping a context containing
+		/// > an `IECore::Canceller`. If `continueOnError = True` for execution,
+		/// > cancellation is more responsive but leaves the script in an
+		/// > undefined state.
 		////////////////////////////////////////////////////////////////////
 		//@{
 		/// Returns a string which when executed will recreate the children
@@ -172,7 +199,7 @@ class GAFFER_API ScriptNode : public Node
 		/// serialised nodes to those contained in the set.
 		std::string serialise( const Node *parent = nullptr, const Set *filter = nullptr ) const;
 		/// Calls serialise() and saves the result into the specified file.
-		void serialiseToFile( const std::string &fileName, const Node *parent = nullptr, const Set *filter = nullptr ) const;
+		void serialiseToFile( const std::filesystem::path &fileName, const Node *parent = nullptr, const Set *filter = nullptr ) const;
 		/// Executes a previously generated serialisation. If continueOnError is true, then
 		/// errors are reported via IECore::MessageHandler rather than as exceptions, and
 		/// execution continues at the point after the error. This allows scripts to be loaded as
@@ -181,7 +208,7 @@ class GAFFER_API ScriptNode : public Node
 		/// were ignored.
 		bool execute( const std::string &serialisation, Node *parent = nullptr, bool continueOnError = false );
 		/// As above, but loads the serialisation from the specified file.
-		bool executeFile( const std::string &fileName, Node *parent = nullptr, bool continueOnError = false );
+		bool executeFile( const std::filesystem::path &fileName, Node *parent = nullptr, bool continueOnError = false );
 		/// Returns true if a script is currently being executed. Note that
 		/// `execute()`, `executeFile()`, `load()`, `importFile()` and `paste()` are all
 		/// sources of execution, and there is intentionally no way of
@@ -200,15 +227,16 @@ class GAFFER_API ScriptNode : public Node
 		BoolPlug *unsavedChangesPlug();
 		const BoolPlug *unsavedChangesPlug() const;
 		/// Loads the script specified in the filename plug.
-		/// See execute() for a description of the continueOnError argument
-		/// and the return value.
+		/// See execution section for a description of cancellation,
+		/// the `continueOnError` argument and the return value.
 		bool load( bool continueOnError = false );
 		/// Saves the script to the file specified by the filename plug.
+		/// See serialisation section for a description of cancellation.
 		void save() const;
 		/// Imports the nodes from the specified script, adding them to
 		/// the contents of this script. See `execute()` for a description
 		/// of the continueOnError argument and the return value.
-		bool importFile( const std::string &fileName, Node *parent = nullptr, bool continueOnError = false );
+		bool importFile( const std::filesystem::path &fileName, Node *parent = nullptr, bool continueOnError = false );
 		//@}
 
 		//! @name Computation context
@@ -273,6 +301,14 @@ class GAFFER_API ScriptNode : public Node
 		bool selectionSetAcceptor( const Set *s, const Set::Member *m );
 		StandardSetPtr m_selection;
 
+		// Focus
+		// =====
+
+		class FocusSet;
+		IE_CORE_DECLAREPTR( FocusSet );
+		FocusSetPtr m_focus;
+		FocusChangedSignal m_focusChangedSignal;
+
 		// Actions and undo
 		// ================
 
@@ -287,9 +323,12 @@ class GAFFER_API ScriptNode : public Node
 		void addAction( ActionPtr action );
 		void popUndoState();
 
-		typedef std::stack<UndoScope::State> UndoStateStack;
-		typedef std::list<CompoundActionPtr> UndoList;
-		typedef UndoList::iterator UndoIterator;
+		// Called by undo/redo to cleanup after action stage
+		void postActionStageCleanup();
+
+		using UndoStateStack = std::stack<UndoScope::State>;
+		using UndoList = std::list<CompoundActionPtr>;
+		using UndoIterator = UndoList::iterator;
 
 		ActionSignal m_actionSignal;
 		UndoAddedSignal m_undoAddedSignal;
@@ -305,8 +344,8 @@ class GAFFER_API ScriptNode : public Node
 		std::string serialiseInternal( const Node *parent, const Set *filter ) const;
 		bool executeInternal( const std::string &serialisation, Node *parent, bool continueOnError, const std::string &context = "" );
 
-		typedef std::function<std::string ( const Node *, const Set * )> SerialiseFunction;
-		typedef std::function<bool ( ScriptNode *, const std::string &, Node *, bool, const std::string &context )> ExecuteFunction;
+		using SerialiseFunction = std::function<std::string ( const Node *, const Set * )>;
+		using ExecuteFunction = std::function<bool ( ScriptNode *, const std::string &, Node *, bool, const std::string & )>;
 
 		// Actual implementations reside in libGafferBindings (due to Python
 		// dependency), and are injected into these functions.
@@ -320,7 +359,11 @@ class GAFFER_API ScriptNode : public Node
 		// =================
 
 		ContextPtr m_context;
+		// The names of variables that we have added to `m_context`
+		// from `variablesPlug()`.
+		boost::container::flat_set<IECore::InternedString> m_currentVariables;
 
+		void updateContextVariables();
 		void plugSet( Plug *plug );
 		void contextChanged( const Context *context, const IECore::InternedString &name );
 
@@ -331,5 +374,3 @@ class GAFFER_API ScriptNode : public Node
 IE_CORE_DECLAREPTR( ScriptNode );
 
 } // namespace Gaffer
-
-#endif // GAFFER_SCRIPTNODE_H

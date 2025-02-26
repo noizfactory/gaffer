@@ -50,6 +50,8 @@
 #include "IECorePython/RunTimeTypedBinding.h"
 #include "IECorePython/ExceptionAlgo.h"
 
+#include <filesystem>
+
 using namespace boost::python;
 using namespace IECorePython;
 using namespace Gaffer;
@@ -103,8 +105,17 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 		{
 		}
 
+		// Caution : In the overrides below, we pass `canceller` to Python via
+		// `boost::python::ptr()`. This produces a Python object which
+		// references `canceller` directly. We can't guarantee the lifetime of
+		// `canceller` beyond the function call,  but we can't stop a Python
+		// override from storing the Python object outside that scope, after
+		// which any accesses will crash. Our only advice is "don't do that",
+		// which seems fairly reasonable given that the only expected use is
+		// to call `IECore.Canceller.check( canceller )` within the override
+		// itself.
 
-		bool isValid() const override
+		bool isValid( const IECore::Canceller *canceller = nullptr ) const override
 		{
 			if( this->isSubclassed() )
 			{
@@ -114,18 +125,18 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 					boost::python::object f = this->methodOverride( "isValid" );
 					if( f )
 					{
-						return f();
+						return f( boost::python::ptr( canceller ) );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
-			return WrappedType::isValid();
+			return WrappedType::isValid( canceller );
 		}
 
-		bool isLeaf() const override
+		bool isLeaf( const IECore::Canceller *canceller = nullptr ) const override
 		{
 			if( this->isSubclassed() )
 			{
@@ -135,18 +146,18 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 					boost::python::object f = this->methodOverride( "isLeaf" );
 					if( f )
 					{
-						return f();
+						return f( boost::python::ptr( canceller ) );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
-			return WrappedType::isLeaf();
+			return WrappedType::isLeaf( canceller );
 		}
 
-		void propertyNames( std::vector<IECore::InternedString> &names ) const override
+		void propertyNames( std::vector<IECore::InternedString> &names, const IECore::Canceller *canceller = nullptr ) const override
 		{
 			if( this->isSubclassed() )
 			{
@@ -156,8 +167,8 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 					boost::python::object f = this->methodOverride( "propertyNames" );
 					if( f )
 					{
-						WrappedType::propertyNames( names );
-						boost::python::list pythonNames = extract<boost::python::list>( f() );
+						WrappedType::propertyNames( names, canceller  );
+						boost::python::list pythonNames = extract<boost::python::list>( f( boost::python::ptr( canceller ) ) );
 						boost::python::container_utils::extend_container( names, pythonNames );
 						return;
 					}
@@ -171,15 +182,15 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 						return;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
-			WrappedType::propertyNames( names );
+			WrappedType::propertyNames( names, canceller  );
 		}
 
-		IECore::ConstRunTimeTypedPtr property( const IECore::InternedString &name ) const override
+		IECore::ConstRunTimeTypedPtr property( const IECore::InternedString &name, const IECore::Canceller *canceller = nullptr ) const override
 		{
 			if( this->isSubclassed() )
 			{
@@ -189,7 +200,7 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 					boost::python::object f = this->methodOverride( "property" );
 					if( f )
 					{
-						return extract<IECore::ConstRunTimeTypedPtr>( f( name.c_str() ) );
+						return extract<IECore::ConstRunTimeTypedPtr>( f( name.c_str(), boost::python::ptr( canceller ) ) );
 					}
 					// fall back to emulating properties using the deprecated python info() method.
 					f = this->methodOverride( "info" );
@@ -204,12 +215,12 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 						return nullptr;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
-			return WrappedType::property( name );
+			return WrappedType::property( name, canceller );
 		}
 
 		PathPtr copy() const override
@@ -229,7 +240,7 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 						throw IECore::Exception( "Path.copy() not implemented." );
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
@@ -237,7 +248,49 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 			return WrappedType::copy();
 		}
 
-		void doChildren( std::vector<PathPtr> &children ) const override
+		const Plug *cancellationSubject() const override
+		{
+			if( this->isSubclassed() )
+			{
+				IECorePython::ScopedGILLock gilLock;
+				try
+				{
+					boost::python::object f = this->methodOverride( "cancellationSubject" );
+					if( f )
+					{
+						return extract<Plug *>( f() );
+					}
+				}
+				catch( const error_already_set & )
+				{
+					ExceptionAlgo::translatePythonException();
+				}
+			}
+			return WrappedType::cancellationSubject();
+		}
+
+		ContextPtr inspectionContext( const IECore::Canceller *canceller = nullptr ) const override
+		{
+			if( this->isSubclassed() )
+			{
+				IECorePython::ScopedGILLock gilLock;
+				try
+				{
+					boost::python::object f = this->methodOverride( "inspectionContext" );
+					if( f )
+					{
+						return extract<ContextPtr>( f( boost::python::ptr( canceller ) ) );
+					}
+				}
+				catch( const error_already_set & )
+				{
+					ExceptionAlgo::translatePythonException();
+				}
+			}
+			return WrappedType::inspectionContext();
+		}
+
+		void doChildren( std::vector<PathPtr> &children, const IECore::Canceller *canceller = nullptr ) const override
 		{
 			if( this->isSubclassed() )
 			{
@@ -247,17 +300,17 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 					boost::python::object f = this->methodOverride( "_children" );
 					if( f )
 					{
-						list l = extract<list>( f() );
+						list l = extract<list>( f( boost::python::ptr( canceller ) ) );
 						boost::python::container_utils::extend_container( children, l );
 						return;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
 			}
-			WrappedType::doChildren( children );
+			WrappedType::doChildren( children, canceller );
 		}
 
 		void pathChangedSignalCreated() override
@@ -274,7 +327,7 @@ class PathWrapper : public IECorePython::RunTimeTypedWrapper<WrappedType>
 						return;
 					}
 				}
-				catch( const error_already_set &e )
+				catch( const error_already_set & )
 				{
 					ExceptionAlgo::translatePythonException();
 				}
@@ -296,10 +349,10 @@ const char *rootWrapper( Path &p )
 	return p.root().c_str();
 }
 
-list childrenWrapper( Path &p )
+list childrenWrapper( Path &p, const IECore::Canceller *canceller )
 {
 	std::vector<PathPtr> c;
-	p.children( c );
+	p.children( c, canceller );
 	list result;
 	for( std::vector<PathPtr>::const_iterator it = c.begin(), eIt = c.end(); it != eIt; ++it )
 	{
@@ -344,7 +397,7 @@ list getSlice( Path &p, boost::python::slice s )
 	const Path::Names &items = p.names();
 
 	Py_ssize_t start, stop, step, length;
-	if( PySlice_GetIndicesEx( (PySliceObject *)s.ptr(), items.size(), &start, &stop, &step, &length ) )
+	if( PySlice_GetIndicesEx( s.ptr(), items.size(), &start, &stop, &step, &length ) )
 	{
 		boost::python::throw_error_already_set();
 	}
@@ -360,7 +413,7 @@ list getSlice( Path &p, boost::python::slice s )
 void setSlice( Path &p, boost::python::slice s, boost::python::list l )
 {
 	Py_ssize_t start, stop, step, length;
-	if( PySlice_GetIndicesEx( (PySliceObject *)s.ptr(), p.names().size(), &start, &stop, &step, &length ) )
+	if( PySlice_GetIndicesEx( s.ptr(), p.names().size(), &start, &stop, &step, &length ) )
 	{
 		boost::python::throw_error_already_set();
 	}
@@ -389,7 +442,7 @@ void delItem( Path &p, long index )
 void delSlice( Path &p, boost::python::slice s )
 {
 	Py_ssize_t start, stop, step, length;
-	if( PySlice_GetIndicesEx( (PySliceObject *)s.ptr(), p.names().size(), &start, &stop, &step, &length ) )
+	if( PySlice_GetIndicesEx( s.ptr(), p.names().size(), &start, &stop, &step, &length ) )
 	{
 		boost::python::throw_error_already_set();
 	}
@@ -399,10 +452,9 @@ void delSlice( Path &p, boost::python::slice s )
 
 struct PathChangedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, PathPtr p )
+	void operator()( boost::python::object slot, PathPtr p )
 	{
 		slot( p );
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -413,11 +465,81 @@ PathFilterPtr createStandardFilter( object pythonExtensions, const std::string &
 	return FileSystemPath::createStandardFilter( extensions, extensionsLabel, includeSequences );
 }
 
+// Interoperability between `std::filesystem::path` and `pathlib.Path`
+
+struct StdPathFromPathlibPath
+{
+
+	StdPathFromPathlibPath()
+	{
+		boost::python::converter::registry::push_back(
+			&convertible,
+			&construct,
+			boost::python::type_id<std::filesystem::path>()
+		);
+	}
+
+	static void *convertible( PyObject *obj )
+	{
+		if( PyUnicode_Check( obj ) )
+		{
+			return obj;
+		}
+
+		object pathlibPathClass = import( "pathlib" ).attr( "Path" );
+		if( PyObject_IsInstance( obj, pathlibPathClass.ptr() ) )
+		{
+			return obj;
+		}
+
+		return nullptr;
+	}
+
+	static void construct( PyObject *obj, boost::python::converter::rvalue_from_python_stage1_data *data )
+	{
+		void *storage = ( ( converter::rvalue_from_python_storage<std::filesystem::path> * ) data )->storage.bytes;
+		std::filesystem::path *path = new( storage ) std::filesystem::path;
+		data->convertible = storage;
+
+		object o( handle<>( borrowed( obj ) ) );
+		if( !PyUnicode_Check( obj ) )
+		{
+			o = o.attr( "__str__" )();
+		}
+		const std::string s = extract<std::string>( o );
+		*path = s;
+	}
+
+};
+
+struct StdPathToPathlibPath
+{
+	static PyObject *convert( const std::filesystem::path &path )
+	{
+		const std::string s = path.string();
+		object result;
+		if( s.empty() )
+		{
+			// This is highly unsatisfactory - `pathlib.Path` has no way of
+			// representing an empty path, so the best we can do is to return
+			// `None`.
+			result = object();
+		}
+		else
+		{
+			result = import( "pathlib" ).attr( "Path" )( s );
+		}
+		Py_INCREF( result.ptr() );
+		return result.ptr();
+	}
+};
+
+
 } // namespace
 
 void GafferModule::bindPath()
 {
-	typedef PathWrapper<Path> Wrapper;
+	using Wrapper = PathWrapper<Path>;
 
 	{
 		scope s = PathClass<Path, Wrapper>()
@@ -445,7 +567,7 @@ void GafferModule::bindPath()
 			.def( "root", &rootWrapper )
 			.def( "isEmpty", &Path::isEmpty )
 			.def( "parent", &Path::parent )
-			.def( "children", &childrenWrapper )
+			.def( "children", &childrenWrapper, arg( "canceller" ) = object() )
 			.def( "setFilter", &Path::setFilter )
 			.def( "getFilter", (PathFilter *(Path::*)())&Path::getFilter, return_value_policy<CastToIntrusivePtr>() )
 			.def( "pathChangedSignal", &Path::pathChangedSignal, return_internal_reference<1>() )
@@ -453,6 +575,7 @@ void GafferModule::bindPath()
 			.def( "setFromString", &Path::setFromString, return_self<>() )
 			.def( "append", &Path::append, return_self<>() )
 			.def( "truncateUntilValid", &Path::truncateUntilValid, return_self<>() )
+			.def( "inspectionContext", &Path::inspectionContext, ( arg_( "path" ), arg_( "canceller" ) = object() ) )
 			.def( "__str__", &Path::string )
 			.def( "__repr__", &pathRepr )
 			.def( "__len__", &pathLength )
@@ -481,6 +604,13 @@ void GafferModule::bindPath()
 			) )
 		)
 		.def(
+			init<const std::filesystem::path &, PathFilterPtr, bool>( (
+				arg( "path" ),
+				arg( "filter" ) = object(),
+				arg( "includeSequences" ) = false
+			) )
+		)
+		.def(
 			init<const std::string &, PathFilterPtr, bool>( (
 				arg( "path" ),
 				arg( "filter" ) = object(),
@@ -497,7 +627,12 @@ void GafferModule::bindPath()
 				arg( "includeSequenceFilter" ) = false
 			)
 		)
+		.def( "nativeString", &FileSystemPath::nativeString )
+		.def( "standardPath", &FileSystemPath::standardPath )
 		.staticmethod( "createStandardFilter" )
 	;
+
+	StdPathFromPathlibPath();
+	to_python_converter<std::filesystem::path, StdPathToPathlibPath>();
 
 }

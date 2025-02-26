@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_DELETEOPTIONS_H
-#define GAFFERSCENE_DELETEOPTIONS_H
+#pragma once
 
 #include "GafferScene/DeleteGlobals.h"
 
@@ -47,10 +46,10 @@ class GAFFERSCENE_API DeleteOptions : public DeleteGlobals
 
 	public :
 
-		DeleteOptions( const std::string &name=defaultName<DeleteOptions>() );
+		explicit DeleteOptions( const std::string &name=defaultName<DeleteOptions>() );
 		~DeleteOptions() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeleteOptions, DeleteOptionsTypeId, DeleteGlobals );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeleteOptions, DeleteOptionsTypeId, DeleteGlobals );
 
 	protected :
 
@@ -61,5 +60,3 @@ class GAFFERSCENE_API DeleteOptions : public DeleteGlobals
 IE_CORE_DECLAREPTR( DeleteOptions );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETEOPTIONS_H

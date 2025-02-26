@@ -43,7 +43,9 @@
 
 #include "IECore/AngleConversion.h"
 
-#include "OpenEXR/ImathFun.h"
+#include "Imath/ImathFun.h"
+
+#include "fmt/format.h"
 
 using namespace std;
 using namespace Imath;
@@ -52,21 +54,17 @@ using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( MapProjection );
+GAFFER_NODE_DEFINE_TYPE( MapProjection );
 
 size_t MapProjection::g_firstPlugIndex = 0;
 
 MapProjection::MapProjection( const std::string &name )
-	:	SceneElementProcessor( name )
+	:	ObjectProcessor( name, PathMatcher::EveryMatch )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new StringPlug( "camera" ) );
+	addChild( new StringPlug( "position", Plug::In, "P" ) );
 	addChild( new StringPlug( "uvSet", Plug::In, "uv" ) );
-
-	// Fast pass-throughs for things we don't modify
-	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
 }
 
 MapProjection::~MapProjection()
@@ -83,37 +81,41 @@ const Gaffer::StringPlug *MapProjection::cameraPlug() const
 	return getChild<StringPlug>( g_firstPlugIndex );
 }
 
-Gaffer::StringPlug *MapProjection::uvSetPlug()
+Gaffer::StringPlug *MapProjection::positionPlug()
 {
 	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
+const Gaffer::StringPlug *MapProjection::positionPlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
+Gaffer::StringPlug *MapProjection::uvSetPlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 2 );
 }
 
 const Gaffer::StringPlug *MapProjection::uvSetPlug() const
 {
-	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+	return getChild<StringPlug>( g_firstPlugIndex + 2 );
 }
 
-void MapProjection::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+bool MapProjection::affectsProcessedObject( const Gaffer::Plug *input ) const
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if(
+	return
+		ObjectProcessor::affectsProcessedObject( input ) ||
 		input == cameraPlug() ||
+		input == positionPlug() ||
 		input == uvSetPlug() ||
 		input == inPlug()->transformPlug()
-	)
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
-}
-
-bool MapProjection::processesObject() const
-{
-	return true;
+	;
 }
 
 void MapProjection::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
+	ObjectProcessor::hashProcessedObject( path, context, h );
+
 	ScenePath cameraPath;
 	ScenePlug::stringToPath( cameraPlug()->getValue(), cameraPath );
 
@@ -121,22 +123,40 @@ void MapProjection::hashProcessedObject( const ScenePath &path, const Gaffer::Co
 	h.append( inPlug()->transformHash( cameraPath ) );
 
 	inPlug()->transformPlug()->hash( h );
+	positionPlug()->hash( h );
 	uvSetPlug()->hash( h );
 }
 
-IECore::ConstObjectPtr MapProjection::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr MapProjection::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
 	// early out if it's not a primitive with a "P" variable
-	const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject.get() );
+	const Primitive *inputPrimitive = runTimeCast<const Primitive>( inputObject );
 	if( !inputPrimitive )
 	{
 		return inputObject;
 	}
 
-	const V3fVectorData *pData = inputPrimitive->variableData<V3fVectorData>( "P" );
-	if( !pData )
+	const string position = positionPlug()->getValue();
+	if( position.empty() )
 	{
 		return inputObject;
+	}
+
+	auto pIt = inputPrimitive->variables.find( position );
+	if( pIt == inputPrimitive->variables.end() )
+	{
+		return inputObject;
+	}
+
+	const PrimitiveVariable &pPrimVar = pIt->second;
+	const V3fVectorData *pData = runTimeCast<V3fVectorData>( pPrimVar.data.get() );
+	if( !pData )
+	{
+		string pathString; ScenePlug::pathToString( path, pathString );
+		throw IECore::Exception( fmt::format(
+			"Position primitive variable \"{}\" on object \"{}\" should be V3fVectorData (but is {})",
+			position, pathString, pPrimVar.data->typeName()
+		) );
 	}
 
 	// early out if the uv set name hasn't been provided
@@ -184,7 +204,10 @@ IECore::ConstObjectPtr MapProjection::computeProcessedObject( const ScenePath &p
 	V2fVectorDataPtr uvData = new V2fVectorData();
 	uvData->setInterpretation( GeometricData::UV );
 
-	result->variables[uvSet] = PrimitiveVariable( PrimitiveVariable::Vertex, uvData );
+	result->variables[uvSet] = PrimitiveVariable(
+		pPrimVar.interpolation, uvData,
+		pPrimVar.indices ? pPrimVar.indices->copy() : nullptr
+	);
 
 	const vector<V3f> &p = pData->readable();
 	vector<V2f> &uv = uvData->writable();

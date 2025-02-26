@@ -35,7 +35,7 @@
 ##########################################################################
 
 import os
-import subprocess32 as subprocess
+import subprocess
 import unittest
 
 import IECore
@@ -49,32 +49,35 @@ class SystemCommandTest( GafferTest.TestCase ) :
 	def test( self ) :
 
 		n = GafferDispatch.SystemCommand()
-		n["command"].setValue( "touch " + self.temporaryDirectory() + "/systemCommandTest.txt" )
+		n["command"].setValue( "echo 1 > {}".format( ( self.temporaryDirectory() / "systemCommandTest.txt" ).as_posix() ) )
 
 		n["task"].execute()
 
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/systemCommandTest.txt" ) )
+		self.assertTrue( ( self.temporaryDirectory() / "systemCommandTest.txt" ).is_file() )
 
 	def testEnvironmentVariables( self ) :
 
 		n = GafferDispatch.SystemCommand()
-		n["command"].setValue( "env > " + self.temporaryDirectory() + "/systemCommandTest.txt" )
+		if os.name != "nt" :
+			n["command"].setValue( "env > {}".format( self.temporaryDirectory() / "systemCommandTest.txt" ) )
+		else :
+			n["command"].setValue( " set > {}".format( ( self.temporaryDirectory() / "systemCommandTest.txt" ).as_posix() ) )
 		n["environmentVariables"].addChild( Gaffer.NameValuePlug( "GAFFER_SYSTEMCOMMAND_TEST", IECore.StringData( "test" ) ) )
 
 		n["task"].execute()
 
-		env = "".join( open( self.temporaryDirectory() + "/systemCommandTest.txt" ).readlines() )
+		env = "".join( open( self.temporaryDirectory() / "systemCommandTest.txt", encoding = "utf-8" ).readlines() )
 		self.assertTrue( "GAFFER_SYSTEMCOMMAND_TEST=test" in env )
 
 	def testSubstitutions( self ) :
 
 		n = GafferDispatch.SystemCommand()
-		n["command"].setValue( "echo {adjective} {noun} > " + self.temporaryDirectory() + "/systemCommandTest.txt" )
+		n["command"].setValue( "echo {adjective} {noun}> " + ( self.temporaryDirectory() / "systemCommandTest.txt" ).as_posix() )
 		n["substitutions"].addChild( Gaffer.NameValuePlug( "adjective", IECore.StringData( "red" ) ) )
 		n["substitutions"].addChild( Gaffer.NameValuePlug( "noun", IECore.StringData( "truck" ) ) )
 
 		n["task"].execute()
-		self.assertEqual( "red truck\n", open( self.temporaryDirectory() + "/systemCommandTest.txt" ).readlines()[0] )
+		self.assertEqual( "red truck\n", open( self.temporaryDirectory() / "systemCommandTest.txt", encoding = "utf-8" ).readlines()[0] )
 
 	def testHash( self ) :
 
@@ -103,16 +106,17 @@ class SystemCommandTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 
 		s["n"] = GafferDispatch.SystemCommand()
-		s["n"]["command"].setValue( "touch " + self.temporaryDirectory() + "/systemCommandTest.####.txt" )
+		s["n"]["command"].setValue( "echo 1 > {}".format( ( self.temporaryDirectory() / "systemCommandTest.####.txt" ).as_posix() ) )
 
-		d = GafferDispatch.LocalDispatcher()
-		d["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
-		d["framesMode"].setValue( d.FramesMode.CustomRange )
-		d["frameRange"].setValue( "1-10" )
+		s["d"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
+		s["d"]["framesMode"].setValue( s["d"].FramesMode.CustomRange )
+		s["d"]["frameRange"].setValue( "1-10" )
 
-		d.dispatch( [ s["n"] ] )
+		s["d"]["task"].execute()
 
-		sequences = IECore.ls( self.temporaryDirectory() )
+		sequences = IECore.ls( str( self.temporaryDirectory() ) )
 		self.assertEqual( len( sequences ), 1 )
 		self.assertEqual( str( sequences[0] ), "systemCommandTest.####.txt 1-10" )
 
@@ -125,18 +129,25 @@ class SystemCommandTest( GafferTest.TestCase ) :
 		self.assertEqual( s["n"]["shell"].getValue(), True )
 
 		# The following command is only valid when interpreted as a shell command
-		s["n"]["command"].setValue( "date | wc -l" )
+		if os.name != "nt" :
+			s["n"]["command"].setValue( "date | wc -l" )
+		else :
+			s["n"]["command"].setValue( "set" )
 
 		s["n"].execute()
 
 		s["n"]["shell"].setValue( False )
 
-		with self.assertRaises( subprocess.CalledProcessError ) :
-			s["n"].execute()
+		if os.name != "nt" :
+			with self.assertRaises( subprocess.CalledProcessError ) :
+				s["n"].execute()
+		else :
+			with self.assertRaises( FileNotFoundError ) :
+				s["n"].execute()
 
 	def testEmptyCommand( self ) :
 
-		c = Gaffer.SystemCommand()
+		c = GafferDispatch.SystemCommand()
 		self.assertEqual( c["command"].getValue(), "" )
 		self.assertEqual( c["task"].hash(), IECore.MurmurHash() )
 

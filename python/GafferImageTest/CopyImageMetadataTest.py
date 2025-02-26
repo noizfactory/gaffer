@@ -46,7 +46,7 @@ import GafferImageTest
 
 class CopyImageMetadataTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def test( self ) :
 
@@ -159,7 +159,7 @@ class CopyImageMetadataTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( i["out"]["dataWindow"].getValue(), m["out"]["dataWindow"].getValue() )
 		self.assertEqual( i["out"]["channelNames"].getValue(), m["out"]["channelNames"].getValue() )
 
-		context = Gaffer.Context()
+		context = Gaffer.Context( Gaffer.Context.current() )
 		context["image:tileOrigin"] = imath.V2i( 0 )
 		with context :
 			for c in [ "G", "B", "A" ] :

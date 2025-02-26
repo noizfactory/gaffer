@@ -65,7 +65,7 @@ void ScaleHandle::setAxes( Style::Axes axes )
 	}
 
 	m_axes = axes;
- 	requestRender();
+	dirty( DirtyType::Render );
 }
 
 Style::Axes ScaleHandle::getAxes() const
@@ -96,32 +96,45 @@ Imath::V3i ScaleHandle::axisMask() const
 	}
 }
 
-Imath::V3f ScaleHandle::scaling( const DragDropEvent &event ) const
+Imath::V3f ScaleHandle::scaling( const DragDropEvent &event )
 {
 	float scale = 1;
 
 	if( m_axes != Style::XYZ )
 	{
-		scale = ( m_drag.position( event ) / m_drag.startPosition() - 1 );
+		// When performing per-axis scale, the user has clicked and dragged a
+		// handle. This means the start position is far enough away from the
+		// origin that we can treat the click point as scale=1 and the gadget's
+		// origin as scale=0.
+		scale = m_drag.updatedPosition( event ) / m_drag.startPosition() - 1;
 	}
 	else
 	{
-		const ViewportGadget *viewport = ancestor<ViewportGadget>();
-		const V2f p = viewport->gadgetToRasterSpace( event.line.p1, this );
-		scale = ( p.x - m_uniformDragStartPosition.x ) / (float)viewport->getViewport().x;
-		scale *= 3;
+		// When performing uniform scales, the handle is at the origin, so the
+		// pattern we use above gets very twitchy. We instead need to treat the
+		// click point as scale=1 and relative movement in +ve x as a scale
+		// increase and anything in -ve x as a scale decrease. Coordinates are in
+		// gadget-space, which does not scale by camera position. Normalize
+		// by `rasterScaleFactor()` to prevent very large scaling when zoomed out
+		// and small scaling when zoomed in.
+		//
+		// Note that using `rasterScaleFactor()` here works as long as the handle
+		// transform is uniform, which is currently all cases. If that changes,
+		// a more sophisticated scale factor may need to be used.
+		scale = ( m_drag.updatedPosition( event ) - m_drag.startPosition() ) / rasterScaleFactor().x;
+		if( scale < 0 )
+		{
+			scale = ( 1.f / ( 1.f - scale ) ) - 1.f;
+		}
 	}
 
-	// snap to integers
+	// snap
 	if( event.modifiers & ButtonEvent::Control )
 	{
-		scale = std::round( scale );
-	}
-
-	// precision mode
-	if( event.modifiers & ButtonEvent::Shift )
-	{
-		scale *= 0.1;
+		// Offset such that it behaves like round not floor.
+		const float snapIncrement = event.modifiers & ButtonEvent::Shift ? 0.1f : 1.0f;
+		const float snapOffset = snapIncrement * 0.5f;
+		scale = scale - fmodf( scale - snapOffset, snapIncrement ) + snapOffset;
 	}
 
 	scale = 1 + scale;
@@ -177,9 +190,7 @@ void ScaleHandle::dragBegin( const DragDropEvent &event )
 		case Style::YZ :
 			m_drag = LinearDrag( this, LineSegment3f( V3f( 0 ), V3f( 0, 1, 1 ) ), event );
 			break;
-		case Style::XYZ : {
-			const ViewportGadget *viewport = ancestor<ViewportGadget>();
-			m_uniformDragStartPosition = viewport->gadgetToRasterSpace( event.line.p1, this );
-		}
+		case Style::XYZ :
+			m_drag = LinearDrag( this, V2f( 1, 0 ), event );
 	}
 }

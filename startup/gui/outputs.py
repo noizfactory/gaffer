@@ -35,6 +35,8 @@
 #
 ##########################################################################
 
+import os
+
 import IECore
 import IECoreScene
 
@@ -52,6 +54,7 @@ GafferScene.Outputs.registerOutput(
 		"ieDisplay",
 		"rgba",
 		{
+			"catalogue:imageName" : "Image",
 			"driverType" : "ClientDisplayDriver",
 			"displayHost" : "localhost",
 			"displayPort" : "${image:catalogue:port}",
@@ -64,7 +67,7 @@ GafferScene.Outputs.registerOutput(
 GafferScene.Outputs.registerOutput(
 	"Batch/Beauty",
 	IECoreScene.Output(
-		"${project:rootDirectory}/renders/${script:name}/beauty/beauty.####.exr",
+		"${project:rootDirectory}/renders/${script:name}/${renderPass}/beauty/beauty.####.exr",
 		"exr",
 		"rgba",
 		{
@@ -82,6 +85,7 @@ with IECore.IgnoredExceptions( ImportError ) :
 	import GafferArnold
 
 	for aov in [
+		"beauty",
 		"direct",
 		"indirect",
 		"emission",
@@ -111,36 +115,61 @@ with IECore.IgnoredExceptions( ImportError ) :
 		"volume_direct",
 		"volume_indirect",
 		"volume_albedo",
-		"light_groups",
+		"motionvector",
+		"normal",
+		"depth",
 	] :
 
 		label = aov.replace( "_", " " ).title().replace( " ", "_" )
+		if aov == "beauty":
+			data = "rgba"
+		elif aov == "depth":
+			data = "float Z"
+		elif aov == "normal":
+			data = "color N"
+		else:
+			data = "color " + aov
 
-		data = aov
-		if data == "light_groups":
-			data = "RGBA_*"
+		if aov == "motionvector" :
+			parameters = {
+				"filter" : "closest"
+			}
+		else :
+			parameters = {}
+
+		if aov == "depth":
+			parameters["layerName"] = "Z"
+
+		if aov not in { "motionvector", "emission", "background" } :
+			parameters["layerPerLightGroup"] = False
+
+		interactiveParameters = parameters.copy()
+		interactiveParameters.update(
+			{
+				"driverType" : "ClientDisplayDriver",
+				"displayHost" : "localhost",
+				"displayPort" : "${image:catalogue:port}",
+				"remoteDisplayType" : "GafferImage::GafferDisplayDriver",
+			}
+		)
 
 		GafferScene.Outputs.registerOutput(
 			"Interactive/Arnold/" + label,
 			IECoreScene.Output(
 				aov,
 				"ieDisplay",
-				"color " + data,
-				{
-					"driverType" : "ClientDisplayDriver",
-					"displayHost" : "localhost",
-					"displayPort" : "${image:catalogue:port}",
-					"remoteDisplayType" : "GafferImage::GafferDisplayDriver",
-				}
+				data,
+				interactiveParameters
 			)
 		)
 
 		GafferScene.Outputs.registerOutput(
 			"Batch/Arnold/" + label,
 			IECoreScene.Output(
-				"${project:rootDirectory}/renders/${script:name}/%s/%s.####.exr" % ( aov, aov ),
+				"${project:rootDirectory}/renders/${script:name}/${renderPass}/%s/%s.####.exr" % ( aov, aov ),
 				"exr",
-				"color " + data,
+				data,
+				parameters,
 			)
 		)
 
@@ -152,99 +181,265 @@ with IECore.IgnoredExceptions( ImportError ) :
 	# and we won't add any unnecessary output definitions.
 	import GafferDelight
 
-	for aov in [
-		"diffuse",
-		"subsurface",
-		"reflection",
-		"refraction",
-		"incandescence",
-	] :
+	# Should be kept up to date with
+	# https://gitlab.com/3Delight/3delight-for-houdini/-/blob/master/ui/aov.cpp
+	# See `contrib/scripts/3delightOutputs.py` in this repository for a helper script.
 
-		label = aov.title()
+	for name, displayName, source, dataType in [
+		( "rgba", "Beauty", "", "" ),
+		( "Ci", "Ci", "shader", "color" ),
+		( "Ci.direct", "Ci (direct)", "shader", "color" ),
+		( "Ci.indirect", "Ci (indirect)", "shader", "color" ),
+		( "diffuse", "Diffuse", "shader", "color" ),
+		( "diffuse.direct", "Diffuse (direct)", "shader", "color" ),
+		( "diffuse.indirect", "Diffuse (indirect)", "shader", "color" ),
+		( "hair", "Hair and Fur", "shader", "color" ),
+		( "subsurface", "Subsurface Scattering", "shader", "color" ),
+		( "reflection", "Reflection", "shader", "color" ),
+		( "reflection.direct", "Reflection (direct)", "shader", "color" ),
+		( "reflection.indirect", "Reflection (indirect)", "shader", "color" ),
+		( "refraction", "Refraction", "shader", "color" ),
+		( "volume", "Volume Scattering", "shader", "color" ),
+		( "volume.direct", "Volume Scattering (direct)", "shader", "color" ),
+		( "volume.indirect", "Volume Scattering (indirect)", "shader", "color" ),
+		( "incandescence", "Incandescence", "shader", "color" ),
+		( "toon_base", "Toon Base", "shader", "color" ),
+		( "toon_diffuse", "Toon Diffuse", "shader", "color" ),
+		( "toon_specular", "Toon Specular", "shader", "color" ),
+		( "toon_matte", "Toon Matte", "shader", "color" ),
+		( "toon_tint", "Toon Tint", "shader", "color" ),
+		( "outlines", "Outlines", "shader", "quad" ),
+		( "albedo", "Albedo", "shader", "color" ),
+		( "z", "Z (depth)", "builtin", "float" ),
+		( "P.camera", "Camera Space Position", "builtin", "point" ),
+		( "N.camera", "Camera Space Normal", "builtin", "point" ),
+		( "P.world", "World Space Position", "builtin", "point" ),
+		( "N.world", "World Space Normal", "builtin", "point" ),
+		( "Pref", "Reference Position", "attribute", "point" ),
+		( "shadow_mask", "Shadow Mask", "shader", "color" ),
+		( "st", "UV", "attribute", "point" ),
+		( "id.geometry", "Geometry Cryptomatte", "builtin", "float" ),
+		( "id.scenepath", "Scene Path Cryptomatte", "builtin", "float" ),
+		( "id.surfaceshader", "Surface Shader Cryptomatte", "builtin", "float" ),
+		( "relighting_multiplier", "Relighting Multiplier", "shader", "color" ),
+		( "relighting_reference", "Relighting Reference", "shader", "color" ),
+		( "motionvector", "Motion Vector", "builtin", "point" ),
+		( "occlusion", "Ambient Occlusion", "shader", "color" ),
+	] :
+		if name == "rgba" :
+			space = ""
+			separator = ""
+			slash = ""
+		else :
+			space = " "
+			separator = ":"
+			slash ="/"
 
 		GafferScene.Outputs.registerOutput(
-			"Interactive/3Delight/" + label,
+			"Interactive/3Delight/{}{}{}".format( source.capitalize(), slash, displayName ),
 			IECoreScene.Output(
-				aov,
+				name,
 				"ieDisplay",
-				"color " + aov,
+				"{}{}{}{}{}".format( dataType, space, source, separator, name ),
 				{
 					"driverType" : "ClientDisplayDriver",
 					"displayHost" : "localhost",
 					"displayPort" : "${image:catalogue:port}",
 					"remoteDisplayType" : "GafferImage::GafferDisplayDriver",
+					"scalarformat" : "half",
+					"colorprofile" : "linear",
+					"filter" : "blackman-harris",
+					"filterwidth" : 3.0,
 				}
 			)
 		)
 
 		GafferScene.Outputs.registerOutput(
-			"Batch/3Delight/" + label,
+			"Batch/3Delight/{}{}{}".format( source.capitalize(), slash, displayName ),
 			IECoreScene.Output(
-				"${project:rootDirectory}/renders/${script:name}/%s/%s.####.exr" % ( aov, aov ),
+				"${project:rootDirectory}/renders/${script:name}/${renderPass}/%s/%s.####.exr" % ( name, name ),
 				"exr",
-				"color " + aov,
+				"{}{}{}{}{}".format( dataType, space, source, separator, name ),
+				{
+					"scalarformat" : "half",
+					"colorprofile" : "linear",
+					"filter" : "blackman-harris",
+					"filterwidth" : 3.0,
+				}
 			)
 		)
 
+# Add standard cycles AOVs
 
-# Add standard appleseed AOVs
+if os.environ.get( "CYCLES_ROOT" ) and os.environ.get( "GAFFERCYCLES_HIDE_UI", "" ) != "1" :
 
-with IECore.IgnoredExceptions( ImportError ) :
+	with IECore.IgnoredExceptions( ImportError ) :
 
-	# If appleseed isn't available for any reason, this will fail
-	# and we won't add any unnecessary output definitions.
-	import GafferAppleseed
+		# If cycles isn't available for any reason, this will fail
+		# and we won't add any unnecessary output definitions.
+		import GafferCycles
 
-	for aov in [
-		"diffuse",
-		"glossy",
-		"emission",
-		"direct_diffuse",
-		"indirect_diffuse",
-		"direct_glossy",
-		"indirect_glossy",
-		"albedo",
+		lightPasses = [
+			"emission",
+			"background",
+			"ao",
+			"shadow",
+			"diffuse_direct",
+			"diffuse_indirect",
+			"glossy_direct",
+			"glossy_indirect",
+			"transmission",
+			"transmission_direct",
+			"transmission_indirect",
+			"volume_direct",
+			"volume_indirect",
+			"lightgroup",
+		]
 
-		"npr_contour",
-		"npr_shading",
+		dataPasses = [
+			"depth",
+			"position",
+			"normal",
+			"roughness",
+			"uv",
+			"object_id",
+			"material_id",
+			"motion",
+			"motion_weight",
+			"render_time",
+			"cryptomatte_asset",
+			"cryptomatte_object",
+			"cryptomatte_material",
+			"aov_color",
+			"aov_value",
+			"adaptive_aux_buffer",
+			"sample_count",
+			"diffuse_color",
+			"glossy_color",
+			"transmission_color",
+			"mist",
+			"denoising_normal",
+			"denoising_albedo",
 
-		"depth",
-		"normal",
-		"position",
-		"uv",
+			"shadow_catcher",
+			"shadow_catcher_sample_count",
+			"shadow_catcher_matte",
 
-		"pixel_variation",
-		"pixel_sample_count",
-		"pixel_time",
-		"invalid_samples"
-	] :
+			"bake_primitive",
+			"bake_differential",
+		]
 
-		label = aov.replace( "_", " " ).title().replace( " ", "_" )
-		aovModel = aov + "_aov"
+		def __registerOutputs( aovs, halfFloat = False, denoise = False ) :
+			for aov in aovs :
 
-		GafferScene.Outputs.registerOutput(
-			"Interactive/Appleseed/" + label,
-			IECoreScene.Output(
-				aov,
-				"ieDisplay",
-				aovModel,
-				{
+				label = aov.replace( "_", " " ).title().replace( " ", "_" )
+
+				data = aov
+
+				interactiveOutput = {
 					"driverType" : "ClientDisplayDriver",
 					"displayHost" : "localhost",
 					"displayPort" : "${image:catalogue:port}",
 					"remoteDisplayType" : "GafferImage::GafferDisplayDriver",
+					"quantize" : IECore.IntVectorData( [ 0, 0, 0, 0 ] ),
 				}
-			)
-		)
+				batchOutput = {
+					"quantize" : IECore.IntVectorData( [ 0, 0, 0, 0 ] ),
+					"halfFloat" : halfFloat
+				}
 
-		GafferScene.Outputs.registerOutput(
-			"Batch/Appleseed/" + label,
-			IECoreScene.Output(
-				"${project:rootDirectory}/renders/${script:name}/%s/%s.####.exr" % ( aov, aov ),
-				"exr",
-				aovModel
-			)
-		)
+				if data == "lightgroup":
+					data = "lg lightgroup"
+					label = "Light_Group"
+
+				if data == "aov_color" :
+					data = "color aov_color"
+
+				if data == "aov_value" :
+					data = "float aov_value"
+
+				if data.startswith( "cryptomatte" ) :
+					data = data.replace( "_", " " )
+
+				GafferScene.Outputs.registerOutput(
+					"Interactive/Cycles/" + label,
+					IECoreScene.Output(
+						aov,
+						"ieDisplay",
+						data,
+						interactiveOutput
+					)
+				)
+
+				GafferScene.Outputs.registerOutput(
+									"Batch/Cycles/" + label,
+					IECoreScene.Output(
+						"${project:rootDirectory}/renders/${script:name}/${renderPass}/%s/%s.####.exr" % ( aov, aov ),
+						"exr",
+						data,
+						batchOutput
+					)
+				)
+
+				if denoise:
+					interactiveOutput["denoise"] = True
+					batchOutput["denoise"] = True
+
+					# Denoised variants
+					GafferScene.Outputs.registerOutput(
+						"Interactive/Cycles/" + label + "_Denoised",
+						IECoreScene.Output(
+							aov + "_denoised",
+							"ieDisplay",
+							data,
+							interactiveOutput
+						)
+					)
+
+					GafferScene.Outputs.registerOutput(
+						"Batch/Cycles/" + label + "_Denoised",
+						IECoreScene.Output(
+							"${project:rootDirectory}/renders/${script:name}/${renderPass}/%s/%s_denoised.####.exr" % ( aov, aov ),
+							"exr",
+							data,
+							batchOutput
+						)
+					)
+
+
+					GafferScene.Outputs.registerOutput(
+						"Interactive/Cycles/Beauty_Denoised",
+						IECoreScene.Output(
+							"beauty_denoised",
+							"ieDisplay",
+							"rgba",
+							{
+								"driverType" : "ClientDisplayDriver",
+								"displayHost" : "localhost",
+								"displayPort" : "${image:catalogue:port}",
+								"remoteDisplayType" : "GafferImage::GafferDisplayDriver",
+								"quantize" : IECore.IntVectorData( [ 0, 0, 0, 0 ] ),
+								"denoise" : True
+							}
+						)
+					)
+
+					GafferScene.Outputs.registerOutput(
+						"Batch/Cycles/Beauty_Denoised",
+						IECoreScene.Output(
+							"${project:rootDirectory}/renders/${script:name}/${renderPass}/beauty/beauty_denoised.####.exr",
+							"exr",
+							"rgba",
+							{
+								"quantize" : IECore.IntVectorData( [ 0, 0, 0, 0 ] ),
+								"denoise" : True,
+								"halfFloat" : True
+							}
+						)
+					)
+
+		__registerOutputs( lightPasses, True )
+		__registerOutputs( dataPasses )
 
 # Publish the Catalogue port number as a context variable, so we can refer
 # to it easily in output definitions.
@@ -260,7 +455,7 @@ def __scriptAdded( parent, script ) :
 
 	portNumberPlug["value"].setValue( GafferImage.Catalogue.displayDriverServer().portNumber() )
 
-application.root()["scripts"].childAddedSignal().connect( __scriptAdded, scoped = False )
+application.root()["scripts"].childAddedSignal().connect( __scriptAdded )
 
 Gaffer.Metadata.registerValue( Gaffer.ScriptNode, "variables.imageCataloguePort", "plugValueWidget:type", "" )
 

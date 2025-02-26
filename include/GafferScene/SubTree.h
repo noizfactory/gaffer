@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SUBTREE_H
-#define GAFFERSCENE_SUBTREE_H
+#pragma once
 
 #include "GafferScene/SceneProcessor.h"
 
@@ -54,16 +53,25 @@ class GAFFERSCENE_API SubTree : public SceneProcessor
 
 	public :
 
-		SubTree( const std::string &name=defaultName<SubTree>() );
+		explicit SubTree( const std::string &name=defaultName<SubTree>() );
 		~SubTree() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SubTree, SubTreeTypeId, SceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SubTree, SubTreeTypeId, SceneProcessor );
 
 		Gaffer::StringPlug *rootPlug();
 		const Gaffer::StringPlug *rootPlug() const;
 
 		Gaffer::BoolPlug *includeRootPlug();
 		const Gaffer::BoolPlug *includeRootPlug() const;
+
+		Gaffer::BoolPlug *inheritTransformPlug();
+		const Gaffer::BoolPlug *inheritTransformPlug() const;
+
+		Gaffer::BoolPlug *inheritAttributesPlug();
+		const Gaffer::BoolPlug *inheritAttributesPlug() const;
+
+		Gaffer::BoolPlug *inheritSetMembershipPlug();
+		const Gaffer::BoolPlug *inheritSetMembershipPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -114,5 +122,3 @@ class GAFFERSCENE_API SubTree : public SceneProcessor
 IE_CORE_DECLAREPTR( SubTree )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SUBTREE_H

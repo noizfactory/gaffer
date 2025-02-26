@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENEUI_SCENEVIEW_H
-#define GAFFERSCENEUI_SCENEVIEW_H
+#pragma once
 
 #include "GafferSceneUI/Export.h"
 #include "GafferSceneUI/SceneGadget.h"
@@ -45,6 +44,7 @@
 #include "GafferScene/PathFilter.h"
 #include "GafferScene/ScenePlug.h"
 
+#include "GafferUI/FPSGadget.h"
 #include "GafferUI/View.h"
 
 #include <functional>
@@ -71,10 +71,10 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 
 	public :
 
-		SceneView( const std::string &name = defaultName<SceneView>() );
+		explicit SceneView( Gaffer::ScriptNodePtr scriptNode );
 		~SceneView() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferSceneUI::SceneView, SceneViewTypeId, GafferUI::View );
+		GAFFER_NODE_DECLARE_TYPE( GafferSceneUI::SceneView, SceneViewTypeId, GafferUI::View );
 
 		Gaffer::IntPlug *minimumExpansionDepthPlug();
 		const Gaffer::IntPlug *minimumExpansionDepthPlug() const;
@@ -82,17 +82,12 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 		Gaffer::ValuePlug *cameraPlug();
 		const Gaffer::ValuePlug *cameraPlug() const;
 
-		Gaffer::ValuePlug *gridPlug();
-		const Gaffer::ValuePlug *gridPlug() const;
-
 		Gaffer::ValuePlug *gnomonPlug();
 		const Gaffer::ValuePlug *gnomonPlug() const;
 
 		void frame( const IECore::PathMatcher &filter, const Imath::V3f &direction = Imath::V3f( -0.64, -0.422, -0.64 ) );
 		void expandSelection( size_t depth = 1 );
 		void collapseSelection();
-
-		void setContext( Gaffer::ContextPtr context ) override;
 
 		/// If the view is locked to a particular camera,
 		/// this returns the bound of the resolution gate
@@ -102,14 +97,14 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 		/// empty bound.
 		const Imath::Box2f &resolutionGate() const;
 
-		typedef std::function<GafferScene::SceneProcessorPtr ()> ShadingModeCreator;
+		using ShadingModeCreator = std::function<GafferScene::SceneProcessorPtr ()>;
 
 		static void registerShadingMode( const std::string &name, ShadingModeCreator );
 		static void registeredShadingModes( std::vector<std::string> &names );
 
-	protected :
-
-		void contextChanged( const IECore::InternedString &name ) override;
+		using RendererSettingsCreator = std::function<GafferScene::SceneProcessorPtr ()>;
+		static void registerRenderer( const std::string &name, const RendererSettingsCreator &settingsCreator );
+		static std::vector<std::string> registeredRenderers();
 
 	private :
 
@@ -119,14 +114,21 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 
 		Imath::Box3f framingBound() const;
 
+		void contextChanged();
+		void selectedPathsChanged();
+		void visibleSetChanged();
 		bool keyPress( GafferUI::GadgetPtr gadget, const GafferUI::KeyEvent &event );
-		void transferSelectionToContext();
 		void plugSet( Gaffer::Plug *plug );
-
-		boost::signals::scoped_connection m_selectionChangedConnection;
 
 		SceneGadgetPtr m_sceneGadget;
 
+		/// \todo Refactor all these bolt-on classes to follow the model of
+		/// `View::DisplayTransform` and `SceneView::Grid` :
+		///
+		/// - Derive from `Node`, and add child plugs to provide settings.
+		/// - Parent under the `View` and promote settings plugs to the view.
+		class Renderer;
+		std::unique_ptr<Renderer> m_renderer;
 		class SelectionMask;
 		std::unique_ptr<SelectionMask> m_selectionMask;
 		class DrawingMode;
@@ -136,9 +138,10 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 		class Camera;
 		std::unique_ptr<Camera> m_camera;
 		class Grid;
-		std::unique_ptr<Grid> m_grid;
 		class Gnomon;
 		std::unique_ptr<Gnomon> m_gnomon;
+		class FPS;
+		std::unique_ptr<FPS> m_fps;
 
 		static size_t g_firstPlugIndex;
 		static ViewDescription<SceneView> g_viewDescription;
@@ -148,5 +151,3 @@ class GAFFERSCENEUI_API SceneView : public GafferUI::View
 IE_CORE_DECLAREPTR( SceneView );
 
 } // namespace GafferSceneUI
-
-#endif // GAFFERSCENEUI_SCENEVIEW_H

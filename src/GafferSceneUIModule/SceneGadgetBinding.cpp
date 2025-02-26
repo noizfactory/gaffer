@@ -35,6 +35,8 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "boost/python.hpp"
+#include "boost/python/tuple.hpp"
+
 
 #include "SceneGadgetBinding.h"
 
@@ -71,10 +73,10 @@ void setContext( SceneGadget &g, Context &context )
 	g.setContext( &context );
 }
 
-void setExpandedPaths( SceneGadget &g, const IECore::PathMatcher &expandedPaths )
+void setVisibleSet( SceneGadget &g, const GafferScene::VisibleSet &visibleSet )
 {
 	ScopedGILRelease gilRelease;
-	g.setExpandedPaths( expandedPaths );
+	g.setVisibleSet( visibleSet );
 }
 
 void setMinimumExpansionDepth( SceneGadget &g, size_t depth )
@@ -97,19 +99,29 @@ void waitForCompletion( SceneGadget &g )
 
 struct SceneGadgetSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, SceneGadgetPtr g )
+	void operator()( boost::python::object slot, SceneGadgetPtr g )
 	{
 		try
 		{
 			slot( g );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
+
+void setRenderer( SceneGadget &g, IECore::InternedString name )
+{
+	ScopedGILRelease gilRelease;
+	g.setRenderer( name );
+}
+
+std::string getRenderer( SceneGadget &g )
+{
+	return g.getRenderer().string();
+}
 
 IECore::CompoundObjectPtr getOpenGLOptions( const SceneGadget &g )
 {
@@ -124,12 +136,64 @@ IECore::StringVectorDataPtr getSelectionMask( const SceneGadget &g )
 
 IECore::InternedStringVectorDataPtr objectAt( SceneGadget &g, IECore::LineSegment3f &l )
 {
+	ScopedGILRelease gilRelease;
 	IECore::InternedStringVectorDataPtr result = new IECore::InternedStringVectorData;
 	if( g.objectAt( l, result->writable() ) )
 	{
 		return result;
 	}
 	return nullptr;
+}
+
+tuple objectAndIntersectionAt( SceneGadget &g, IECore::LineSegment3f &l )
+{
+	IECore::InternedStringVectorDataPtr result = new IECore::InternedStringVectorData;
+	Imath::V3f hitPos( 0.0f );
+
+	{
+		ScopedGILRelease gilRelease;
+		if( !g.objectAt( l, result->writable(), hitPos ) )
+		{
+			result = nullptr;
+		}
+	}
+
+	return boost::python::make_tuple( result, hitPos );
+}
+
+size_t objectsAt( SceneGadget &g, const Imath::V3f &corner0InGadgetSpace, const Imath::V3f &corner1InGadgetSpace, IECore::PathMatcher &paths )
+{
+	ScopedGILRelease gilRelease;
+	return g.objectsAt( corner0InGadgetSpace, corner1InGadgetSpace, paths );
+}
+
+object normalAt( SceneGadget &g, const IECore::LineSegment3f &l )
+{
+	std::optional<Imath::V3f> result;
+	{
+		ScopedGILRelease gilRelease;
+		result = g.normalAt( l );
+	}
+
+	return result ? object( result.value() ) : object();
+}
+
+Imath::Box3f selectionBound( SceneGadget &g )
+{
+	ScopedGILRelease gilRelease;
+	return g.selectionBound();
+}
+
+Imath::Box3f bound( SceneGadget &g, bool selected, const IECore::PathMatcher *omitted )
+{
+	ScopedGILRelease gilRelease;
+	return g.bound( selected, omitted );
+}
+
+void snapshotToFile( SceneGadget &g, const std::filesystem::path &fileName, const Imath::Box2f &resolutionGate, const IECore::CompoundData *metadata )
+{
+	ScopedGILRelease gilRelease;
+	g.snapshotToFile( fileName, resolutionGate, metadata );
 }
 
 } // namespace
@@ -143,8 +207,8 @@ void GafferSceneUIModule::bindSceneGadget()
 		.def( "getScene", &getScene )
 		.def( "setContext", &setContext )
 		.def( "getContext", (Gaffer::Context *(SceneGadget::*)())&SceneGadget::getContext, return_value_policy<CastToIntrusivePtr>() )
-		.def( "setExpandedPaths", &setExpandedPaths )
-		.def( "getExpandedPaths", &SceneGadget::getExpandedPaths, return_value_policy<copy_const_reference>() )
+		.def( "setVisibleSet", &setVisibleSet )
+		.def( "getVisibleSet", &SceneGadget::getVisibleSet, return_value_policy<copy_const_reference>() )
 		.def( "setMinimumExpansionDepth", &setMinimumExpansionDepth )
 		.def( "getMinimumExpansionDepth", &SceneGadget::getMinimumExpansionDepth )
 		.def( "getPaused", &SceneGadget::getPaused )
@@ -152,15 +216,27 @@ void GafferSceneUIModule::bindSceneGadget()
 		.def( "state", &SceneGadget::state )
 		.def( "stateChangedSignal", &SceneGadget::stateChangedSignal, return_internal_reference<1>() )
 		.def( "waitForCompletion", &waitForCompletion )
+		.def( "setRenderer", &setRenderer )
+		.def( "getRenderer", &getRenderer )
 		.def( "setOpenGLOptions", &SceneGadget::setOpenGLOptions )
 		.def( "getOpenGLOptions", &getOpenGLOptions )
+		.def( "setLayer", &SceneGadget::setLayer )
+		.def( "getLayer", &SceneGadget::getLayer )
 		.def( "setSelectionMask", &SceneGadget::setSelectionMask )
 		.def( "getSelectionMask", &getSelectionMask )
 		.def( "objectAt", &objectAt )
-		.def( "objectsAt", &SceneGadget::objectsAt )
+		.def( "objectAndIntersectionAt", &objectAndIntersectionAt )
+		.def( "objectsAt", &objectsAt )
+		.def( "normalAt", &normalAt )
 		.def( "setSelection", &SceneGadget::setSelection )
 		.def( "getSelection", &SceneGadget::getSelection, return_value_policy<copy_const_reference>() )
-		.def( "selectionBound", &SceneGadget::selectionBound )
+		.def( "selectionBound", &selectionBound )
+		.def( "bound", &bound, ( arg( "selected" ), arg( "omitted" ) = object() ) )
+		.def(
+			"snapshotToFile",
+			&snapshotToFile,
+			( arg( "fileName" ), arg( "resolutionGate" ) = Imath::Box2f(), arg( "metadata" ) = object() )
+		)
 	;
 
 	enum_<SceneGadget::State>( "State" )

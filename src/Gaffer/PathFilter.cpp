@@ -79,21 +79,21 @@ bool PathFilter::getEnabled() const
 	return m_enabled;
 }
 
-void PathFilter::filter( std::vector<PathPtr> &paths ) const
+void PathFilter::filter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 	if( !m_enabled )
 	{
 		return;
 	}
-	doFilter( paths );
+	doFilter( paths, canceller );
 }
 
-typedef boost::signal<void ( PathFilter * )> ChangedSignal;
+using ChangedSignal = Signals::Signal<void ( PathFilter * )>;
 ChangedSignal &PathFilter::changedSignal()
 {
 	return m_changedSignal;
 }
 
-void PathFilter::doFilter( std::vector<PathPtr> &paths ) const
+void PathFilter::doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 }

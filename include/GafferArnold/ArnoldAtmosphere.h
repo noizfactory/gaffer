@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDATMOSPHERE_H
-#define GAFFERARNOLD_ARNOLDATMOSPHERE_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -45,15 +44,15 @@
 namespace GafferArnold
 {
 
-class GAFFERSCENE_API ArnoldAtmosphere : public GafferScene::GlobalShader
+class GAFFERARNOLD_API ArnoldAtmosphere : public GafferScene::GlobalShader
 {
 
 	public :
 
-		ArnoldAtmosphere( const std::string &name=defaultName<ArnoldAtmosphere>() );
+		explicit ArnoldAtmosphere( const std::string &name=defaultName<ArnoldAtmosphere>() );
 		~ArnoldAtmosphere() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldAtmosphere, ArnoldAtmosphereTypeId, GafferScene::GlobalShader );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldAtmosphere, ArnoldAtmosphereTypeId, GafferScene::GlobalShader );
 
 	protected :
 
@@ -70,5 +69,3 @@ class GAFFERSCENE_API ArnoldAtmosphere : public GafferScene::GlobalShader
 IE_CORE_DECLAREPTR( ArnoldAtmosphere )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDATMOSPHERE_H

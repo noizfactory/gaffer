@@ -43,7 +43,7 @@ using namespace IECore;
 using namespace Gaffer;
 using namespace GafferImage;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CDL );
+GAFFER_NODE_DEFINE_TYPE( CDL );
 
 size_t CDL::g_firstPlugIndex = 0;
 
@@ -58,9 +58,9 @@ CDL::CDL( const std::string &name )
 
 	addChild( new IntPlug(
 		"direction", Plug::In,
-		OpenColorIO::TRANSFORM_DIR_FORWARD,
-		OpenColorIO::TRANSFORM_DIR_FORWARD,
-		OpenColorIO::TRANSFORM_DIR_INVERSE
+		Forward,
+		Forward,
+		Inverse
 	) );
 }
 
@@ -131,17 +131,6 @@ bool CDL::affectsTransform( const Gaffer::Plug *input ) const
 
 void CDL::hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	if(
-		slopePlug()->isSetToDefault() &&
-		offsetPlug()->isSetToDefault() &&
-		powerPlug()->isSetToDefault() &&
-		saturationPlug()->isSetToDefault()
-	)
-	{
-		h = MurmurHash();
-		return;
-	}
-
 	slopePlug()->hash( h );
 	offsetPlug()->hash( h );
 	powerPlug()->hash( h );
@@ -149,14 +138,16 @@ void CDL::hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h )
 	directionPlug()->hash( h );
 }
 
-OpenColorIO::ConstTransformRcPtr CDL::transform() const
+OCIO_NAMESPACE::ConstTransformRcPtr CDL::transform() const
 {
-	OpenColorIO::CDLTransformRcPtr result = OpenColorIO::CDLTransform::Create();
-	result->setSlope( &slopePlug()->getValue()[0] );
-	result->setOffset( &offsetPlug()->getValue()[0] );
-	result->setPower( &powerPlug()->getValue()[0] );
+	OCIO_NAMESPACE::CDLTransformRcPtr result = OCIO_NAMESPACE::CDLTransform::Create();
+
+	using Color3d = Imath::Color3<double>;
+	result->setSlope( Color3d( slopePlug()->getValue() ).getValue() );
+	result->setOffset( Color3d( offsetPlug()->getValue() ).getValue() );
+	result->setPower( Color3d( powerPlug()->getValue() ).getValue() );
 	result->setSat( saturationPlug()->getValue() );
-	result->setDirection( (OpenColorIO::TransformDirection)directionPlug()->getValue() );
+	result->setDirection( directionPlug()->getValue() == Forward ? OCIO_NAMESPACE::TRANSFORM_DIR_FORWARD : OCIO_NAMESPACE::TRANSFORM_DIR_INVERSE );
 
 	return result;
 }

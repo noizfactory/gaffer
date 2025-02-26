@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_CUBE_H
-#define GAFFERSCENE_CUBE_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -49,9 +48,9 @@ class GAFFERSCENE_API Cube : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Cube, CubeTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Cube, CubeTypeId, ObjectSource );
 
-		Cube( const std::string &name=defaultName<Cube>() );
+		explicit Cube( const std::string &name=defaultName<Cube>() );
 		~Cube() override;
 
 		Gaffer::V3fPlug *dimensionsPlug();
@@ -73,5 +72,3 @@ class GAFFERSCENE_API Cube : public ObjectSource
 IE_CORE_DECLAREPTR( Cube )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_CUBE_H

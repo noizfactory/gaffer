@@ -77,7 +77,6 @@ Gaffer.Metadata.registerNode(
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
 			"preset:Best", GafferImage.LUT.Interpolation.Best,
-			"preset:Nearest", GafferImage.LUT.Interpolation.Nearest,
 			"preset:Linear", GafferImage.LUT.Interpolation.Linear,
 			"preset:Tetrahedral", GafferImage.LUT.Interpolation.Tetrahedral,
 
@@ -91,8 +90,8 @@ Gaffer.Metadata.registerNode(
 			""",
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
-			"preset:Forward", GafferImage.LUT.Direction.Forward,
-			"preset:Inverse", GafferImage.LUT.Direction.Inverse,
+			"preset:Forward", GafferImage.OpenColorIOTransform.Direction.Forward,
+			"preset:Inverse", GafferImage.OpenColorIOTransform.Direction.Inverse,
 
 		],
 

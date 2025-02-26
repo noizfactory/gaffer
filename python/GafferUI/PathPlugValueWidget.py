@@ -40,6 +40,9 @@ import IECore
 import Gaffer
 import GafferUI
 
+from .PlugValueWidget import sole
+from .StringPlugValueWidget import addSubstitutionsPopup
+
 import os
 
 ## Supported plug metadata - used to provide arguments to a
@@ -65,17 +68,16 @@ class PathPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		self.__pathChooserDialogueKeywords = pathChooserDialogueKeywords
 
-		pathWidget = GafferUI.PathWidget( self.__path )
-		self._addPopupMenu( pathWidget )
-		self.__row.append( pathWidget )
+		with self.__row :
 
-		button = GafferUI.Button( image = "pathChooser.png", hasFrame=False )
-		button.clickedSignal().connect( Gaffer.WeakMethod( self.__buttonClicked ), scoped = False )
-		self.__row.append( button )
+			pathWidget = GafferUI.PathWidget( self.__path )
+			self._addPopupMenu( pathWidget )
+			addSubstitutionsPopup( pathWidget )
 
-		pathWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ), scoped = False )
+			button = GafferUI.Button( image = "pathChooser.png", hasFrame=False )
+			button.clickedSignal().connect( Gaffer.WeakMethod( self.__buttonClicked ) )
 
-		self._updateFromPlug()
+		pathWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ) )
 
 	def path( self ) :
 
@@ -102,6 +104,7 @@ class PathPlugValueWidget( GafferUI.PlugValueWidget ) :
 		result += "- <kbd>Tab</kbd> to autocomplete path component\n"
 		result += "- Select path component (or hit <kbd>&darr;</kbd>) to show path-level contents menu\n"
 		result += "- Select all to show path hierarchy menu\n"
+		result += "- <kbd>Alt</kbd> + middle-click to show context variable substitutions\n"
 
 		return result
 
@@ -136,16 +139,17 @@ class PathPlugValueWidget( GafferUI.PlugValueWidget ) :
 			bookmarks = pathChooserDialogueKeywords.get( "bookmarks", None )
 			if bookmarks is not None :
 				pathCopy.setFromString( bookmarks.getDefault() )
-			else :
+			elif isinstance( pathCopy, Gaffer.FileSystemPath ) :
 				pathCopy.setFromString( os.path.expanduser( "~" ) )
 
 		return GafferUI.PathChooserDialogue( pathCopy, **pathChooserDialogueKeywords )
 
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
 
-		with self.getContext() :
-			with IECore.IgnoredExceptions( ValueError ) :
-				self.__path.setFromString( self.getPlug().getValue() )
+		self.pathWidget().setErrored( exception is not None )
+		self.__path.setFromString( sole( values ) or "" )
+
+	def _updateFromEditable( self ) :
 
 		self.pathWidget().setEditable( self._editable() )
 		self.__row[1].setEnabled( self._editable() ) # button

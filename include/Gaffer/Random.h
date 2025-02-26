@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_RANDOM_H
-#define GAFFER_RANDOM_H
+#pragma once
 
 #include "Gaffer/CompoundNumericPlug.h"
 #include "Gaffer/ComputeNode.h"
@@ -46,21 +45,20 @@ namespace Gaffer
 
 IE_CORE_FORWARDDECLARE( StringPlug )
 
-/// Base class for nodes which generate random values based on Context values.
 class GAFFER_API Random : public ComputeNode
 {
 
 	public :
 
-		Random( const std::string &name=defaultName<Random>() );
+		explicit Random( const std::string &name=defaultName<Random>() );
 		~Random() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Random, RandomTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Random, RandomTypeId, ComputeNode );
 
 		IntPlug *seedPlug();
 		const IntPlug *seedPlug() const;
-		StringPlug *contextEntryPlug();
-		const StringPlug *contextEntryPlug() const;
+		StringPlug *seedVariablePlug();
+		const StringPlug *seedVariablePlug() const;
 
 		V2fPlug *floatRangePlug();
 		const V2fPlug *floatRangePlug() const;
@@ -96,6 +94,6 @@ class GAFFER_API Random : public ComputeNode
 
 };
 
-} // namespace Gaffer
+IE_CORE_DECLAREPTR( Random )
 
-#endif // GAFFER_RANDOM_H
+} // namespace Gaffer

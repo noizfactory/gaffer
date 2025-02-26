@@ -48,7 +48,7 @@ using namespace boost;
 GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( TextGadget );
 
 TextGadget::TextGadget( const std::string &text )
-	:	Gadget( defaultName<TextGadget>() )
+	:	Gadget( defaultName<TextGadget>() ), m_dimmed( false )
 {
 	setText( text );
 }
@@ -74,8 +74,22 @@ void TextGadget::setText( const std::string &text )
 		Imath::Box3f cb = style()->characterBound( Style::LabelText );
 		m_bound.min.y = std::min( m_bound.min.y, cb.min.y );
 		m_bound.max.y = std::max( m_bound.max.y, cb.max.y );
- 		requestRender();
+		dirty( DirtyType::Bound );
 	}
+}
+
+void TextGadget::setDimmed( bool dimmed )
+{
+	if( m_dimmed != dimmed )
+	{
+		m_dimmed = dimmed;
+		dirty( DirtyType::Render );
+	}
+}
+
+bool TextGadget::getDimmed() const
+{
+	return m_dimmed;
 }
 
 Imath::Box3f TextGadget::bound() const
@@ -83,12 +97,22 @@ Imath::Box3f TextGadget::bound() const
 	return m_bound;
 }
 
-void TextGadget::doRenderLayer( Layer layer, const Style *style ) const
+void TextGadget::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
 	if( layer != Layer::Main )
 	{
 		return;
 	}
 
-	style->renderText( Style::LabelText, m_text );
+	style->renderText( Style::LabelText, m_text, m_dimmed ? Style::DisabledState : Style::NormalState );
+}
+
+unsigned TextGadget::layerMask() const
+{
+	return (unsigned)Layer::Main;
+}
+
+Imath::Box3f TextGadget::renderBound() const
+{
+	return m_bound;
 }

@@ -34,7 +34,6 @@
 #
 ##########################################################################
 
-import glob
 import unittest
 
 import IECore
@@ -49,7 +48,7 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 	def __dispatcher( self, frameRange = None ) :
 
 		result = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
-		result["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
+		result["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
 
 		return result
 
@@ -58,18 +57,20 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name}.txt" )
 
 		script["variables"] = GafferDispatch.TaskContextVariables()
 		script["variables"]["preTasks"][0].setInput( script["writer"]["task"] )
 		script["variables"]["variables"].addChild( Gaffer.NameValuePlug( "name", "jimbob" ) )
 
-		self.__dispatcher().dispatch( [ script["variables"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["variables"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/jimbob.txt",
+				self.temporaryDirectory() / "jimbob.txt",
 
 			}
 		)
@@ -79,19 +80,21 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name1}${name2}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name1}${name2}.txt" )
 
 		script["variables"] = GafferDispatch.TaskContextVariables()
 		script["variables"]["preTasks"][0].setInput( script["writer"]["task"] )
 		jim = script["variables"]["variables"].addChild( Gaffer.NameValuePlug( "name1", "jim", False ) )
 		bob = script["variables"]["variables"].addChild( Gaffer.NameValuePlug( "name2", "bob", True ) )
 
-		self.__dispatcher().dispatch( [ script["variables"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["variables"]["task"] )
+		script["dispatcher"]["task"].execute()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/bob.txt",
+				self.temporaryDirectory() / "bob.txt",
 
 			}
 		)
@@ -101,23 +104,23 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 		script = Gaffer.ScriptNode()
 
 		script["writer"] = GafferDispatchTest.TextWriter()
-		script["writer"]["fileName"].setValue( self.temporaryDirectory() + "/${name}.txt" )
+		script["writer"]["fileName"].setValue( self.temporaryDirectory() / "${name}.txt" )
 
 		script["variables"] = GafferDispatch.TaskContextVariables()
 		script["variables"]["preTasks"][0].setInput( script["writer"]["task"] )
 		script["variables"]["variables"].addChild( Gaffer.NameValuePlug( "name", "jimbob" ) )
 
-		dispatcher = self.__dispatcher()
-		dispatcher["executeInBackground"].setValue( True )
-		dispatcher.dispatch( [ script["variables"] ] )
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["variables"]["task"] )
+		script["dispatcher"]["executeInBackground"].setValue( True )
+		script["dispatcher"]["task"].execute()
 
-		dispatcher.jobPool().waitForAll()
-		self.assertEqual( len( dispatcher.jobPool().failedJobs() ), 0 )
+		script["dispatcher"].jobPool().waitForAll()
 
 		self.assertEqual(
-			set( glob.glob( self.temporaryDirectory() + "/*.txt" ) ),
+			set( self.temporaryDirectory().glob( "*.txt" ) ),
 			{
-				self.temporaryDirectory() + "/jimbob.txt",
+				self.temporaryDirectory() / "jimbob.txt",
 			}
 		)
 
@@ -129,10 +132,11 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 		with IECore.CapturingMessageHandler() as mh :
 			s["variables"]["preTasks"][0].setInput( s["variables"]["task"] )
 		self.assertEqual( len( mh.messages ), 1 )
-		self.assertRegexpMatches( mh.messages[0].message, "Cycle detected between ScriptNode.variables.preTasks.preTask0 and ScriptNode.variables.task" )
+		self.assertRegex( mh.messages[0].message, "Cycle detected between ScriptNode.variables.preTasks.preTask0 and ScriptNode.variables.task" )
 
-		d = self.__dispatcher()
-		self.assertRaisesRegexp( RuntimeError, "cannot have cyclic dependencies", d.dispatch, [ s["variables"] ] )
+		s["dispatcher"] = self.__dispatcher()
+		s["dispatcher"]["tasks"][0].setInput( s["variables"]["task"] )
+		self.assertRaisesRegex( RuntimeError, "cannot have cyclic dependencies", s["dispatcher"]["task"].execute )
 
 	def testStringSubstitutions( self ) :
 
@@ -142,9 +146,12 @@ class TaskContextVariablesTest( GafferTest.TestCase ) :
 		s["v"]["preTasks"][0].setInput( s["l"]["task"] )
 		s["v"]["variables"].addChild( Gaffer.NameValuePlug( "test", "test.####.cob" ) )
 
+		s["dispatcher"] = self.__dispatcher()
+		s["dispatcher"]["tasks"][0].setInput( s["v"]["task"] )
+
 		with Gaffer.Context() as c :
 			c.setFrame( 100 )
-			self.__dispatcher().dispatch( [ s["v"] ] )
+			s["dispatcher"]["task"].execute()
 
 		self.assertEqual( s["l"].log[0].context["test"], "test.0100.cob" )
 

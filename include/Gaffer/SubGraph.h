@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_SUBGRAPH_H
-#define GAFFER_SUBGRAPH_H
+#pragma once
 
 #include "Gaffer/DependencyNode.h"
 
@@ -47,10 +46,10 @@ class GAFFER_API SubGraph : public DependencyNode
 
 	public :
 
-		SubGraph( const std::string &name=defaultName<SubGraph>() );
+		explicit SubGraph( const std::string &name=defaultName<SubGraph>() );
 		~SubGraph() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::SubGraph, SubGraphTypeId, DependencyNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::SubGraph, SubGraphTypeId, DependencyNode );
 
 		/// Does nothing
 		void affects( const Plug *input, AffectedPlugsContainer &outputs ) const override;
@@ -71,5 +70,3 @@ class GAFFER_API SubGraph : public DependencyNode
 };
 
 } // namespace Gaffer
-
-#endif // GAFFER_SUBGRAPH_H

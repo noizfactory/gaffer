@@ -36,13 +36,52 @@
 
 import os
 import sys
+import functools
 import unittest
+import inspect
+import weakref
 
+from Qt import QtCore
+from Qt import QtCompat
+
+import IECore
+
+import Gaffer
 import GafferTest
 import GafferUI
 
 ## A useful base class for creating test cases for the ui.
 class TestCase( GafferTest.TestCase ) :
+
+	def setUp( self ) :
+
+		GafferTest.TestCase.setUp( self )
+
+		# Forward Qt messages to the IECore message handler.
+		# This causes them to be reported as errors by our
+		# base class.
+
+		def messageHandler( type, context, message ) :
+
+			IECore.msg(
+				{
+					QtCore.QtMsgType.QtInfoMsg : IECore.Msg.Level.Info,
+					QtCore.QtMsgType.QtDebugMsg : IECore.Msg.Level.Debug,
+				}.get( type, IECore.Msg.Level.Error ),
+				"Qt",
+				message
+			)
+
+		QtCompat.qInstallMessageHandler( messageHandler )
+		self.addCleanup( functools.partial( QtCompat.qInstallMessageHandler, None ) )
+
+		# The Mesa stack in our Docker build container doesn't currently support
+		# floating point textures. Prevent warning from causing test failures.
+		self.ignoreMessage(
+			IECore.Msg.Level.Warning, "ViewportGadget",
+			"Could not find supported floating point texture format in OpenGL. "
+			"Viewport display is likely to show banding - please resolve graphics driver issue."
+		)
 
 	def tearDown( self ) :
 
@@ -98,13 +137,48 @@ class TestCase( GafferTest.TestCase ) :
 		examples = GafferUI.Examples.registeredExamples()
 		for e in examples.values():
 			path = os.path.expandvars( e['filePath'] )
-			with open( path, 'r' ) as example :
+			with open( path, "r", encoding = "utf-8" ) as example :
 				for line in example :
 					# If the line contains a set for one of our safe plugs, don't check
 					if any( '["%s"].setValue(' % plug in line for plug in safePlugNames ) :
 						continue
 					for phrase in forbidden :
 						self.assertFalse( phrase in line, "Example %s references unstable '%s':\n%s" % ( e['filePath'], phrase, line ) )
+
+	def assertNodeUIsHaveExpectedLifetime( self, module ) :
+
+		for name in dir( module ) :
+
+			cls = getattr( module, name )
+			if not inspect.isclass( cls ) or not issubclass( cls, Gaffer.Node ) :
+				continue
+
+			script = Gaffer.ScriptNode()
+
+			try :
+				script["node"] = cls()
+			except :
+				continue
+
+			with GafferUI.Window() as window :
+				nodeUI = GafferUI.NodeUI.create( script["node"] )
+			window.setVisible( True )
+			self.waitForIdle( 10000 )
+
+			weakNodeUI = weakref.ref( nodeUI )
+			weakScript = weakref.ref( script )
+
+			nodeGadget = GafferUI.NodeGadget.create( script["node"] )
+			if nodeGadget :
+				weakNodeGadget = weakref.ref( nodeGadget )
+				del nodeGadget
+				self.assertIsNone( weakNodeGadget() )
+
+			del window, nodeUI
+			self.assertIsNone( weakNodeUI() )
+
+			del script
+			self.assertIsNone( weakScript() )
 
 	@staticmethod
 	def __widgetInstances() :
@@ -118,4 +192,3 @@ class TestCase( GafferTest.TestCase ) :
 				result.append( w() )
 
 		return result
-

@@ -45,12 +45,18 @@
 #include "GafferScene/Group.h"
 #include "GafferScene/Instancer.h"
 #include "GafferScene/Isolate.h"
+#include "GafferScene/MergeScenes.h"
 #include "GafferScene/Parent.h"
 #include "GafferScene/Prune.h"
-#include "GafferScene/Seeds.h"
+#include "GafferScene/Rename.h"
+#include "GafferScene/Scatter.h"
 #include "GafferScene/SubTree.h"
+#include "GafferScene/Unencapsulate.h"
+#include "GafferScene/MotionPath.h"
+#include "GafferScene/MeshSplit.h"
 
 #include "GafferBindings/DependencyNodeBinding.h"
+#include "GafferBindings/PlugBinding.h"
 
 using namespace boost::python;
 using namespace IECorePython;
@@ -60,6 +66,15 @@ using namespace GafferScene;
 
 namespace
 {
+
+object getRenderOptionsWrapper( const Capsule &c )
+{
+	if( auto o = c.getRenderOptions() )
+	{
+		return object( *o );
+	}
+	return object();
+}
 
 ScenePlugPtr scene( const Capsule &c )
 {
@@ -96,6 +111,8 @@ void GafferSceneModule::bindHierarchy()
 		.def( "scene", &scene )
 		.def( "root", &root )
 		.def( "context", &context )
+		.def( "setRenderOptions", &Capsule::setRenderOptions )
+		.def( "getRenderOptions", &getRenderOptionsWrapper )
 	;
 
 	GafferBindings::DependencyNodeClass<Group>()
@@ -109,8 +126,67 @@ void GafferSceneModule::bindHierarchy()
 	GafferBindings::DependencyNodeClass<Prune>();
 	GafferBindings::DependencyNodeClass<Isolate>();
 	GafferBindings::DependencyNodeClass<CollectScenes>();
-	GafferBindings::DependencyNodeClass<Seeds>();
-	GafferBindings::DependencyNodeClass<Instancer>();
+	GafferBindings::DependencyNodeClass<Scatter>();
 	GafferBindings::DependencyNodeClass<Encapsulate>();
+	GafferBindings::DependencyNodeClass<Unencapsulate>();
+	GafferBindings::DependencyNodeClass<Rename>();
+	GafferBindings::DependencyNodeClass<MeshSplit>();
 
+	{
+		scope s = GafferBindings::DependencyNodeClass<MergeScenes>();
+		enum_<MergeScenes::Mode>( "Mode" )
+			.value( "Keep", MergeScenes::Mode::Keep )
+			.value( "Replace", MergeScenes::Mode::Replace )
+			.value( "Merge", MergeScenes::Mode::Merge )
+		;
+	}
+
+	{
+		scope s = GafferBindings::DependencyNodeClass<Instancer>();
+		enum_<Instancer::PrototypeMode>( "PrototypeMode" )
+			.value( "IndexedRootsList", Instancer::PrototypeMode::IndexedRootsList )
+			.value( "IndexedRootsVariable", Instancer::PrototypeMode::IndexedRootsVariable )
+			.value( "RootPerVertex", Instancer::PrototypeMode::RootPerVertex )
+		;
+
+		GafferBindings::PlugClass<Instancer::ContextVariablePlug>()
+			.def( init<const char *, Plug::Direction, bool, unsigned>(
+					(
+						boost::python::arg_( "name" )=GraphComponent::defaultName<Instancer::ContextVariablePlug>(),
+						boost::python::arg_( "direction" )=Plug::In,
+						boost::python::arg_( "defaultEnable" )=true,
+						boost::python::arg_( "flags" )=Plug::Default
+					)
+				)
+			)
+			.attr( "__qualname__" ) = "Instancer.ContextVariablePlug"
+		;
+
+		// Expose InstancerCapsules as if they were plain Capsules. We don't
+		// want to bind them fully because then we'd be exposing a private class, but
+		// we need to register them so that they can be returned to Python
+		// successfully when testing expansion in Python
+		//
+		// See "Boost.Python and slightly more tricky inheritance" at
+		// http://lists.boost.org/Archives/boost/2005/09/93017.php for more details.
+
+		boost::python::objects::copy_class_object(
+			type_id<Capsule>(), Instancer::instancerCapsuleTypeInfo()
+		);
+
+	}
+
+	{
+		scope s = GafferBindings::DependencyNodeClass<MotionPath>();
+
+		enum_<MotionPath::FrameMode>( "FrameMode" )
+			.value( "Relative", MotionPath::FrameMode::Relative )
+			.value( "Absolute", MotionPath::FrameMode::Absolute )
+			;
+
+		enum_<MotionPath::SamplingMode>( "SamplingMode" )
+			.value( "Variable", MotionPath::SamplingMode::Variable )
+			.value( "Fixed", MotionPath::SamplingMode::Fixed )
+			;
+	}
 }

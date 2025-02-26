@@ -40,6 +40,7 @@ import warnings
 import Gaffer
 import GafferUI
 
+from Qt import QtCore
 from Qt import QtWidgets
 
 ## The PlugWidget combines a LabelPlugValueWidget with a second PlugValueWidget
@@ -71,7 +72,6 @@ class PlugWidget( GafferUI.Widget ) :
 		self.__label = GafferUI.LabelPlugValueWidget(
 			plug,
 			horizontalAlignment = GafferUI.Label.HorizontalAlignment.Right,
-			verticalAlignment = GafferUI.Label.VerticalAlignment.Top,
 		)
 
 		## \todo Decide how we allow this sort of tweak using the public
@@ -94,16 +94,16 @@ class PlugWidget( GafferUI.Widget ) :
 			)
 			self.__label.label().setToolTip( description )
 
-		layout.addWidget( self.__label._qtWidget() )
+		layout.addWidget( self.__label._qtWidget(), alignment = QtCore.Qt.AlignTop )
 		layout.addWidget( self.__valueWidget._qtWidget() )
 
 		# The plugValueWidget() may have smarter drop behaviour than the labelPlugValueWidget(),
 		# because it has specialised PlugValueWidget._convertValue(). It's also more meaningful to the
 		# user if we highlight the plugValueWidget() on dragEnter rather than the label. So we
 		# forward the dragEnter/dragLeave/drop signals from the labelPlugValueWidget() to the plugValueWidget().
-		self.__label.dragEnterSignal().connect( 0, Gaffer.WeakMethod( self.__labelDragEnter ), scoped = False )
-		self.__label.dragLeaveSignal().connect( 0, Gaffer.WeakMethod( self.__labelDragLeave ), scoped = False )
-		self.__label.dropSignal().connect( 0, Gaffer.WeakMethod( self.__labelDrop ), scoped = False )
+		self.__label.dragEnterSignal().connectFront( Gaffer.WeakMethod( self.__labelDragEnter ) )
+		self.__label.dragLeaveSignal().connectFront( Gaffer.WeakMethod( self.__labelDragLeave ) )
+		self.__label.dropSignal().connectFront( Gaffer.WeakMethod( self.__labelDrop ) )
 
 	def plugValueWidget( self ) :
 

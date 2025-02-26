@@ -1,6 +1,7 @@
 ##########################################################################
 #
 #  Copyright (c) 2016, Image Engine Design Inc. All rights reserved.
+#  Copyright (c) 2019, Cinesite VFX Limited. All rights reserved.
 #
 #  Redistribution and use in source and binary forms, with or without
 #  modification, are permitted provided that the following conditions are
@@ -37,6 +38,8 @@
 import functools
 import imath
 
+from collections import namedtuple, OrderedDict
+
 import IECore
 
 import Gaffer
@@ -45,7 +48,339 @@ import GafferImage
 import GafferImageUI
 
 ## \todo
-## - Could up/down in the Viewer cycle through the image list?
+## Ideally Catalogue reordering wouldn't just be managed the UI layer, but
+## the scope of changing this is somewhat large. When we need to do folders,
+## then this will probably force us to sort this out. For now, is at least
+## contained within just this file...
+
+##########################################################################
+# Column Configuration
+#
+# All of the Catalogue's columns are configurable. Gaffer provides a default
+# set of columns that can be extended or replaced via the registration of new
+# names or re-registration of existing ones.
+#
+# The columns displayed by a Catalogue are controlled by the
+# "catalogue:columns" [StringVectorData] metadata on its `imageIndex` plug.
+# Default columns are stored via a class registration, ie:
+#
+#   Gaffer.Metadata.registerValue(
+#       GafferImage.Catalogue, "imageIndex",
+#       "catalogue:columns", [ ... ]
+#   )
+#
+# This should consist of an ordered list of the `names` of columns registered
+# via the `CatalogueUI.registerColumns` method.
+##########################################################################
+
+__registeredColumns = OrderedDict()
+_columnsMetadataKey = "catalogue:columns"
+
+## The Column class extends the PathColumn class to simplify the process of
+# creating a custom column for the Catalogue. Subclasses must implement
+# `_imageCellData()`.
+class Column( GafferUI.PathColumn ) :
+
+	def __init__( self, title, sizeMode = GafferUI.PathColumn.SizeMode.Default ) :
+
+		GafferUI.PathColumn.__init__( self, sizeMode )
+
+		self.__title = IECore.StringData( title )
+
+	def title( self ) :
+
+		return self.__title.value
+
+	## Calls `_imageCellData()`.
+	def cellData( self, path, canceller = None ) :
+
+		image = path.property( "catalogue:image" )
+		catalogue = path.property( "catalogue" )
+
+		# Suppress error. The GraphEditor will be displaying the
+		# error anyway, as will the standard type column, and we're
+		# not in a position to do anything more helpful.
+		with IECore.IgnoredExceptions( Gaffer.ProcessException ) :
+
+			# Call `_imageCellData()` in a context which causes the Catalogue
+			# to output the image of interest.
+			with Gaffer.Context( catalogue.scriptNode().context() ) as context :
+				context["catalogue:imageName"] = image.getName()
+
+				# Our cells can only display data from one view, so we need to pick one.
+				# If the "default" view is present use that, otherwise use the first view
+				viewNames = catalogue["out"].viewNames()
+				if not len( viewNames ):
+					raise Exception( "Catalogue : Image has no views, no data to display" )
+				context["image:viewName"] = "default" if "default" in viewNames else viewNames[0]
+
+				try :
+					return self._imageCellData( image, catalogue )
+				except NotImplementedError :
+					# Backwards compatibility for deprecated API.
+					if isinstance( self, IconColumn ) :
+						return self.CellData( icon = self.value( image, catalogue ) + ".png" )
+					else :
+						return self.CellData( value = self.value( image, catalogue ) )
+
+		return self.CellData()
+
+	def headerData( self, canceller = None ) :
+
+		return self.CellData( value = self.__title )
+
+	## Called to generate a cell from an image in
+	# the Catalogue. Must be implemented by derived classes to return
+	# `PathColumn.CellData`.
+	# Arguments :
+	#
+	# - `image` : The `GafferImage.Catalogue.Image` plug for the cell
+	#   (not to be confused with a standard ImagePlug).
+	# - `catalogue` : The `GafferImage.Catalogue` being displayed.
+	#
+	# Called in a context where `catalogue["out"]` provides the
+	# correct image for the cell.
+	def _imageCellData( self, image, catalogue ) :
+
+		raise NotImplementedError
+
+# Registers a new column or overwrites an existing column. Registered columns
+# appear in the Catalogue header context menu, and can be set as default
+# columns in the "catalogue:columns" metadata on Catalogue's `imageIndex` plug.
+# The registered name is used for the menu path when presenting available columns
+# to the user. As such, it can contain `/` for sub-menus and should be formatted
+# with appropriate case/spaces.
+def registerColumn( name, column ) :
+
+	__registeredColumns[ name ] = column
+
+# Removes a column. It will no longer show up in the Catalogue UI and can't be
+# set as a default column.
+def deregisterColumn( name ) :
+
+	if name in __registeredColumns :
+		del __registeredColumns[ name ]
+
+# Returns the instance of a Column class registered for `name` or
+# None if no column has been registered.
+def column( name ) :
+
+	return __registeredColumns.get( name, None )
+
+# Returns all registered column names
+def registeredColumns() :
+
+	return __registeredColumns.keys()
+
+# Convenience Column subclasses
+# =============================
+
+## \deprecated. Derive from Column and implement `_imageCellData()`
+# instead.
+class IconColumn( Column ) :
+
+	pass
+
+# Convenience class for simple columns that derive the cell value
+# from a callable. e.g.
+#
+#   `SimpleColumn( "Name", lambda image, catalogue : image.getName() ) )`
+#
+class SimpleColumn( Column ) :
+
+	def __init__( self, title, valueProvider ) :
+
+		Column.__init__( self, title )
+		self.__valueProvider = valueProvider
+
+	def _imageCellData( self, image, catalogue ) :
+
+		return self.CellData( value = self.__valueProvider( image, catalogue ) )
+
+# A Columns class that retrieves its value from the catalogue item's image
+# metadata. If multiple names are provided, the first one present will be used,
+# allowing a single column to support several source names depending on the
+# image's origin.
+class ImageMetadataColumn( Column ) :
+
+	def __init__( self, title, nameOrNames, defaultValue = None, sizeMode = GafferUI.PathColumn.SizeMode.Default ) :
+
+		Column.__init__( self, title, sizeMode )
+
+		if isinstance( nameOrNames, str ) :
+			nameOrNames = [ nameOrNames, ]
+
+		self.__names = nameOrNames
+		self.__defaultValue = defaultValue
+
+	def _imageCellData( self, image, catalogue ) :
+
+		value = self.__defaultValue
+
+		metadata = catalogue["out"].metadata()
+		for name in self.__names :
+			metadataValue = metadata.get( name, None )
+			if metadataValue is not None :
+				value = metadataValue
+				break
+
+		return self.CellData( value = value )
+
+# A Column class that retrieves its value from render-time context variable
+# values passed through the catalogue item's image metadata.  If multiple names
+# are provided, the first present context entry will be used. Note: Not all
+# context variables are available via image metadata, the exact list is renderer
+# dependent, but it is generally limited to basic value types
+class ContextVariableColumn( ImageMetadataColumn ) :
+
+	def __init__( self, title, nameOrNames, defaultValue = None ) :
+
+		if isinstance( nameOrNames, str ) :
+			nameOrNames = [ nameOrNames, ]
+
+		names = [ "gaffer:context:%s" % name for name in nameOrNames ]
+		ImageMetadataColumn.__init__( self, title, names, defaultValue )
+
+# Standard Columns
+# ================
+
+class __StatusIconColumn( Column ) :
+
+	def __init__( self ) :
+
+		Column.__init__( self, "" )
+
+	def _imageCellData( self, image, catalogue ) :
+
+		icon = "catalogueStatusDisplay.png"
+		toolTip = None
+
+		fileName = image["fileName"].getValue()
+		if fileName :
+			icon = "catalogueStatusDisk.png"
+			# Attempt to read the metadata to check the image is loadable. Given other columns
+			# are going to do this anyway, we're not adding too much overhead here.
+			try :
+				catalogue["out"].metadata()
+			except Gaffer.ProcessException as e :
+				icon = "errorSmall.png"
+				toolTip = str( e )
+
+		return self.CellData( icon = icon, toolTip = toolTip )
+
+registerColumn( "Status", __StatusIconColumn() )
+registerColumn( "Name", GafferUI.PathListingWidget.defaultNameColumn )
+registerColumn( "Frame", ContextVariableColumn( "Frame", "frame" ) )
+registerColumn( "Description", ImageMetadataColumn( "Description", "ImageDescription", sizeMode = GafferUI.PathColumn.SizeMode.Stretch ) )
+
+# Image properties
+
+def __resolutionColumnValueProvider( image, catalogue ) :
+
+	format_ = catalogue["out"].format()
+	return "%d x %d" % ( format_.width(), format_.height() )
+
+def __formatBox( box ) :
+
+	return "(%d %d) - (%d, %d)" % ( box.min().x, box.min().y, box.max().x, box.max().y )
+
+registerColumn(
+	"Image/Resolution",
+	SimpleColumn( "Resolution", __resolutionColumnValueProvider )
+)
+registerColumn(
+	"Image/Channels",
+	SimpleColumn( "Channels", lambda _, c : ", ".join( c["out"].channelNames() ) )
+)
+registerColumn(
+	"Image/Type",
+	SimpleColumn( "Image Type", lambda _, c : "Deep" if c["out"].deep() else "Flat" )
+)
+registerColumn(
+	"Image/Pixel Aspect Ratio",
+	SimpleColumn( "P. Aspect", lambda _, c : c["out"].format().getPixelAspect() )
+)
+registerColumn(
+	"Image/Data Window",
+	SimpleColumn( "Data Window", lambda _, c : __formatBox( c["out"].dataWindow() ) )
+)
+registerColumn(
+	"Image/Display Window",
+	SimpleColumn( "Display Window", lambda _, c : __formatBox( c["out"].format().getDisplayWindow() ) )
+)
+
+# Column for the `Image.outputIndex` plug.
+class __OutputIndexColumn( Column ) :
+
+	def __init__( self, title ) :
+
+		Column.__init__( self, title )
+
+		self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ) )
+		self.buttonReleaseSignal().connect( Gaffer.WeakMethod( self.__buttonRelease ) )
+
+	def headerData( self, canceller = None ) :
+
+		return self.CellData( icon = "catalogueOutputHeader.png", toolTip = "Output Index" )
+
+	def _imageCellData( self, image, catalogue ) :
+
+		i = image["outputIndex"].getValue()
+		return self.CellData(
+			icon = IECore.CompoundData( {
+				"state:normal" : "catalogueOutput{}.png".format( i ) if i else "",
+				"state:highlighted" : "catalogueOutput{}Highlighted{}.png".format( i or 1, "" if i else "Transparent" ),
+			} ),
+			toolTip = "Click to set this image as Output 1 so it can be referenced from the Viewer or by CatalogueSelect nodes. Right-click to set other output indexes."
+		)
+
+	def __buttonPress( self, path, widget, event ) :
+
+		# We do our work on release, but we need to accept the press too, to
+		# block the default PathListingWidget selection behaviour.
+		return True
+
+	def __buttonRelease( self, path, widget, event ) :
+
+		image = path.property( "catalogue:image" )
+
+		if event.button == event.Buttons.Left and event.modifiers == event.Modifiers.None_ :
+			self.__setOutputIndex( image, 1 if image["outputIndex"].getValue() == 0 else 0 )
+		elif event.button == event.Buttons.Right and event.modifiers == event.Modifiers.None_ :
+			self.__popupMenu = GafferUI.Menu( self.__contextMenuDefinition( image ), title = "Output Index" )
+			self.__popupMenu.popup()
+
+		return True
+
+	def __contextMenuDefinition( self, image ) :
+
+		menu = IECore.MenuDefinition()
+		for i in range( 1, 5 ) :
+
+			menu.append( "/{}".format( i ), {
+				"checkBox" : image["outputIndex"].getValue() == i,
+				"command" : functools.partial( Gaffer.WeakMethod( self.__setOutputIndex ), image, i ),
+			} )
+
+		return menu
+
+	def __setOutputIndex( self, image, index, *unused ) :
+
+		with Gaffer.UndoScope( image.ancestor( Gaffer.ScriptNode ) ) :
+			image["outputIndex"].setValue( index )
+
+registerColumn( "Output Index", __OutputIndexColumn( "Output Index" ) )
+
+# Default visible column set
+
+Gaffer.Metadata.registerValue(
+	GafferImage.Catalogue, "imageIndex", _columnsMetadataKey,
+	IECore.StringVectorData( [ "Status", "Output Index", "Name" ] )
+)
+
+##########################################################################
+# Node registration
+##########################################################################
 
 Gaffer.Metadata.registerNode(
 
@@ -94,7 +429,7 @@ Gaffer.Metadata.registerNode(
 			from the catalogue node.
 			""",
 
-			"plugValueWidget:type", "GafferImageUI.CatalogueUI._ImageListing",
+			"plugValueWidget:type", "GafferImageUI.CatalogueUI.ImageListing",
 			"label", "",
 			"layout:section", "Images",
 
@@ -127,9 +462,141 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"imageNames" : [
+
+			"description",
+			"""
+			Output containing all the names of the images in the Catalogue.
+			Possible uses include :
+
+			- Looping over all images using a Wedge and a CatalogueSelect.
+			- Making a ContactSheet using the Collect mode and a CatalogueSelect.
+			""",
+
+			"layout:section", "Advanced"
+
+		],
+
 	},
 
 )
+
+Gaffer.Metadata.registerValue( GafferImage.Catalogue.Image, "renameable", True )
+
+##########################################################################
+# Viewer hot-keys
+##########################################################################
+
+def addCatalogueHotkeys( editor ) :
+
+	if not isinstance( editor, GafferUI.Viewer ) :
+		return
+
+	editor.keyPressSignal().connect( __viewerKeyPress )
+
+def __viewerKeyPress( viewer, event ) :
+
+	# Up/Down arrows need to walk upstream of the viewer input and look for
+	# a Catalogue node and increment/decrement its active index
+
+	if event.key not in ( "Down", "Up", "D" ) :
+		return False
+
+	if not isinstance( viewer.view(), GafferImageUI.ImageView ) :
+		return False
+
+	catalogue = Gaffer.NodeAlgo.findUpstream(
+		viewer.view(),
+		lambda node : isinstance( node, GafferImage.Catalogue ),
+		order = Gaffer.NodeAlgo.VisitOrder.DepthFirst
+	)
+
+	if catalogue is None :
+		return False
+
+	if event.key in ( "Down", "Up" ) :
+		__incrementImageIndex( catalogue, event.key )
+		return True
+	elif event.key == "D" and event.modifiers == event.Modifiers.Control :
+		__duplicateCurrentImage( catalogue )
+		return True
+
+	return False
+
+def __incrementImageIndex( catalogue, direction ) :
+
+	indexPlug = catalogue["imageIndex"].source()
+
+	if Gaffer.MetadataAlgo.readOnly( indexPlug ) or not indexPlug.settable() :
+		return
+
+	# Match the UI's top-to-bottom order instead of 'up is a larger number'
+	increment = -1 if direction == "Up" else 1
+
+	# The Catalog UI re-orders images internally using metadata, rather than by
+	# shuffling plugs. As such, we can't just set imageIndex. We don't want to
+	# be poking into the specifics of how this works, so for now we re-use
+	# _ImagesPath as it knows all that logic.
+
+	images = catalogue["images"].source().children()
+	if len( images ) == 0 :
+		return
+
+	maxIndex = len( images ) - 1
+	orderedImages = _ImagesPath( catalogue["images"].source(), [] )._orderedImages()
+
+	# There are times when this can be out of sync with the number of images.
+	# Generally when the UI hasn't been opened.
+	currentPlugIndex = min( indexPlug.getValue(), maxIndex )
+
+	catalogueIndex = orderedImages.index( images[currentPlugIndex] )
+	nextIndex = max( min( catalogueIndex + increment, maxIndex ), 0 )
+	nextPlugIndex = images.index( orderedImages[nextIndex] )
+
+	if nextPlugIndex != currentPlugIndex :
+		indexPlug.setValue( nextPlugIndex )
+
+def __duplicateCurrentImage( catalogue ) :
+
+	currentIndex = catalogue["imageIndex"].getValue()
+	with Gaffer.UndoScope( catalogue.ancestor( Gaffer.ScriptNode ) ) :
+		_duplicateImages( catalogue, currentIndex )
+
+##########################################################################
+# Shared utility functions, these would ideally form a more public API for
+# manipulating a catalogue
+##########################################################################
+
+# Duplicates images at the specified plug-based indices, returning a list of
+# plug indices that were inserted.
+def _duplicateImages( catalogue, plugIndices ) :
+
+	if not isinstance( plugIndices, ( list, tuple ) ) :
+		plugIndices = ( plugIndices, )
+
+	images = catalogue["images"].source()
+	# As we may be inserting more than one image, keep a copy of the original
+	# list so the selection indices remain valid
+	sourceImages = [ i for i in images.children() ]
+	# We need to insert the duplicate before the source, as it's usually
+	# used to snapshot in-progress renders.
+	orderedImages = _ImagesPath( images, [] )._orderedImages()
+
+	insertions = []
+
+	for index in plugIndices :
+		image = sourceImages[ index ]
+		suffix = "Copy" if image["fileName"].getValue() else "Snapshot1"
+		uiInsertionIndex = orderedImages.index( image )
+		imageCopy = GafferImage.Catalogue.Image( image.getName() + suffix, flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		images.addChild( imageCopy )
+		imageCopy.copyFrom( image )
+		orderedImages.insert( uiInsertionIndex, imageCopy )
+		insertions.append( len(images) - 1 )
+
+	_ImagesPath._reorderImages( orderedImages )
+
+	return insertions
 
 ##########################################################################
 # _CataloguePath
@@ -144,19 +611,51 @@ class _ImagesPath( Gaffer.Path ) :
 		Gaffer.Path.__init__( self, path, root, filter )
 
 		self.__images = images
+		self.__catalogue = Gaffer.PlugAlgo.findDestination(
+			images, lambda plug : plug.parent() if isinstance( plug.parent(), GafferImage.Catalogue ) else None
+		)
 
 	def copy( self ) :
 
 		return self.__class__( self.__images, self[:], self.root(), self.getFilter() )
 
-	def isLeaf( self ) :
+	def isLeaf( self, canceller = None ) :
 
 		return len( self ) > 0
 
-	def _orderedImages( self ) :
-		return sorted( self.__images.children(), key=lambda x : Gaffer.Metadata.value( x, _ImagesPath.indexMetadataName ) or 0 )
+	def propertyNames( self, canceller = None ) :
 
-	def _children( self ) :
+		return Gaffer.Path.propertyNames( self ) + [ "catalogue", "catalogue:image" ]
+
+	def property( self, name, canceller = None ) :
+
+		if name == "catalogue" :
+			return self.__catalogue
+		elif name == "catalogue:image" :
+			return self.__images[self[-1]]
+		else :
+			return Gaffer.Path.property( self, name )
+
+	def cancellationSubject( self ) :
+
+		return self.__images
+
+	def _orderedImages( self ) :
+
+		# Start with the order of the Image plugs. Ideally this is all we want
+		# to use.
+		imageAndIndices = [ [ image, plugIndex ] for plugIndex, image in enumerate( self.__images.children() ) ]
+		# Apply ordering from legacy metadata. We used this before we had the
+		# ability to reorder the Image plugs themselves. We'll remove the metadata
+		# the first chance we get - when `_reorderImages()` is called.
+		for imageAndIndex in imageAndIndices :
+			uiIndex = Gaffer.Metadata.value( imageAndIndex[0], _ImagesPath.indexMetadataName )
+			if uiIndex is not None :
+				imageAndIndex[1] = uiIndex
+
+		return [ i[0] for i in sorted( imageAndIndices, key = lambda i : i[1] ) ]
+
+	def _children( self, canceller ) :
 
 		if len( self ) != 0 :
 			return []
@@ -173,19 +672,30 @@ class _ImagesPath( Gaffer.Path ) :
 		# Connect to all the signals we need to in order
 		# to emit pathChangedSignal at the appropriate times.
 
-		self.__childAddedConnection = self.__images.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAdded ) )
-		self.__childRemovedConnection = self.__images.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childRemoved ) )
+		self.__childAddedConnection = self.__images.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAdded ), scoped = True )
+		self.__childRemovedConnection = self.__images.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childRemoved ), scoped = True )
+		self.__cataloguePlugDirtiedConnection = self.__catalogue.plugDirtiedSignal().connect( Gaffer.WeakMethod( self.__cataloguePlugDirtied ), scoped = True )
 		self.__nameChangedConnections = {
-			image : image.nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ) )
+			image : image.nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ), scoped = True )
 			for image in self.__images
 		}
+
+	@staticmethod
+	def _reorderImages( orderedImages ) :
+
+		# Remove legacy metadata that was once used to reorder images before we
+		# had a `reorderChildren()` method.
+		for image in orderedImages :
+			Gaffer.Metadata.deregisterValue( image, _ImagesPath.indexMetadataName )
+
+		# Because we can reorder the images properly via the API now.
+		if orderedImages :
+			orderedImages[0].parent().reorderChildren( orderedImages )
 
 	def __childAdded( self, parent, child ) :
 
 		assert( parent.isSame( self.__images ) )
-		self.__nameChangedConnections[child] = child.nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ) )
-		if not Gaffer.Metadata.value( child, _ImagesPath.indexMetadataName ) :
-			Gaffer.Metadata.registerValue( child, _ImagesPath.indexMetadataName, len( parent.children() ) -1 )
+		self.__nameChangedConnections[child] = child.nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ), scoped = True )
 		self._emitPathChanged()
 
 	def __childRemoved( self, parent, child ) :
@@ -194,91 +704,122 @@ class _ImagesPath( Gaffer.Path ) :
 		del self.__nameChangedConnections[child]
 		self._emitPathChanged()
 
-	def __nameChanged( self, child ) :
+	def __nameChanged( self, child, oldName ) :
 
 		self._emitPathChanged()
 
+	def __cataloguePlugDirtied( self, plug ):
+
+		if plug.ancestor( GafferImage.Catalogue.Image ) :
+			self._emitPathChanged()
+
 ##########################################################################
-# _ImageListing
+# ImageListing
 ##########################################################################
 
-class _ImageListing( GafferUI.PlugValueWidget ) :
+class ImageListing( GafferUI.PlugValueWidget ) :
 
 	def __init__( self, plug, **kw ) :
 
-		self.__column = GafferUI.ListContainer( spacing = 4 )
+		splitContainer = GafferUI.SplitContainer()
 
-		GafferUI.PlugValueWidget.__init__( self, self.__column, plug, **kw )
+		GafferUI.PlugValueWidget.__init__( self, splitContainer, plug, **kw )
 
-		with self.__column :
+		with splitContainer :
 
-			self.__pathListing = GafferUI.PathListingWidget(
-				_ImagesPath( self.__images(), [] ),
-				columns = ( GafferUI.PathListingWidget.defaultNameColumn, ),
-				allowMultipleSelection = True
-			)
-			self.__pathListing.setDragPointer( "" )
-			self.__pathListing.setSortable( False )
-			self.__pathListing.setHeaderVisible( False )
-			self.__pathListing.selectionChangedSignal().connect(
-				Gaffer.WeakMethod( self.__pathListingSelectionChanged ), scoped = False
-			)
-			self.__pathListing.dragEnterSignal().connect(
-				Gaffer.WeakMethod( self.__pathListingDragEnter ), scoped = False
-			)
-			self.__pathListing.dragLeaveSignal().connect(
-				Gaffer.WeakMethod( self.__pathListingDragLeave ), scoped = False
-			)
-			self.__pathListing.dragMoveSignal().connect(
-				Gaffer.WeakMethod( self.__pathListingDragMove ), scoped = False
-			)
-			self.__pathListing.dropSignal().connect(
-				Gaffer.WeakMethod( self.__pathListingDrop ), scoped = False
-			)
-			self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
+			with GafferUI.ListContainer( spacing = 4 ) :
 
-			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
+				self.__pathListing = GafferUI.PathListingWidget(
+					_ImagesPath( self.__images(), [] ),
+					columns = self.__listingColumns(),
+					selectionMode = GafferUI.PathListingWidget.SelectionMode.Rows,
+					sortable = False,
+					horizontalScrollMode = GafferUI.ScrollMode.Automatic
+				)
+				self.__pathListing.setDragPointer( "" )
+				self.__pathListing.setHeaderVisible( True )
+				self.__pathListing.selectionChangedSignal().connect(
+					Gaffer.WeakMethod( self.__pathListingSelectionChanged )
+				)
+				self.__pathListing.dragEnterSignal().connect(
+					Gaffer.WeakMethod( self.__pathListingDragEnter )
+				)
+				self.__pathListing.dragLeaveSignal().connect(
+					Gaffer.WeakMethod( self.__pathListingDragLeave )
+				)
+				self.__pathListing.dragMoveSignal().connect(
+					Gaffer.WeakMethod( self.__pathListingDragMove )
+				)
+				self.__pathListing.dropSignal().connect(
+					Gaffer.WeakMethod( self.__pathListingDrop )
+				)
+				self.__pathListing.getPath().pathChangedSignal().connect(
+					Gaffer.WeakMethod( self.__pathChanged )
+				)
+				self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
 
-				addButton = GafferUI.Button( image = "pathChooser.png", hasFrame = False, toolTip = "Load image" )
-				addButton.clickedSignal().connect( Gaffer.WeakMethod( self.__addClicked ), scoped = False )
+				with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) as self.__buttonRow :
 
-				self.__duplicateButton = GafferUI.Button( image = "duplicate.png", hasFrame = False, toolTip = "Duplicate selected image" )
-				self.__duplicateButton.setEnabled( False )
-				self.__duplicateButton.clickedSignal().connect( Gaffer.WeakMethod( self.__duplicateClicked ), scoped = False )
+					addButton = GafferUI.Button( image = "pathChooser.png", hasFrame = False, toolTip = "Load image" )
+					addButton.clickedSignal().connect( Gaffer.WeakMethod( self.__addClicked ) )
 
-				self.__exportButton = GafferUI.Button( image = "export.png", hasFrame = False, toolTip = "Export selected image" )
-				self.__exportButton.setEnabled( False )
-				self.__exportButton.clickedSignal().connect( Gaffer.WeakMethod( self.__exportClicked ), scoped = False )
+					self.__duplicateButton = GafferUI.Button( image = "duplicate.png", hasFrame = False, toolTip = "Duplicate selected image, hold <kbd>alt</kbd> to view copy. [<kbd>Ctrl-D</kbd>]" )
+					self.__duplicateButton.setEnabled( False )
+					self.__duplicateButton.clickedSignal().connect( Gaffer.WeakMethod( self.__duplicateClicked ) )
 
-				self.__extractButton = GafferUI.Button( image = "extract.png", hasFrame = False, toolTip = "Create CatalogueSelect node for selected image" )
-				self.__extractButton.setEnabled( False )
-				self.__extractButton.clickedSignal().connect( Gaffer.WeakMethod( self.__extractClicked ), scoped = False )
+					self.__exportButton = GafferUI.Button( image = "export.png", hasFrame = False, toolTip = "Export selected image" )
+					self.__exportButton.setEnabled( False )
+					self.__exportButton.clickedSignal().connect( Gaffer.WeakMethod( self.__exportClicked ) )
 
-				GafferUI.Spacer( imath.V2i( 0 ), parenting = { "expand" : True } )
+					self.__extractButton = GafferUI.Button( image = "extract.png", hasFrame = False, toolTip = "Create CatalogueSelect node for selected image" )
+					self.__extractButton.setEnabled( False )
+					self.__extractButton.clickedSignal().connect( Gaffer.WeakMethod( self.__extractClicked ) )
 
-				self.__removeButton = GafferUI.Button( image = "delete.png", hasFrame = False, toolTip = "Remove selected image" )
-				self.__removeButton.setEnabled( False )
-				self.__removeButton.clickedSignal().connect( Gaffer.WeakMethod( self.__removeClicked ), scoped = False )
+					GafferUI.Spacer( imath.V2i( 0 ), parenting = { "expand" : True } )
 
-			GafferUI.Divider()
+					self.__removeButton = GafferUI.Button( image = "delete.png", hasFrame = False, toolTip = "Remove selected image [<kbd>Delete</kbd>]" )
+					self.__removeButton.setEnabled( False )
+					self.__removeButton.clickedSignal().connect( Gaffer.WeakMethod( self.__removeClicked ) )
 
-			with GafferUI.Collapsible( label = "Image Properties", collapsed = False ) :
+				GafferUI.Spacer( size = imath.V2i( 2 ) )
 
-				with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 4 ) :
+			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 4 ) :
 
-					with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
-						GafferUI.Label( "Name" )
-						self.__nameWidget = GafferUI.NameWidget( graphComponent = None )
+				GafferUI.Spacer( size = imath.V2i( 2 ) )
 
-					GafferUI.Label( "Description" )
-					self.__descriptionWidget = GafferUI.MultiLineStringPlugValueWidget( plug = None )
+				GafferUI.Label( "<h4>Image Properties</h4>" )
 
-		self._updateFromPlug()
+				GafferUI.Spacer( size = imath.V2i( 2 ) )
 
-	def _updateFromPlug( self ) :
+				with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
+					GafferUI.Label( "Name" )
+					self.__nameWidget = GafferUI.NameWidget( graphComponent = None )
 
-		with self.getContext() :
-			index = self.getPlug().getValue()
+				GafferUI.Label( "Description" )
+				self.__descriptionWidget = GafferUI.MultiLineStringPlugValueWidget( plug = None )
+
+		self.__mergeGroupId = 0
+
+		Gaffer.Metadata.plugValueChangedSignal( plug.node() ).connect( Gaffer.WeakMethod( self.__plugMetadataValueChanged ) )
+
+		self.contextMenuSignal().connect( Gaffer.WeakMethod( self.__contextMenu ) )
+
+	def buttonRow( self ):
+
+		# Convenience method to get the button row list container to make
+		# it easier to add additional buttons to the Image Listing widget
+		return self.__buttonRow
+
+	def getToolTip( self ) :
+
+		# Suppress the default imageIndex tool-tip until we can do something
+		# more intelligent. We can't use setToolTip as PlugValueWidget defaults
+		# to the plug description for 'falsy' values.
+		return None
+
+	def _updateFromValues( self, values, exception ) :
+
+		index = values[0] if len( values ) else 0
 
 		images = self.__images()
 		if len( images ) :
@@ -292,27 +833,86 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 			self.__descriptionWidget.setPlug( None )
 			self.__nameWidget.setGraphComponent( None )
 
-		self.__column.setEnabled( self._editable() )
+	def _updateFromEditable( self ) :
+
+		self.__pathListing.setEnabled( self._editable() )
+		self.__buttonRow.setEnabled( self._editable() )
+		# No need to manage editability of `self.__nameWidget` and
+		# `self.__descriptionWidget` because they deal with that
+		# internally.
+
+	def __pathChanged( self, path ) :
+
+		# `_updateFromValues()` is sensitive to the contents of the image path so
+		# we need to do an update when it changes.
+		self._requestUpdateFromValues()
+
+	def __plugMetadataValueChanged( self, plug, key, reason ) :
+
+		if key == _columnsMetadataKey and plug == self.getPlug() :
+			self.__pathListing.setColumns( self.__listingColumns() )
+
+	def __getColumns( self ) :
+
+		# Support for promoted plugs.
+		# The plug data may have been reset, or it may have been promoted in a
+		# previous version of gaffer. As such, we can't assume there is a
+		# registered class value for our plug. Fall back on the Catalogue nodes
+		# plug's value as this will consider the class default columns value.
+		## \todo Refactor when we get metadata delegation for promoted plugs
+		return Gaffer.Metadata.value( self.getPlug(), _columnsMetadataKey ) \
+			or Gaffer.Metadata.value( self.__catalogue()["imageIndex"], _columnsMetadataKey )
+
+	def __setColumns( self, columns ) :
+
+		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+			Gaffer.Metadata.registerValue( self.getPlug(), _columnsMetadataKey, IECore.StringVectorData( columns ) )
+
+	def __resetColumns( self, *unused ) :
+
+		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+			Gaffer.Metadata.deregisterValue( self.getPlug(), _columnsMetadataKey )
+
+	def __toggleColumn( self, column, visible ) :
+
+		columns = list( self.__getColumns() )
+		if visible :
+			columns.append( column )
+		else :
+			columns.remove( column )
+
+		self.__setColumns( columns )
+
+	def __listingColumns( self ) :
+
+		columns = []
+
+		for name in self.__getColumns() :
+
+			c = column( name )
+			if c is not None :
+				columns.append( c )
+			else :
+				IECore.msg(
+					IECore.Msg.Level.Error,
+					"GafferImageUI.CatalogueUI", "No column registered with name '%s'" % name
+				)
+
+		return columns
 
 	def __catalogue( self ) :
 
-		def walk( plug ) :
-
-			if isinstance( plug.parent(), GafferImage.Catalogue ) :
-				return plug.parent()
-
-			for output in plug.outputs() :
-				r = walk( output )
-				if r is not None :
-					return r
-
-			return None
-
-		return walk( self.getPlug() )
+		return Gaffer.PlugAlgo.findDestination(
+			self.getPlug(), lambda plug : plug.parent() if isinstance( plug.parent(), GafferImage.Catalogue ) else None
+		)
 
 	def __images( self ) :
 
 		return self.__catalogue()["images"].source()
+
+	def __orderedImages( self ) :
+
+		return _ImagesPath( self.__images(), [] )._orderedImages()
 
 	def __indicesFromSelection( self ) :
 		indices = []
@@ -333,12 +933,11 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 		self.__duplicateButton.setEnabled( bool( indices ) )
 
 		if not indices :
-			# No selection. This happens when the user renames
-			# an image, because the selection is name based.
-			# Calling _updateFromPlug() causes us to reselect
-			# the correct image based on the value of the index
-			# plug.
-			self._updateFromPlug()
+			# No selection. This happens when the user renames an image, because
+			# the selection is name-based. Calling `_requestUpdateFromValues()`
+			# causes us to reselect the correct image based on the value of the
+			# index plug.
+			self._requestUpdateFromValues()
 		else :
 			# Deliberately not using an UndoScope as the user thinks
 			# of this as making a selection, not changing a plug value.
@@ -374,9 +973,12 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 			self.__images().addChild( GafferImage.Catalogue.Image.load( str( path ) ) )
 			self.getPlug().setValue( len( self.__images() ) - 1 )
 
-	def __metadataIndexToGraphComponentIndex( self, index ) :
+	def __uiIndexToIndex( self, index ) :
+
+		target = self.__orderedImages()[ index ]
+
 		for i, image in enumerate( self.__images() ) :
-			if index == Gaffer.Metadata.value( image, _ImagesPath.indexMetadataName ) :
+			if image.isSame( target ) :
 				return i
 
 	def __removeClicked( self, *unused ) :
@@ -390,17 +992,23 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 			return
 
 		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+
+			orderedImages = self.__orderedImages()
+			reselectionIndex = len( orderedImages )
+
 			for index in reversed( sorted( indices ) ) :
-				metadataIndex = Gaffer.Metadata.value( self.__images()[index], _ImagesPath.indexMetadataName )
-				self.__images().removeChild( self.__images()[index] )
+				image = self.__images()[ index ]
+				uiIndex = orderedImages.index( image )
+				reselectionIndex = min( max( 0, uiIndex - 1 ), reselectionIndex )
+				self.__images().removeChild( image )
+				orderedImages.remove( image )
+
+			_ImagesPath._reorderImages( orderedImages )
 
 			# Figure out new selection
-			if not metadataIndex :
-				selectionIndex = index - 1
-			else:
-				selectionIndex = self.__metadataIndexToGraphComponentIndex( metadataIndex - 1 )
-
-			self.getPlug().setValue( max( 0, selectionIndex ) )
+			if orderedImages :
+				selectionIndex = self.__uiIndexToIndex( reselectionIndex )
+				self.getPlug().setValue( selectionIndex )
 
 	def __extractClicked( self, *unused ) :
 
@@ -442,16 +1050,18 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 
 	def __duplicateClicked( self, *unused ) :
 
+		# These are plug indices, rather than ui indices, so need to be
+		# used directly with self.__images() without remapping.
 		indices = self.__indicesFromSelection()
+		if not indices :
+			return
 
 		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
-			for index in indices :
-				image = self.__images()[index]
-				imageCopy = GafferImage.Catalogue.Image( image.getName() + "Copy",  flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
-				self.__images().addChild( imageCopy )
-				imageCopy.copyFrom( image )
-
-			self.getPlug().setValue( len( self.__images() ) - 1 )
+			insertions = _duplicateImages( self.__catalogue(), indices )
+			# Only switch to the last duplicate if alt is held
+			altHeld = GafferUI.Widget.currentModifiers() & GafferUI.ModifiableEvent.Modifiers.Alt
+			if altHeld :
+				self.getPlug().setValue( insertions[-1] )
 
 	def __dropImage( self, eventData ) :
 
@@ -469,9 +1079,10 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 
 	def __pathListingDragEnter( self, widget, event ) :
 
-		if isinstance( event.data, IECore.StringVectorData ) :
+		if event.sourceWidget is widget and isinstance( event.data, IECore.StringVectorData ) and event.data :
 			# Allow reordering of images
 			self.__moveToPath = None
+			self.__mergeGroupId += 1
 			return True
 
 		if self.__dropImage( event.data ) is None :
@@ -490,7 +1101,7 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 
 	def __pathListingDragMove( self, listing, event ) :
 
-		if not event.data or not isinstance( event.data, IECore.StringVectorData ) :
+		if not ( event.sourceWidget is listing and isinstance( event.data, IECore.StringVectorData ) and event.data ) :
 			return
 
 		targetPath = self.__pathListing.pathAt( event.line.p0 )
@@ -499,7 +1110,7 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 			return
 		self.__moveToPath = targetPath
 
-		images = sorted( self.__images(), key = lambda x : Gaffer.Metadata.value( x, _ImagesPath.indexMetadataName ) or -1 )
+		images = self.__orderedImages()
 		imagesToMove = [image for image in images if '/'+image.getName() in event.data]
 
 		# Because of multi-selection it's possible to move the mouse over a selected image.
@@ -510,16 +1121,10 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 		imageToReplace = None
 
 		if targetPath is not None :
-			targetName = str( targetPath )[1:]
-			for image in images :
-				if not image.getName() == targetName :
-					continue
-
-				imageToReplace = image
-				break
+			imageToReplace = targetPath.property( "catalogue:image" )
 		else :
 			# Drag has gone above or below all listed items. Use closest image.
-			imageToReplace = images[0] if event.line.p0.y < 1 else images[-1]
+			imageToReplace = images[0] if event.line.p0.y < 1.5 else images[-1]
 
 		if not imageToReplace or imageToReplace in imagesToMove :
 			return
@@ -542,32 +1147,38 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 			images.insert( newIndex, image )
 			previous = image
 
-		for idx, image in enumerate( [image for image in images if image ] ) :
-			Gaffer.Metadata.registerValue( image, _ImagesPath.indexMetadataName, idx )
+		with Gaffer.UndoScope(
+			self.getPlug().ancestor( Gaffer.ScriptNode ),
+			mergeGroup = "ImageListing{}{}".format( id( self, ), self.__mergeGroupId )
+		) :
+			_ImagesPath._reorderImages( [image for image in images if image ] )
 
 		self.__pathListing.getPath().pathChangedSignal()( self.__pathListing.getPath() )
 
 	def __pathListingDrop( self, widget, event ) :
 
-		image = self.__dropImage( event.data )
-		if image is None :
-			return False
+		try:
+			image = self.__dropImage( event.data )
+			if image is None :
+				return False
 
-		with self.getContext() :
-			fileName = self.__catalogue().generateFileName( image )
-			imageWriter = GafferImage.ImageWriter()
-			imageWriter["in"].setInput( image )
-			imageWriter["fileName"].setValue( fileName )
-			imageWriter["task"].execute()
+			with self.context() :
+				fileName = self.__catalogue().generateFileName( image )
+				imageWriter = GafferImage.ImageWriter()
+				imageWriter["in"].setInput( image )
+				imageWriter["fileName"].setValue( fileName )
+				imageWriter["task"].execute()
 
-		with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
-			loadedImage = GafferImage.Catalogue.Image.load( fileName )
-			loadedImage.setName( image.node().getName() )
-			self.__images().addChild( loadedImage )
-			self.getPlug().setValue( len( self.__images() ) - 1 )
+			with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
+				loadedImage = GafferImage.Catalogue.Image.load( fileName )
+				loadedImage.setName( image.node().getName() )
+				self.__images().addChild( loadedImage )
+				self.getPlug().setValue( len( self.__images() ) - 1 )
 
-		self.__pathListing.setHighlighted( False )
-		GafferUI.Pointer.setCurrent( None )
+			self.__pathListing.setHighlighted( False )
+			GafferUI.Pointer.setCurrent( None )
+		except Exception as e:
+			IECore.msg( IECore.Msg.Level.Warning, "CatalogueUI", 'Failed to add image during drag, exception: ' + str( e ) )
 
 		return True
 
@@ -576,7 +1187,46 @@ class _ImageListing( GafferUI.PlugValueWidget ) :
 		if keyEvent.key in ['Delete', 'Backspace'] :
 			self.__removeClicked()
 			return True
+		elif keyEvent.key == "D" and keyEvent.modifiers == keyEvent.Modifiers.Control :
+			self.__duplicateClicked()
+			return True
 
 		return False
+
+	def __columnContextMenuDefinition( self ) :
+
+		columns = self.__getColumns()
+		allColumnsSorted = sorted( registeredColumns() )
+
+		menu = IECore.MenuDefinition()
+		menu.append( "/Reset", { "command" : Gaffer.WeakMethod( self.__resetColumns ) } )
+		menu.append( "/__resetDivider__", { "divider" : True } )
+
+		for column in allColumnsSorted :
+
+			menu.append( "/%s" % column, {
+				"checkBox" : column in columns,
+				"command" : functools.partial( Gaffer.WeakMethod( self.__toggleColumn ), column ),
+				# Prevent the last column being removed
+				"active": False if column in columns and len(columns) == 1 else True
+			} )
+
+		return menu
+
+	def __contextMenu( self, *unused ) :
+
+		if self.getPlug() is None :
+			return False
+
+		# This signal is called anywhere in the listing, check we're over the header.
+		mousePosition = GafferUI.Widget.mousePosition( relativeTo = self.__pathListing )
+		headerRect = self.__pathListing._qtWidget().header().rect()
+		if not headerRect.contains( mousePosition[0], mousePosition[1] ) :
+			return False
+
+		self.__popupMenu = GafferUI.Menu( self.__columnContextMenuDefinition(), title = "Columns" )
+		self.__popupMenu.popup( parent = self )
+
+		return True
 
 GafferUI.Pointer.registerPointer( "plus", GafferUI.Pointer( "plus.png" ) )

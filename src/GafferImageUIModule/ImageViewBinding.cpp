@@ -38,11 +38,15 @@
 
 #include "ImageViewBinding.h"
 
+#include "GafferImageUI/ImageGadget.h"
 #include "GafferImageUI/ImageView.h"
 
 #include "GafferImage/ImageProcessor.h"
 
 #include "GafferBindings/NodeBinding.h"
+#include "GafferBindings/PlugBinding.h"
+
+#include "Gaffer/ScriptNode.h"
 
 using namespace std;
 using namespace boost::python;
@@ -59,8 +63,8 @@ class ImageViewWrapper : public NodeWrapper<ImageView>
 
 	public :
 
-		ImageViewWrapper( PyObject *self, const std::string &name )
-			:	NodeWrapper<ImageView>( self, name )
+		ImageViewWrapper( PyObject *self, ScriptNodePtr scriptNode )
+			:	NodeWrapper<ImageView>( self, scriptNode )
 		{
 		}
 
@@ -71,64 +75,31 @@ class ImageViewWrapper : public NodeWrapper<ImageView>
 
 };
 
-struct DisplayTransformCreator
-{
-	DisplayTransformCreator( object fn )
-		:	m_fn( fn )
-	{
-	}
-
-	ImageProcessorPtr operator()()
-	{
-		IECorePython::ScopedGILLock gilLock;
-		ImageProcessorPtr result = extract<ImageProcessorPtr>( m_fn() );
-		return result;
-	}
-
-	private :
-
-		object m_fn;
-
-};
-
-void registerDisplayTransform( const std::string &name, object creator )
-{
-	ImageView::registerDisplayTransform( name, DisplayTransformCreator( creator ) );
-}
-
-boost::python::list registeredDisplayTransforms()
-{
-	vector<string> n;
-	ImageView::registeredDisplayTransforms( n );
-	boost::python::list result;
-	for( vector<string>::const_iterator it = n.begin(), eIt = n.end(); it != eIt; ++it )
-	{
-		result.append( *it );
-	}
-
-	return result;
-}
-
-ImageProcessorPtr createDisplayTransform( const std::string &name )
-{
-	IECorePython::ScopedGILRelease gilRelease;
-	return ImageView::createDisplayTransform( name );
-}
-
 } // namespace
 
 void GafferImageUIModule::bindImageView()
 {
-
-	GafferBindings::NodeClass<ImageView, ImageViewWrapper>()
-		.def( init<const std::string &>() )
+	scope s = GafferBindings::NodeClass<ImageView, ImageViewWrapper>( nullptr, no_init )
+		.def( init<ScriptNodePtr>() )
+		.def( "imageGadget", (ImageGadget *(ImageView::*)())&ImageView::imageGadget, return_value_policy<IECorePython::CastToIntrusivePtr>() )
 		.def( "_insertConverter", &ImageViewWrapper::insertConverter )
-		.def( "registerDisplayTransform", &registerDisplayTransform )
-		.staticmethod( "registerDisplayTransform" )
-		.def( "registeredDisplayTransforms", &registeredDisplayTransforms )
-		.staticmethod( "registeredDisplayTransforms" )
-		.def( "createDisplayTransform", &createDisplayTransform )
-		.staticmethod( "createDisplayTransform" )
+	;
+
+	scope ci = GafferBindings::PlugClass<ImageView::ColorInspectorPlug>()
+		.def( init<const char *, Plug::Direction, unsigned>(
+				(
+					boost::python::arg_( "name" )=GraphComponent::defaultName<ImageView::ColorInspectorPlug>(),
+					boost::python::arg_( "direction" )=Plug::In,
+					boost::python::arg_( "flags" )=Plug::Default
+				)
+			)
+		)
+	;
+
+	enum_<ImageView::ColorInspectorPlug::Mode>( "Mode" )
+		.value( "Cursor", ImageView::ColorInspectorPlug::Mode::Cursor )
+		.value( "Pixel", ImageView::ColorInspectorPlug::Mode::Pixel )
+		.value( "Area", ImageView::ColorInspectorPlug::Mode::Area )
 	;
 
 }

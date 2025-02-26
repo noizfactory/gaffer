@@ -34,12 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_TOOL_H
-#define GAFFERUI_TOOL_H
+#pragma once
 
 #include "GafferUI/Export.h"
 #include "GafferUI/TypeIds.h"
 
+#include "Gaffer/Container.h"
 #include "Gaffer/Node.h"
 #include "Gaffer/TypedPlug.h"
 
@@ -76,9 +76,10 @@ class GAFFERUI_API Tool : public Gaffer::Node
 
 	public :
 
+		explicit Tool( View *view, const std::string &name = defaultName<Tool>() );
 		~Tool() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::Tool, ToolTypeId, Gaffer::Node );
+		GAFFER_NODE_DECLARE_TYPE( GafferUI::Tool, ToolTypeId, Gaffer::Node );
 
 		View *view();
 		const View *view() const;
@@ -88,12 +89,17 @@ class GAFFERUI_API Tool : public Gaffer::Node
 		Gaffer::BoolPlug *activePlug();
 		const Gaffer::BoolPlug *activePlug() const;
 
+		/// The Tool constructor automatically parents the tool to
+		/// the`View::toolsContainer()`. After that, the tool may not be
+		/// reparented.
+		bool acceptsParent( const GraphComponent *potentialParent ) const override;
+
 		/// @name Factory
 		///////////////////////////////////////////////////////////////////
 		//@{
 		/// Creates a Tool for the specified View.
 		static ToolPtr create( const std::string &toolName, View *view );
-		typedef std::function<ToolPtr ( View * )> ToolCreator;
+		using ToolCreator = std::function<ToolPtr ( View * )>;
 		/// Registers a function which will return a Tool instance for a
 		/// view of a specific type.
 		static void registerTool( const std::string &toolName, IECore::TypeId viewType, ToolCreator creator );
@@ -102,8 +108,6 @@ class GAFFERUI_API Tool : public Gaffer::Node
 		//@}
 
 	protected :
-
-		Tool( View *view, const std::string &name = defaultName<Tool>() );
 
 		template<typename ToolType, typename ViewType>
 		struct ToolDescription
@@ -124,14 +128,15 @@ class GAFFERUI_API Tool : public Gaffer::Node
 			}
 		};
 
-	private :
+		void parentChanged( GraphComponent *oldParent ) override;
 
-		View *m_view;
+	private :
 
 		static size_t g_firstPlugIndex;
 
 };
 
-} // namespace GafferUI
+using ToolContainer = Gaffer::Container<Gaffer::Node, Tool>;
+IE_CORE_DECLAREPTR( ToolContainer );
 
-#endif // GAFFERUI_TOOL_H
+} // namespace GafferUI

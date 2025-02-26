@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENETEST_TESTSHADER_H
-#define GAFFERSCENETEST_TESTSHADER_H
+#pragma once
 
 #include "GafferSceneTest/Export.h"
 #include "GafferSceneTest/TypeIds.h"
@@ -53,10 +52,13 @@ class GAFFERSCENETEST_API TestShader : public GafferScene::Shader
 		TestShader( const std::string &name=defaultName<TestShader>() );
 		~TestShader() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferSceneTest::TestShader, TestShaderTypeId, GafferScene::Shader );
+		GAFFER_NODE_DECLARE_TYPE( GafferSceneTest::TestShader, TestShaderTypeId, GafferScene::Shader );
+
+		// Populates the `parameters` with plugs for different test cases. Currently
+		// supports `simpleShader` and `simpleLight`. If `shaderName` is not recognized,
+		// it will create a shader with that name and no parameters.
+		void loadShader( const std::string &shaderName, bool keepExistingValues=false ) override;
 
 };
 
 } // namespace GafferSceneTest
-
-#endif // GAFFERSCENETEST_TESTSHADER_H

@@ -34,7 +34,7 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import unittest
 
 import IECore
@@ -195,7 +195,7 @@ class BoxInTest( GafferTest.TestCase ) :
 		s["b1"]["i"].setup( s["b1"]["n"]["op1"] )
 
 		self.assertEqual( Gaffer.Metadata.value( s["b1"]["i"].promotedPlug(), "test" ), "testValue" )
-		self.assertNotIn( "layout:section", Gaffer.Metadata.registeredValues( s["b1"]["i"].promotedPlug(), instanceOnly = True ) )
+		self.assertNotIn( "layout:section", Gaffer.Metadata.registeredValues( s["b1"]["i"].promotedPlug(), Gaffer.Metadata.RegistrationTypes.Instance ) )
 
 		s["b2"] = Gaffer.Box()
 		s.execute(
@@ -204,7 +204,7 @@ class BoxInTest( GafferTest.TestCase ) :
 		)
 
 		self.assertEqual( Gaffer.Metadata.value( s["b2"]["i"].promotedPlug(), "test" ), "testValue" )
-		self.assertNotIn( "layout:section", Gaffer.Metadata.registeredValues( s["b2"]["i"].promotedPlug(), instanceOnly = True ) )
+		self.assertNotIn( "layout:section", Gaffer.Metadata.registeredValues( s["b2"]["i"].promotedPlug(), Gaffer.Metadata.RegistrationTypes.Instance ) )
 
 	def testNoduleSectionMetadata( self ) :
 
@@ -438,13 +438,13 @@ class BoxInTest( GafferTest.TestCase ) :
 	def testSetupNone( self ) :
 
 		b = Gaffer.BoxIn()
-		with self.assertRaisesRegexp( Exception, "Python argument types" ) :
+		with self.assertRaisesRegex( Exception, "Python argument types" ) :
 			b.setup( None )
 
 	def testSetupNoArgument( self ) :
 
 		b = Gaffer.BoxIn()
-		with self.assertRaisesRegexp( Exception, "Python argument types" ) :
+		with self.assertRaisesRegex( Exception, "Python argument types" ) :
 			b.setup()
 
 	def testSerialisationUsesSetup( self ) :
@@ -469,7 +469,7 @@ class BoxInTest( GafferTest.TestCase ) :
 		s1["b"]["i"].setup( Gaffer.IntPlug())
 
 		s1["r"] = Gaffer.Reference()
-		s1["r"].load( os.path.dirname( __file__ ) + "/references/empty.grf" )
+		s1["r"].load( pathlib.Path( __file__ ).parent / "references" / "empty.grf" )
 
 		s2 = Gaffer.ScriptNode()
 		s2.execute( s1.serialise() )

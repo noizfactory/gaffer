@@ -51,7 +51,9 @@ _primitiveVariableNamesOptions = {
 	"N" : IECore.V3fData( imath.V3f(0), IECore.GeometricData.Interpretation.Normal ),
 	"velocity" : IECore.V3fData( imath.V3f(0), IECore.GeometricData.Interpretation.Vector ),
 	"uv" : IECore.V3fData( imath.V3f(0), IECore.GeometricData.Interpretation.UV ),
+	"scale" : IECore.V3fData( imath.V3f(1) ),
 	"width" : IECore.FloatData(),
+	"prototypeIndex" : IECore.IntData(),
 	"Cs" : IECore.Color3fData(),
 	"customInt" : IECore.IntData(),
 	"customFloat" : IECore.FloatData(),
@@ -81,7 +83,7 @@ class _PrimitiveVariablesFooter( GafferUI.PlugValueWidget ) :
 
 				GafferUI.Spacer( imath.V2i( GafferUI.PlugWidget.labelWidth(), 1 ) )
 
-				menuButton = GafferUI.MenuButton(
+				self.__menuButton = GafferUI.MenuButton(
 					image = "plus.png",
 					hasFrame = False,
 					menu = GafferUI.Menu(
@@ -90,24 +92,19 @@ class _PrimitiveVariablesFooter( GafferUI.PlugValueWidget ) :
 					),
 					toolTip = "Add Input"
 				)
-				menuButton.setEnabled( not Gaffer.MetadataAlgo.readOnly( plug ) )
 
 				GafferUI.Spacer( imath.V2i( 1 ), imath.V2i( 999999, 1 ), parenting = { "expand" : True } )
 
-	def _updateFromPlug( self ) :
+	def _updateFromEditable( self ) :
 
-		self.setEnabled( self._editable() )
+		self.__menuButton.setEnabled( self._editable() )
 
 	def __menuDefinition( self ) :
 
 		result = IECore.MenuDefinition()
 		usedNames = set()
 		for p in self.getPlug().children():
-			# TODO - this method for checking if a plug variesWithContext should probably live in PlugAlgo
-			# ( it's based on Switch::variesWithContext )
-			sourcePlug = p["name"].source()
-			variesWithContext = sourcePlug.direction() == Gaffer.Plug.Direction.Out and isinstance( ComputeNode, sourcePlug.node() )
-			if not variesWithContext:
+			if not Gaffer.PlugAlgo.dependsOnCompute( p ) :
 				usedNames.add( p["name"].getValue() )
 
 		categories = { "Standard" : [], "Custom" : [], "Advanced" : [] }
@@ -175,6 +172,12 @@ Gaffer.Metadata.registerNode(
 
 	plugs = {
 
+		"adjustBounds" : [
+
+			"layout:index", -2,
+
+		],
+
 		"primitiveVariables" : [
 
 			"description",
@@ -201,9 +204,13 @@ Gaffer.Metadata.registerNode(
 
 			# Add + button for showing and hiding parameters in the GraphEditor
 			"noduleLayout:customGadget:addButton:gadgetType", "GafferOSLUI.OSLObjectUI.PlugAdder",
+
+			"layout:index", -1,
+
 		],
 		"primitiveVariables.*" : [
 
+			"deletable", True,
 			# Although the parameters plug is positioned
 			# as we want above, we must also register
 			# appropriate values for each individual parameter,
@@ -227,7 +234,6 @@ Gaffer.Metadata.registerNode(
 			# for the case where they get promoted to a box
 			# individually.
 			"noduleLayout:section", "left",
-			"nodule:type", "GafferUI::StandardNodule",
 			"noduleLayout:label", lambda plug : plug.parent().getName() if plug.typeId() == GafferOSL.ClosurePlug.staticTypeId() else plug.parent()["name"].getValue(),
 			"ui:visibleDimensions", lambda plug : 2 if hasattr( plug, "interpretation" ) and plug.interpretation() == IECore.GeometricData.Interpretation.UV else None,
 		],
@@ -270,40 +276,7 @@ Gaffer.Metadata.registerNode(
 			""",
 
 		],
+
 	}
 
 )
-
-#########################################################################
-# primitiveVariable plug menu
-##########################################################################
-
-def __deletePlug( plug ) :
-
-	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
-		plug.parent().removeChild( plug )
-
-def __plugPopupMenu( menuDefinition, plugValueWidget ) :
-
-	plug = plugValueWidget.getPlug()
-	if not isinstance( plug.node(), GafferOSL.OSLObject ):
-		return
-
-	relativeName = plug.relativeName( plug.node() ).split( "." )
-	if relativeName[0] != "primitiveVariables" or len( relativeName ) < 2:
-		return
-
-	primVarPlug = plug.node()["primitiveVariables"][relativeName[1]]
-
-	menuDefinition.append( "/DeleteDivider", { "divider" : True } )
-	menuDefinition.append(
-		"/Delete",
-		{
-			"command" : functools.partial( __deletePlug, primVarPlug ),
-			"active" : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( primVarPlug ),
-		}
-	)
-
-GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu, scoped = False )
-
-

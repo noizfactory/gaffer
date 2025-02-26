@@ -35,10 +35,16 @@
 #
 ##########################################################################
 
+import enum
+import math
+
+import imath
+
 import IECore
 
 import Gaffer
 import GafferUI
+from ._StyleSheet import _styleColors
 
 from Qt import QtGui
 from Qt import QtWidgets
@@ -46,12 +52,12 @@ from Qt import QtCore
 
 class MultiLineTextWidget( GafferUI.Widget ) :
 
-	WrapMode = IECore.Enum.create( "None", "Word", "Character", "WordOrCharacter" )
-	Role = IECore.Enum.create( "Text", "Code" )
+	WrapMode = enum.Enum( "WrapNode", [ "None_", "Word", "Character", "WordOrCharacter" ] )
+	Role = enum.Enum( "Role", [ "Text", "Code" ] )
 
-	def __init__( self, text="", editable=True, wrapMode=WrapMode.WordOrCharacter, fixedLineHeight=None, role=Role.Text, **kw ) :
+	def __init__( self, text="", editable=True, wrapMode=WrapMode.WordOrCharacter, fixedLineHeight=None, role=Role.Text, placeholderText = "", lineNumbersVisible = False, **kw ) :
 
-		GafferUI.Widget.__init__( self, _PlainTextEdit(), **kw )
+		GafferUI.Widget.__init__( self, _PlainTextEdit( lineNumbersVisible ), **kw )
 
 		## \todo This should come from the Style when we get Styles applied to Widgets
 		# (and not just Gadgets as we have currently).
@@ -72,17 +78,22 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 		self.setWrapMode( wrapMode )
 		self.setFixedLineHeight( fixedLineHeight )
 		self.setRole( role )
+		self.setPlaceholderText( placeholderText )
 
-		self.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ), scoped = False )
-		self.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ), scoped = False )
-		self.dragLeaveSignal().connect( Gaffer.WeakMethod( self.__dragLeave ), scoped = False )
-		self.dropSignal().connect( Gaffer.WeakMethod( self.__drop ), scoped = False )
+		self.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ) )
+		self.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ) )
+		self.dragLeaveSignal().connect( Gaffer.WeakMethod( self.__dragLeave ) )
+		self.dropSignal().connect( Gaffer.WeakMethod( self.__drop ) )
+		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
 
 		self._qtWidget().setTabStopWidth( 20 ) # pixels
 
+		self.__editingFinishedSignal = GafferUI.WidgetSignal()
+		self.__activatedSignal = GafferUI.WidgetSignal()
+
 	def getText( self ) :
 
-		return self._qtWidget().toPlainText().encode( "utf-8" )
+		return self._qtWidget().toPlainText()
 
 	def setText( self, text ) :
 
@@ -120,7 +131,7 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 
 		self._qtWidget().setWordWrapMode(
 			{
-				self.WrapMode.None : QtGui.QTextOption.NoWrap,
+				self.WrapMode.None_ : QtGui.QTextOption.NoWrap,
 				self.WrapMode.Word : QtGui.QTextOption.WordWrap,
 				self.WrapMode.Character : QtGui.QTextOption.WrapAnywhere,
 				self.WrapMode.WordOrCharacter : QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere,
@@ -130,7 +141,7 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 	def getWrapMode( self ) :
 
 		return {
-			QtGui.QTextOption.NoWrap : self.WrapMode.None,
+			QtGui.QTextOption.NoWrap : self.WrapMode.None_,
 			QtGui.QTextOption.WordWrap : self.WrapMode.Word,
 			QtGui.QTextOption.WrapAnywhere : self.WrapMode.Character,
 			QtGui.QTextOption.WrapAtWordBoundaryOrAnywhere : self.WrapMode.WordOrCharacter,
@@ -172,11 +183,56 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 			QtCore.QPoint( position[0], position[1] )
 		).position()
 
+	def cursorBound( self, relativeTo = None ) :
+
+		b = self._qtWidget().cursorRect()
+		b = imath.Box2i(
+			imath.V2i( b.left(), b.top() ),
+			imath.V2i( b.right(), b.bottom() )
+		)
+
+		if relativeTo is not self :
+			p = self.bound( relativeTo ).min()
+			b.setMin( b.min() + p )
+			b.setMax( b.max() + p )
+
+		return b
+
+	## Start and end are indexes into the text, and support the same
+	# indexing as a standard python string (negative indices index relative
+	# to the end etc).
+	def setSelection( self, start, end ) :
+
+		if start is None :
+			start = 0
+		elif start < 0 :
+			start += len( self.getText() )
+
+		if end is None :
+			end = len( self.getText() )
+		elif end < 0 :
+			end += len( self.getText() )
+
+		cursor = self._qtWidget().textCursor()
+		cursor.setPosition( start ) # Moves anchor too
+		cursor.setPosition( end, cursor.KeepAnchor )
+		self._qtWidget().setTextCursor( cursor )
+
+	## Returns a `( start, end )` tuple.
+	def getSelection( self ) :
+
+		cursor = self._qtWidget().textCursor()
+		if not cursor.hasSelection() :
+			return 0, 0
+
+		position = cursor.position()
+		anchor = cursor.anchor()
+		return ( min( anchor, position ), max( anchor, position ) )
+
 	def selectedText( self ) :
 
 		cursor = self._qtWidget().textCursor()
-		text = cursor.selection().toPlainText()
-		return text.encode( "utf-8" )
+		return cursor.selection().toPlainText()
 
 	def linkAt( self, position ) :
 
@@ -222,7 +278,7 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 		if role == self.getRole() :
 			return
 
-		self._qtWidget().setProperty( "gafferRole", GafferUI._Variant.toVariant( str( role ) ) )
+		self._qtWidget().setProperty( "gafferRole", GafferUI._Variant.toVariant( role.name ) )
 		self._repolish()
 
 	def getRole( self ) :
@@ -233,25 +289,24 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 
 		return getattr( self.Role, role )
 
-	## A signal emitted when the widget loses focus.
-	def editingFinishedSignal( self ) :
+	## Sets what text is displayed when the main text is empty.
+	def setPlaceholderText( self, text ) :
 
-		try :
-			return self.__editingFinishedSignal
-		except :
-			self.__editingFinishedSignal = GafferUI.WidgetSignal()
-			self._qtWidget().installEventFilter( _focusOutEventFilter )
+		self._qtWidget().setPlaceholderText( text )
+
+	def getPlaceholderText( self ) :
+
+		return self._qtWidget().placeholderText()
+
+	## A signal emitted whenever the user has finished editing the text either
+	# by activating it via `Enter` or `Ctrl + Return`, or by moving focus to
+	# another Widget.
+	def editingFinishedSignal( self ) :
 
 		return self.__editingFinishedSignal
 
-	## A signal emitted when enter (or Ctrl-Return) is pressed.
+	## A signal emitted when `Enter` or `Ctrl + Return` is pressed.
 	def activatedSignal( self ) :
-
-		try :
-			return self.__activatedSignal
-		except :
-			self.__activatedSignal = GafferUI.WidgetSignal()
-			self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
 
 		return self.__activatedSignal
 
@@ -261,8 +316,8 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 			return self.__linkActivatedSignal
 		except :
 			self.__linkActivatedSignal = GafferUI.WidgetEventSignal()
-			self.mouseMoveSignal().connect( Gaffer.WeakMethod( self.__mouseMove ), scoped = False )
-			self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ), scoped = False )
+			self.mouseMoveSignal().connect( Gaffer.WeakMethod( self.__mouseMove ) )
+			self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ) )
 
 		return self.__linkActivatedSignal
 
@@ -277,9 +332,23 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 		try :
 			return self.__dropTextSignal
 		except :
-			self.__dropTextSignal = Gaffer.Signal2()
+			self.__dropTextSignal = Gaffer.Signals.Signal2()
 
 		return self.__dropTextSignal
+
+	def setLineNumbersVisible( self, visible ) :
+
+		self._qtWidget().setLineNumbersVisible( visible )
+
+	def getLineNumbersVisible( self ) :
+
+		return self._qtWidget().getLineNumbersVisible()
+
+	def _emitEditingFinished( self ) :
+
+		self.editingFinishedSignal()( self )
+		# Hide our activation hint
+		self._qtWidget().document().setModified( False )
 
 	def __textChanged( self ) :
 
@@ -291,6 +360,10 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 
 		if event.key=="Enter" or ( event.key=="Return" and event.modifiers==event.Modifiers.Control ) :
 			self.__activatedSignal( self )
+			self._emitEditingFinished()
+			return True
+		elif event.key == "Return" and event.modifiers == event.Modifiers.Shift :
+			self._qtWidget().textCursor().insertBlock()
 			return True
 
 		return False
@@ -354,13 +427,37 @@ class MultiLineTextWidget( GafferUI.Widget ) :
 	def __drop( self, widget, event ) :
 
 		self.insertText( self.__dropText( event.data ) )
+		return True
+
+class _QLineNumberArea( QtWidgets.QWidget ) :
+
+	def __init__( self, codeEditor ) :
+
+		assert( isinstance( codeEditor, _PlainTextEdit ) )
+		QtWidgets.QWidget.__init__( self, codeEditor )
+
+	def sizeHint( self ) :
+
+		return QtCore.QSize( self.parentWidget().lineNumberAreaWidth(), 0 )
+
+	def paintEvent( self, event ) :
+
+		self.parentWidget().lineNumberAreaPaintEvent( event )
 
 class _PlainTextEdit( QtWidgets.QPlainTextEdit ) :
 
-	def __init__( self, parent = None ) :
+	def __init__( self, lineNumbersVisible, parent = None ) :
+
 		QtWidgets.QPlainTextEdit.__init__( self, parent )
+
+		self.__lineNumberAreaWidget = _QLineNumberArea( self )
+		self.setLineNumbersVisible( lineNumbersVisible )
+
 		self.__fixedLineHeight = None
-		self.__widgetFullyBuilt = False
+
+		self.blockCountChanged.connect( self.__updateLineNumberAreaWidth )
+		self.updateRequest.connect( self.__updateLineNumberArea )
+		self.document().modificationChanged.connect( self.update )
 
 	def setFixedLineHeight( self, fixedLineHeight ) :
 
@@ -376,6 +473,56 @@ class _PlainTextEdit( QtWidgets.QPlainTextEdit ) :
 	def getFixedLineHeight( self ) :
 
 		return self.__fixedLineHeight
+
+	def setLineNumbersVisible( self, visible ) :
+
+		self.__lineNumbersVisible = visible
+		self.__lineNumberAreaWidget.setVisible( visible )
+		self.__updateLineNumberAreaWidth( 0 )
+
+	def getLineNumbersVisible( self ) :
+
+		return self.__lineNumbersVisible
+
+	def lineNumberAreaWidth( self ) :
+
+		if not self.getLineNumbersVisible() :
+			return 0
+
+		digits = 1 + math.floor( math.log10( self.blockCount() ) )
+
+		return 3 + self.fontMetrics().horizontalAdvance( '9' ) * digits
+
+	def lineNumberAreaPaintEvent( self, event ) :
+
+		block = self.firstVisibleBlock()
+
+		top = round( self.blockBoundingGeometry( block ).translated( self.contentOffset() ).top() )
+		bottom = top + round( self.blockBoundingRect( block ).height() )
+
+		width = self.lineNumberAreaWidth()
+
+		painter = QtGui.QPainter( self.__lineNumberAreaWidget )
+		painter.setFont( self.property( "font" ) )
+
+		nonCursorLineColor = QtGui.QColor( *( _styleColors["backgroundLight"] ) )
+		cursorLineColor = QtGui.QColor( *( _styleColors["foregroundFaded"] ) )
+
+		while block.isValid() and top <= event.rect().bottom() :
+			if block.isVisible() :
+				painter.setPen( cursorLineColor if block == self.textCursor().block() else nonCursorLineColor )
+
+				painter.drawText(
+					0,
+					top,
+					width,
+					self.fontMetrics().height(),
+					QtCore.Qt.AlignRight,
+					str( block.blockNumber() + 1 )
+				)
+			block = block.next()
+			top = bottom
+			bottom = top + round( self.blockBoundingRect( block ).height() )
 
 	def __computeHeight( self, size ) :
 
@@ -420,20 +567,72 @@ class _PlainTextEdit( QtWidgets.QPlainTextEdit ) :
 
 		return QtWidgets.QPlainTextEdit.event( self, event )
 
-class _FocusOutEventFilter( QtCore.QObject ) :
+	def resizeEvent ( self, event ) :
 
-	def __init__( self ) :
+		QtWidgets.QPlainTextEdit.resizeEvent( self, event )
 
-		QtCore.QObject.__init__( self )
+		contentsRect = self.contentsRect()
+		self.__lineNumberAreaWidget.setGeometry(
+			QtCore.QRect(
+				contentsRect.left(),
+				contentsRect.top(),
+				self.lineNumberAreaWidth(),
+				contentsRect.height()
+			)
+		)
 
-	def eventFilter( self, qObject, qEvent ) :
+	def focusOutEvent( self, event ) :
 
-		if qEvent.type()==QtCore.QEvent.FocusOut :
-			widget = GafferUI.Widget._owner( qObject )
-			if widget is not None :
-				widget.editingFinishedSignal()( widget )
+		widget = GafferUI.Widget._owner( self )
+		if widget is not None :
+			widget._emitEditingFinished()
 
-		return False
+		QtWidgets.QPlainTextEdit.focusOutEvent( self, event )
 
-# this single instance is used by all MultiLineTextWidgets
-_focusOutEventFilter = _FocusOutEventFilter()
+	def paintEvent( self, event ) :
+
+		QtWidgets.QPlainTextEdit.paintEvent( self, event )
+
+		painter = QtGui.QPainter( self.viewport() )
+
+		if self.isEnabled() :
+			self.__paintActivationHint( painter )
+			return
+
+		# Disabled. We want the text to use faded colours but we can't
+		# do that with a stylesheet because we may have embedded HTML
+		# colours and/or a highlighter. So instead we draw a semi-transparent
+		# overlay the same colour as our background.
+
+		color = self.palette().base().color()
+		color.setAlpha( 128 )
+		painter.fillRect( 0, 0, self.width(), self.height(), color )
+
+	def __paintActivationHint( self, painter ) :
+
+		if self.isReadOnly() or not self.document().isModified() :
+			return
+
+		widget = GafferUI.Widget._owner( self )
+		if widget is None or ( widget.activatedSignal().empty() and widget.editingFinishedSignal().empty() ) :
+			return
+
+		viewport = self.viewport()
+		pixmap = GafferUI.Image._qtPixmapFromFile( "ctrlEnter.png" )
+		painter.setOpacity( 0.75 )
+		painter.drawPixmap( viewport.width() - ( pixmap.width() + 4 ), viewport.height() - ( pixmap.height() + 4 ), pixmap )
+
+	def __updateLineNumberAreaWidth( self, newBlockCount ) :
+
+		lineNumberAreaWidth = self.lineNumberAreaWidth()
+		self.setViewportMargins( lineNumberAreaWidth + ( 8 if lineNumberAreaWidth > 0 else 0 ), 0, 0, 0 )
+
+	def __updateLineNumberArea( self, rect, scrollY ) :
+
+		if scrollY != 0 :
+			self.__lineNumberAreaWidget.scroll( 0, scrollY )
+		else :
+			self.__lineNumberAreaWidget.update( 0, rect.y(), self.__lineNumberAreaWidget.width(), rect.height() )
+
+		if rect.contains( self.viewport().rect() ) :
+			self.__updateLineNumberAreaWidth( 0 )

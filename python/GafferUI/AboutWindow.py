@@ -99,7 +99,7 @@ class AboutWindow( GafferUI.Window ) :
 					parenting = { "label"  : "License" },
 				) :
 
-					license = "".join( open( os.path.expandvars( about.license() ) ).readlines() )
+					license = "".join( open( os.path.expandvars( about.license() ), encoding = "utf-8" ).readlines() )
 					with GafferUI.ScrolledContainer(
 						horizontalMode=GafferUI.ScrollMode.Never,
 						verticalMode=GafferUI.ScrollMode.Automatic,
@@ -160,7 +160,7 @@ class AboutWindow( GafferUI.Window ) :
 		text = header + text + footer
 
 		label = GafferUI.Label( text, **kw )
-		label.linkActivatedSignal().connect( Gaffer.WeakMethod( self.__linkActivated ), scoped = False )
+		label.linkActivatedSignal().connect( Gaffer.WeakMethod( self.__linkActivated ) )
 		return label
 
 	def __linkActivated( self, label, url ) :

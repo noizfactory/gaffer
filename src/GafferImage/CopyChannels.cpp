@@ -37,6 +37,7 @@
 #include "GafferImage/CopyChannels.h"
 
 #include "GafferImage/BufferAlgo.h"
+#include "GafferImage/ImageAlgo.h"
 
 #include "Gaffer/ArrayPlug.h"
 #include "Gaffer/Context.h"
@@ -80,18 +81,19 @@ void copyRegion( const float *fromBuffer, const Box2i &fromWindow, const Box2i &
 // CopyChannels
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CopyChannels );
+GAFFER_NODE_DEFINE_TYPE( CopyChannels );
 
 size_t CopyChannels::g_firstPlugIndex = 0;
 
 CopyChannels::CopyChannels( const std::string &name )
-	:	ImageProcessor( name, /* minInputs = */ 2 )
+	:	FlatImageProcessor( name, /* minInputs = */ 2 )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
 	addChild( new StringPlug( "channels" ) );
 	addChild( new CompoundObjectPlug( "__mapping", Plug::Out, new CompoundObject() ) );
 
+	outPlug()->viewNamesPlug()->setInput( inPlug()->viewNamesPlug() );
 	outPlug()->formatPlug()->setInput( inPlug()->formatPlug() );
 	outPlug()->metadataPlug()->setInput( inPlug()->metadataPlug() );
 }
@@ -122,7 +124,14 @@ const Gaffer::CompoundObjectPlug *CopyChannels::mappingPlug() const
 
 void CopyChannels::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
-	ImageProcessor::affects( input, outputs );
+	FlatImageProcessor::affects( input, outputs );
+
+	if( input == inPlug()->viewNamesPlug() )
+	{
+		outputs.push_back( outPlug()->dataWindowPlug() );
+		outputs.push_back( mappingPlug() );
+		return;
+	}
 
 	const ImagePlug *imagePlug = input->parent<ImagePlug>();
 	if( imagePlug && imagePlug->parent<Plug>() != inPlugs() )
@@ -159,13 +168,13 @@ void CopyChannels::affects( const Gaffer::Plug *input, AffectedPlugsContainer &o
 
 void CopyChannels::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	ImageProcessor::hash( output, context, h );
+	FlatImageProcessor::hash( output, context, h );
 
 	if( output == mappingPlug() )
 	{
-		for( ImagePlugIterator it( inPlugs() ); !it.done(); ++it )
+		for( ImagePlug::Iterator it( inPlugs() ); !it.done(); ++it )
 		{
-			if( !(*it)->getInput() )
+			if( !(*it)->getInput() || !ImageAlgo::viewIsValid( context, (*it)->viewNames()->readable() ) )
 			{
 				continue;
 			}
@@ -186,13 +195,13 @@ void CopyChannels::compute( Gaffer::ValuePlug *output, const Gaffer::Context *co
 		result->members()["__channelNames"] = channelNamesData;
 		vector<string> &channelNames = channelNamesData->writable();
 		size_t i = 0;
-		for( ImagePlugIterator it( inPlugs() ); !it.done(); ++i, ++it )
+		for( ImagePlug::Iterator it( inPlugs() ); !it.done(); ++i, ++it )
 		{
 			/// \todo We need this check because an unconnected input
 			/// has a default channelNames value of [ "R", "G", "B" ],
 			/// when it should have an empty default instead. Fix
 			/// the ImagePlug constructor and remove the check.
-			if( !(*it)->getInput() )
+			if( !(*it)->getInput() || !ImageAlgo::viewIsValid( context, (*it)->viewNames()->readable() ) )
 			{
 				continue;
 			}
@@ -215,26 +224,32 @@ void CopyChannels::compute( Gaffer::ValuePlug *output, const Gaffer::Context *co
 		return;
 	}
 
-	ImageProcessor::compute( output, context );
+	FlatImageProcessor::compute( output, context );
 }
 
 
 void CopyChannels::hashDataWindow( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	ImageProcessor::hashDataWindow( output, context, h );
+	FlatImageProcessor::hashDataWindow( output, context, h );
 
-	for( ImagePlugIterator it( inPlugs() ); !it.done(); ++it )
+	for( ImagePlug::Iterator it( inPlugs() ); !it.done(); ++it )
 	{
-		(*it)->dataWindowPlug()->hash( h );
+		if( ImageAlgo::viewIsValid( context, (*it)->viewNames()->readable() ) )
+		{
+			(*it)->dataWindowPlug()->hash( h );
+		}
 	}
 }
 
 Imath::Box2i CopyChannels::computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const
 {
 	Imath::Box2i dataWindow;
-	for( ImagePlugIterator it( inPlugs() ); !it.done(); ++it )
+	for( ImagePlug::Iterator it( inPlugs() ); !it.done(); ++it )
 	{
-		dataWindow.extendBy( (*it)->dataWindowPlug()->getValue() );
+		if( ImageAlgo::viewIsValid( context, (*it)->viewNames()->readable() ) )
+		{
+			dataWindow.extendBy( (*it)->dataWindowPlug()->getValue() );
+		}
 	}
 
 	return dataWindow;
@@ -242,7 +257,7 @@ Imath::Box2i CopyChannels::computeDataWindow( const Gaffer::Context *context, co
 
 void CopyChannels::hashChannelNames( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	ImageProcessor::hashChannelNames( output, context, h );
+	FlatImageProcessor::hashChannelNames( output, context, h );
 
 	mappingPlug()->hash( h );
 }
@@ -255,6 +270,13 @@ IECore::ConstStringVectorDataPtr CopyChannels::computeChannelNames( const Gaffer
 
 void CopyChannels::hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
+	// Fast shortcut when there is a single input
+	if( inPlugs()->children().size() == 2 && inPlugs()->getChild<ImagePlug>( 0 )->getInput() && !inPlugs()->getChild<ImagePlug>( 1 )->getInput() )
+	{
+		h = inPlugs()->getChild<ImagePlug>( 0 )->channelDataPlug()->hash();
+		return;
+	}
+
 	ConstCompoundObjectPtr mapping;
 	{
 		ImagePlug::GlobalScope c( context );
@@ -265,6 +287,12 @@ void CopyChannels::hashChannelData( const GafferImage::ImagePlug *parent, const 
 		const ImagePlug *inputImage = inPlugs()->getChild<ImagePlug>( i->readable() );
 		const V2i tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
 		const Box2i tileBound( tileOrigin, tileOrigin + V2i( ImagePlug::tileSize() ) );
+
+		if( !ImageAlgo::viewIsValid( context, inputImage->viewNames()->readable() ) )
+		{
+			h = ImagePlug::blackTile()->Object::hash();
+			return;
+		}
 
 		Box2i inputDataWindow;
 		{
@@ -279,7 +307,7 @@ void CopyChannels::hashChannelData( const GafferImage::ImagePlug *parent, const 
 		}
 		else
 		{
-			ImageProcessor::hashChannelData( parent, context, h );
+			FlatImageProcessor::hashChannelData( parent, context, h );
 			if( !BufferAlgo::empty( validBound ) )
 			{
 				inputImage->channelDataPlug()->hash( h );
@@ -295,6 +323,12 @@ void CopyChannels::hashChannelData( const GafferImage::ImagePlug *parent, const 
 
 IECore::ConstFloatVectorDataPtr CopyChannels::computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const
 {
+	// Fast shortcut when there is a single input
+	if( inPlugs()->children().size() == 2 && inPlugs()->getChild<ImagePlug>( 0 )->getInput() && !inPlugs()->getChild<ImagePlug>( 1 )->getInput() )
+	{
+		return inPlugs()->getChild<ImagePlug>( 0 )->channelDataPlug()->getValue();
+	}
+
 	ConstCompoundObjectPtr mapping;
 	{
 		ImagePlug::GlobalScope c( context );
@@ -303,8 +337,13 @@ IECore::ConstFloatVectorDataPtr CopyChannels::computeChannelData( const std::str
 	if( const IntData *i = mapping->member<const IntData>( channelName ) )
 	{
 		const ImagePlug *inputImage = inPlugs()->getChild<ImagePlug>( i->readable() );
-		const V2i tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
 		const Box2i tileBound( tileOrigin, tileOrigin + V2i( ImagePlug::tileSize() ) );
+
+		if( !ImageAlgo::viewIsValid( context, inputImage->viewNames()->readable() ) )
+		{
+			return ImagePlug::blackTile();
+		}
+
 		Box2i inputDataWindow;
 		{
 			ImagePlug::GlobalScope c( context );
@@ -340,4 +379,3 @@ IECore::ConstFloatVectorDataPtr CopyChannels::computeChannelData( const std::str
 		return ImagePlug::blackTile();
 	}
 }
-

@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_PLUGBINDING_H
-#define GAFFERBINDINGS_PLUGBINDING_H
+#pragma once
 
 #include "GafferBindings/GraphComponentBinding.h"
 #include "GafferBindings/Serialisation.h"
@@ -104,7 +103,7 @@ class PlugWrapper : public GraphComponentWrapper<WrappedType>
 						return f( Gaffer::PlugPtr( const_cast<Gaffer::Plug *>( input ) ) );
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -126,7 +125,7 @@ class PlugWrapper : public GraphComponentWrapper<WrappedType>
 						return;
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -148,7 +147,7 @@ class PlugWrapper : public GraphComponentWrapper<WrappedType>
 						return result;
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -164,8 +163,8 @@ class GAFFERBINDINGS_API PlugSerialiser : public Serialisation::Serialiser
 	public :
 
 		void moduleDependencies( const Gaffer::GraphComponent *graphComponent, std::set<std::string> &modules, const Serialisation &serialisation ) const override;
-		std::string constructor( const Gaffer::GraphComponent *graphComponent, const Serialisation &serialisation ) const override;
-		std::string postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override;
+		std::string constructor( const Gaffer::GraphComponent *graphComponent, Serialisation &serialisation ) const override;
+		std::string postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override;
 		bool childNeedsSerialisation( const Gaffer::GraphComponent *child, const Serialisation &serialisation ) const override;
 		bool childNeedsConstruction( const Gaffer::GraphComponent *child, const Serialisation &serialisation ) const override;
 
@@ -178,5 +177,3 @@ class GAFFERBINDINGS_API PlugSerialiser : public Serialisation::Serialiser
 } // namespace GafferBindings
 
 #include "GafferBindings/PlugBinding.inl"
-
-#endif // GAFFERBINDINGS_PLUGBINDING_H

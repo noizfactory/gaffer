@@ -38,6 +38,8 @@
 import unittest
 import weakref
 
+import IECore
+
 import Gaffer
 import GafferTest
 import GafferUI
@@ -65,16 +67,11 @@ class EditorTest( GafferUITest.TestCase ) :
 	def testContext( self ) :
 
 		s = Gaffer.ScriptNode()
-		c = Gaffer.Context()
-
 		editor = GafferUI.Viewer( s )
 
-		self.failUnless( editor.scriptNode().isSame( s ) )
-		self.failUnless( editor.getContext().isSame( s.context() ) )
-
-		editor.setContext( c )
-		self.failUnless( editor.scriptNode().isSame( s ) )
-		self.failUnless( editor.getContext().isSame( c ) )
+		self.assertTrue( editor.scriptNode().isSame( s ) )
+		self.assertEqual( editor.context(), s.context() )
+		self.assertFalse( editor.context().isSame( s.context() ) )
 
 	def testSerialisation( self ) :
 
@@ -87,19 +84,19 @@ class EditorTest( GafferUITest.TestCase ) :
 			editor = GafferUI.Editor.create( type, scriptNode )
 			layouts.add( "testLayout", editor )
 			editor2 = layouts.create( "testLayout", scriptNode )
-			self.failUnless( editor2.scriptNode() is scriptNode )
+			self.assertTrue( editor2.scriptNode() is scriptNode )
 
 	def testInstanceCreatedSignal( self ) :
 
 		editorsCreated = []
 		def editorCreated( editor ) :
 			editorsCreated.append( editor )
-		editorCreatedConnection = GafferUI.Editor.instanceCreatedSignal().connect( editorCreated )
+		editorCreatedConnection = GafferUI.Editor.instanceCreatedSignal().connect( editorCreated, scoped = True )
 
 		pythonEditorsCreated = []
 		def pythonEditorCreated( editor ) :
 			pythonEditorsCreated.append( editor )
-		pythonEditorCreatedConnection = GafferUI.PythonEditor.instanceCreatedSignal().connect( pythonEditorCreated )
+		pythonEditorCreatedConnection = GafferUI.PythonEditor.instanceCreatedSignal().connect( pythonEditorCreated, scoped = True )
 
 		s = Gaffer.ScriptNode()
 
@@ -109,6 +106,50 @@ class EditorTest( GafferUITest.TestCase ) :
 
 		self.assertEqual( editorsCreated, [ e1, e2, e3 ] )
 		self.assertEqual( pythonEditorsCreated, [ e2 ] )
+
+	def testIssue5877( self ) :
+
+		# This test models the bug reported in #5877. First we have
+		# an editor that uses a `Settings` node.
+
+		script = Gaffer.ScriptNode()
+		script["node"] = GafferTest.MultiplyNode()
+
+		class TestEditor( GafferUI.Editor ) :
+
+			def __init__( self, scriptNode, **kw ) :
+
+				GafferUI.Editor.__init__( self, GafferUI.Label( "MyEditor" ), scriptNode )
+
+		editor = TestEditor( script )
+		self.assertIsInstance( editor.settings(), TestEditor.Settings )
+
+		# Then we dispose of that editor.
+
+		del editor
+
+		# Now we run a perfectly innocent background task that just
+		# wants to compute something perfectly innocently.
+
+		def f( canceller ) :
+
+			script["node"]["product"].getValue()
+
+			# But of course, garbage collection can occur at any time.
+			# For the purposes of this test we force it to happen explicitly,
+			# but in the real world it would be triggered by the creation
+			# of a new wrapped RefCounted instance. In #5877 this was commonly
+			# an `_ImagesPath` created by the CatalogueUI in a background task
+			# updating the PathListingWidget for the image listing.
+			IECore.RefCounted.collectGarbage()
+
+		task = Gaffer.BackgroundTask( script["node"]["product"], f )
+
+		# This would have deadlocked when `collectGarbage()` triggered the
+		# destruction of the Settings node, because that would trigger
+		# cancellation of the BackgroundTask from the task itself. And a task
+		# waiting on itself would never finish.
+		task.wait()
 
 if __name__ == "__main__":
 	unittest.main()

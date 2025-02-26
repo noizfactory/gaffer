@@ -34,16 +34,19 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_RENDERCONTROLLER_H
-#define GAFFERSCENE_RENDERCONTROLLER_H
+#pragma once
+
+#include "GafferScene/Export.h"
+#include "GafferScene/VisibleSet.h"
+
+#include "Gaffer/Signals.h"
 
 #include "GafferScene/Private/IECoreScenePreview/Renderer.h"
-#include "GafferScene/RendererAlgo.h"
+#include "GafferScene/Private/RendererAlgo.h"
 
 #include "Gaffer/BackgroundTask.h"
 
-#include "boost/signals.hpp"
-
+#include <atomic>
 #include <functional>
 
 namespace GafferScene
@@ -52,13 +55,16 @@ namespace GafferScene
 IE_CORE_FORWARDDECLARE( ScenePlug )
 
 /// Utility class used to make interactive updates to a Renderer.
-class GAFFERSCENE_API RenderController : public boost::signals::trackable
+class GAFFERSCENE_API RenderController : public Gaffer::Signals::Trackable
 {
 
 	public :
 
 		RenderController( const ConstScenePlugPtr &scene, const Gaffer::ConstContextPtr &context, const IECoreScenePreview::RendererPtr &renderer );
-		~RenderController();
+		~RenderController() override;
+
+		// Renderer, scene and expansion
+		// =============================
 
 		IECoreScenePreview::Renderer *renderer();
 
@@ -68,23 +74,40 @@ class GAFFERSCENE_API RenderController : public boost::signals::trackable
 		void setContext( const Gaffer::ConstContextPtr &context );
 		const Gaffer::Context *getContext() const;
 
-		void setExpandedPaths( const IECore::PathMatcher &expandedPaths );
-		const IECore::PathMatcher &getExpandedPaths() const;
+		void setVisibleSet( const GafferScene::VisibleSet &visibleSet );
+		const GafferScene::VisibleSet &getVisibleSet() const;
 
 		void setMinimumExpansionDepth( size_t depth );
 		size_t getMinimumExpansionDepth() const;
 
-		typedef boost::signal<void (RenderController &)> UpdateRequiredSignal;
+		// Update
+		// ======
+
+		using UpdateRequiredSignal = Gaffer::Signals::Signal<void ( RenderController & )>;
 		UpdateRequiredSignal &updateRequiredSignal();
 
 		bool updateRequired() const;
 
-		typedef std::function<void ( Gaffer::BackgroundTask::Status progress )> ProgressCallback;
+		using ProgressCallback = std::function<void (Gaffer::BackgroundTask::Status)>;
 
 		void update( const ProgressCallback &callback = ProgressCallback() );
 		std::shared_ptr<Gaffer::BackgroundTask> updateInBackground( const ProgressCallback &callback = ProgressCallback(), const IECore::PathMatcher &priorityPaths = IECore::PathMatcher()  );
 
 		void updateMatchingPaths( const IECore::PathMatcher &pathsToUpdate, const ProgressCallback &callback = ProgressCallback() );
+
+		// ID queries
+		// ==========
+		//
+		// These allow IDs acquired from a standard `uint id` AOV to be mapped
+		// back to the scene paths they came from.
+
+		std::optional<ScenePlug::ScenePath> pathForID( uint32_t id ) const;
+		IECore::PathMatcher pathsForIDs( const std::vector<uint32_t> &ids ) const;
+
+		// Returns the ID associated with the specified path, or `0` if that
+		// path has not been rendered and `createIfNecessary` is `false`.
+		uint32_t idForPath( const ScenePlug::ScenePath &path, bool createIfNecessary = false ) const;
+		std::vector<uint32_t> idsForPaths( const IECore::PathMatcher &paths, bool createIfNecessary = false ) const;
 
 	private :
 
@@ -95,7 +118,12 @@ class GAFFERSCENE_API RenderController : public boost::signals::trackable
 			SetsGlobalComponent = 2,
 			RenderSetsGlobalComponent = 4,
 			CameraOptionsGlobalComponent = 8,
-			AllGlobalComponents = GlobalsGlobalComponent | SetsGlobalComponent | RenderSetsGlobalComponent | CameraOptionsGlobalComponent
+			TransformBlurGlobalComponent = 16,
+			DeformationBlurGlobalComponent = 32,
+			CameraShutterGlobalComponent = 64,
+			IncludedPurposesGlobalComponent = 128,
+			CapsuleAffectingGlobalComponents = TransformBlurGlobalComponent | DeformationBlurGlobalComponent | IncludedPurposesGlobalComponent,
+			AllGlobalComponents = GlobalsGlobalComponent | SetsGlobalComponent | RenderSetsGlobalComponent | CameraOptionsGlobalComponent | TransformBlurGlobalComponent | DeformationBlurGlobalComponent | IncludedPurposesGlobalComponent
 		};
 
 		void plugDirtied( const Gaffer::Plug *plug );
@@ -104,40 +132,41 @@ class GAFFERSCENE_API RenderController : public boost::signals::trackable
 		void dirtyGlobals( unsigned components );
 		void dirtySceneGraphs( unsigned components );
 
-		void updateInternal( const ProgressCallback &callback = ProgressCallback(), const IECore::PathMatcher *pathsToUpdate = nullptr );
+		void updateInternal( const ProgressCallback &callback = ProgressCallback(), const IECore::PathMatcher *pathsToUpdate = nullptr, bool signalCompletion = true );
 		void updateDefaultCamera();
 		void cancelBackgroundTask();
 
 		class SceneGraph;
 		class SceneGraphUpdateTask;
+		class IDMap;
 
 		ConstScenePlugPtr m_scene;
 		Gaffer::ConstContextPtr m_context;
 		IECoreScenePreview::RendererPtr m_renderer;
+		std::unique_ptr<IDMap> m_idMap;
 
-		IECore::PathMatcher m_expandedPaths;
+		GafferScene::VisibleSet m_visibleSet;
 		size_t m_minimumExpansionDepth;
 
-		boost::signals::scoped_connection m_plugDirtiedConnection;
-		boost::signals::scoped_connection m_contextChangedConnection;
+		Gaffer::Signals::ScopedConnection m_plugDirtiedConnection;
+		Gaffer::Signals::ScopedConnection m_contextChangedConnection;
 
 		UpdateRequiredSignal m_updateRequiredSignal;
 		bool m_updateRequired;
 		bool m_updateRequested;
+		std::atomic<uint64_t> m_failedAttributeEdits;
 
 		std::vector<std::unique_ptr<SceneGraph> > m_sceneGraphs;
 		unsigned m_dirtyGlobalComponents;
 		unsigned m_changedGlobalComponents;
-		IECore::ConstCompoundObjectPtr m_globals;
-		RendererAlgo::RenderSets m_renderSets;
-		std::unique_ptr<RendererAlgo::LightLinks> m_lightLinks;
+		Private::RendererAlgo::RenderOptions m_renderOptions;
+		Private::RendererAlgo::RenderSets m_renderSets;
+		std::unique_ptr<Private::RendererAlgo::LightLinks> m_lightLinks;
 		IECoreScenePreview::Renderer::ObjectInterfacePtr m_defaultCamera;
-		IECoreScenePreview::Renderer::AttributesInterfacePtr m_boundAttributes;
+		IECoreScenePreview::Renderer::AttributesInterfacePtr m_defaultAttributes;
 
 		std::shared_ptr<Gaffer::BackgroundTask> m_backgroundTask;
 
 };
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_RENDERCONTROLLER_H

@@ -36,7 +36,7 @@
 
 #include "GafferScene/CameraTweaks.h"
 
-#include "GafferScene/TweakPlug.h"
+#include "Gaffer/TweakPlug.h"
 
 #include "IECoreScene/Camera.h"
 
@@ -46,59 +46,66 @@ using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CameraTweaks );
+GAFFER_NODE_DEFINE_TYPE( CameraTweaks );
 
 size_t CameraTweaks::g_firstPlugIndex = 0;
 
 CameraTweaks::CameraTweaks( const std::string &name )
-	:	SceneElementProcessor( name, IECore::PathMatcher::NoMatch )
+	:	ObjectProcessor( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
+	addChild( new BoolPlug( "ignoreMissing", Plug::In, false ) );
 	addChild( new TweaksPlug( "tweaks" ) );
-
-	// Fast pass-throughs for the things we don't alter.
-	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
 }
 
 CameraTweaks::~CameraTweaks()
 {
 }
 
-GafferScene::TweaksPlug *CameraTweaks::tweaksPlug()
+Gaffer::BoolPlug *CameraTweaks::ignoreMissingPlug()
 {
-	return getChild<GafferScene::TweaksPlug>( g_firstPlugIndex );
+	return getChild<Gaffer::BoolPlug>( g_firstPlugIndex );
 }
 
-const GafferScene::TweaksPlug *CameraTweaks::tweaksPlug() const
+const Gaffer::BoolPlug *CameraTweaks::ignoreMissingPlug() const
 {
-	return getChild<GafferScene::TweaksPlug>( g_firstPlugIndex );
+	return getChild<Gaffer::BoolPlug>( g_firstPlugIndex );
 }
 
-void CameraTweaks::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+Gaffer::TweaksPlug *CameraTweaks::tweaksPlug()
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if( tweaksPlug()->isAncestorOf( input ) )
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
+	return getChild<Gaffer::TweaksPlug>( g_firstPlugIndex + 1 );
 }
 
-bool CameraTweaks::processesObject() const
+const Gaffer::TweaksPlug *CameraTweaks::tweaksPlug() const
 {
-	// Although the base class says that we should return a constant, it should
-	// be OK to return this because it's constant across the hierarchy.
-	return !tweaksPlug()->children().empty();
+	return getChild<Gaffer::TweaksPlug>( g_firstPlugIndex + 1 );
+}
+
+bool CameraTweaks::affectsProcessedObject( const Gaffer::Plug *input ) const
+{
+	return
+		ObjectProcessor::affectsProcessedObject( input ) ||
+		input == ignoreMissingPlug() ||
+		tweaksPlug()->isAncestorOf( input )
+	;
 }
 
 void CameraTweaks::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	tweaksPlug()->hash( h );
+	if( tweaksPlug()->children().empty() )
+	{
+		h = inPlug()->objectPlug()->hash();
+	}
+	else
+	{
+		ObjectProcessor::hashProcessedObject( path, context, h );
+		ignoreMissingPlug()->hash( h );
+		tweaksPlug()->hash( h );
+	}
 }
 
-IECore::ConstObjectPtr CameraTweaks::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr CameraTweaks::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
 	IECoreScene::ConstCameraPtr inputCamera = IECore::runTimeCast<const IECoreScene::Camera>( inputObject );
 	if( !inputCamera )
@@ -106,59 +113,67 @@ IECore::ConstObjectPtr CameraTweaks::computeProcessedObject( const ScenePath &pa
 		return inputObject;
 	}
 
-	const Plug *tweaksPlug = this->tweaksPlug();
+	const TweaksPlug *tweaksPlug = this->tweaksPlug();
 	if( tweaksPlug->children().empty() )
 	{
 		return inputObject;
 	}
 
 	IECoreScene::CameraPtr result = inputCamera->copy();
+	DataPtr virtualParameter;
 
-	for( TweakPlugIterator tIt( tweaksPlug ); !tIt.done(); ++tIt )
-	{
-		if( !(*tIt)->enabledPlug()->getValue() )
-		{
-			continue;
-		}
-		const std::string name = (*tIt)->namePlug()->getValue();
-		if( name.empty() )
-		{
-			continue;
-		}
+	tweaksPlug->applyTweaks(
 
-		if( name == "fieldOfView" )
-		{
-			InternedString internedName(name);
-			CompoundDataPtr dummyParameters = new CompoundData();
-			dummyParameters->writable()[internedName] = new FloatData( result->calculateFieldOfView()[0] );
-			(*tIt)->applyTweak( dummyParameters.get(), TweakPlug::MissingMode::IgnoreOrReplace );
-			FloatData *tweakedData = dummyParameters->member<FloatData>( internedName );
-			if( tweakedData )
+		// Getter
+		[&] ( const std::string &name, const bool withFallback ) {
+			if( name == "fieldOfView" )
 			{
-				float fieldOfView = std::max( 0.0f, std::min( 179.99f, tweakedData->readable() ) );
-				result->setFocalLengthFromFieldOfView( fieldOfView );
+				virtualParameter = new FloatData( result->calculateFieldOfView()[0] );
+				return virtualParameter.get();
 			}
-		}
-		else if( name == "apertureAspectRatio" )
-		{
-			InternedString internedName(name);
-			Imath::V2f aperture = result->getAperture();
-			CompoundDataPtr dummyParameters = new CompoundData();
-			dummyParameters->writable()[internedName] = new FloatData( aperture[0] / aperture[1] );
-			(*tIt)->applyTweak( dummyParameters.get(), TweakPlug::MissingMode::IgnoreOrReplace );
-			FloatData *tweakedData = dummyParameters->member<FloatData>( internedName );
-			if( tweakedData )
+			else if( name == "apertureAspectRatio" )
 			{
-				aperture[1] = aperture[0] / max( 0.0000001f, tweakedData->readable() );
-				result->setAperture( aperture );
+				const Imath::V2f aperture = result->getAperture();
+				virtualParameter = new FloatData( aperture[0] / aperture[1] );
+				return virtualParameter.get();
 			}
-		}
-		else
-		{
-			(*tIt)->applyTweak( result->parametersData(), TweakPlug::MissingMode::IgnoreOrReplace );
-		}
-	}
+			return result->parametersData()->member( name );
+		},
 
+		// Setter
+		[&] ( const std::string &name, IECore::DataPtr value ) {
+			if( name == "fieldOfView" )
+			{
+				if( auto fieldOfView = runTimeCast<const FloatData>( value.get() ) )
+				{
+					result->setFocalLengthFromFieldOfView( std::max( 0.0f, std::min( 179.99f, fieldOfView->readable() ) ) );
+					return true;
+				}
+				return false;
+			}
+			else if( name == "apertureAspectRatio" )
+			{
+				if( auto aspectRatio = runTimeCast<const FloatData>( value.get() ) )
+				{
+					Imath::V2f aperture = result->getAperture();
+					aperture[1] = aperture[0] / max( 0.0000001f, aspectRatio->readable() );
+					result->setAperture( aperture );
+				}
+				return false;
+			}
+
+			if( !value )
+			{
+				return result->parameters().erase( name ) > 0;
+			}
+
+			result->parameters()[name] = value;
+			return true;
+		},
+
+		ignoreMissingPlug()->getValue() ? TweakPlug::MissingMode::Ignore : TweakPlug::MissingMode::Error
+
+	);
 
 	return result;
 }

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_OPHOLDER_H
-#define GAFFERCORTEX_OPHOLDER_H
+#pragma once
 
 #include "GafferCortex/ParameterisedHolder.h"
 
@@ -56,9 +55,9 @@ class GAFFERCORTEX_API OpHolder : public ParameterisedHolderComputeNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferCortex::OpHolder, OpHolderTypeId, ParameterisedHolderComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferCortex::OpHolder, OpHolderTypeId, ParameterisedHolderComputeNode );
 
-		OpHolder( const std::string &name=defaultName<OpHolder>() );
+		explicit OpHolder( const std::string &name=defaultName<OpHolder>() );
 
 		void setParameterised( IECore::RunTimeTypedPtr parameterised, bool keepExistingValues=false ) override;
 
@@ -84,5 +83,3 @@ class GAFFERCORTEX_API OpHolder : public ParameterisedHolderComputeNode
 IE_CORE_DECLAREPTR( OpHolder )
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_OPHOLDER_H

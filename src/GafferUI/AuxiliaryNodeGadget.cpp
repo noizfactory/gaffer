@@ -40,8 +40,9 @@
 
 #include "Gaffer/Metadata.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace GafferUI;
@@ -54,12 +55,12 @@ static IECore::InternedString g_labelKey( "auxiliaryNodeGadget:label" );
 static IECore::InternedString g_colorKey( "nodeGadget:color" );
 
 AuxiliaryNodeGadget::AuxiliaryNodeGadget( Gaffer::NodePtr node )
-	:	NodeGadget( node ), m_label( "" ), m_radius( 1.0 )
+	:	StandardNodeGadget( node, true ), m_label( "" ), m_radius( 1.0 )
 {
-	Gaffer::Metadata::nodeValueChangedSignal().connect( boost::bind( &AuxiliaryNodeGadget::nodeMetadataChanged, this, ::_1, ::_2, ::_3 ) );
+	Gaffer::Metadata::nodeValueChangedSignal( node.get() ).connect( boost::bind( &AuxiliaryNodeGadget::nodeMetadataChanged, this, ::_2 ) );
 
 	updateLabel();
-	updateUserColor();
+	setContents( nullptr );
 }
 
 AuxiliaryNodeGadget::~AuxiliaryNodeGadget()
@@ -71,16 +72,13 @@ Imath::Box3f AuxiliaryNodeGadget::bound() const
 	return Box3f( V3f( -m_radius, -m_radius, 0 ), V3f( m_radius, m_radius, 0 ) );
 }
 
-void AuxiliaryNodeGadget::doRenderLayer( Layer layer, const Style *style ) const
+void AuxiliaryNodeGadget::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
-
+	StandardNodeGadget::renderLayer( layer, style, reason );
 	if( layer != GraphLayer::Nodes )
 	{
-		return NodeGadget::doRenderLayer( layer, style );
+		return;
 	}
-
-	Style::State state = getHighlighted() ? Style::HighlightedState : Style::NormalState;
-	style->renderNodeFrame( Box2f( V2f( 0 ), V2f( 0 ) ), m_radius, state, m_userColor.get_ptr() );
 
 	Imath::Box3f bound = style->textBound( Style::LabelText, m_label );
 	Imath::V3f offset = bound.size() / 2.0;
@@ -91,21 +89,13 @@ void AuxiliaryNodeGadget::doRenderLayer( Layer layer, const Style *style ) const
 	glPopMatrix();
 }
 
-void AuxiliaryNodeGadget::nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore::InternedString key, const Gaffer::Node *node )
+void AuxiliaryNodeGadget::nodeMetadataChanged( IECore::InternedString key )
 {
 	if( key == g_labelKey )
 	{
 		if( updateLabel() )
 		{
-			requestRender();
-		}
-	}
-
-	if( key == g_colorKey )
-	{
-		if( updateUserColor() )
-		{
-			requestRender();
+			dirty( DirtyType::Render );
 		}
 	}
 }
@@ -124,22 +114,5 @@ bool AuxiliaryNodeGadget::updateLabel()
 	}
 
 	m_label = l;
-	return true;
-}
-
-bool AuxiliaryNodeGadget::updateUserColor()
-{
-	boost::optional<Color3f> c;
-	if( IECore::ConstColor3fDataPtr d = Gaffer::Metadata::value<IECore::Color3fData>( node(), g_colorKey ) )
-	{
-		c = d->readable();
-	}
-
-	if( c == m_userColor )
-	{
-		return false;
-	}
-
-	m_userColor = c;
 	return true;
 }

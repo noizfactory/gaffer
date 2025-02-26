@@ -34,13 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERVDB_VOLUMETOMESH_H
-#define GAFFERVDB_VOLUMETOMESH_H
+#pragma once
 
 #include "GafferVDB/Export.h"
 #include "GafferVDB/TypeIds.h"
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/MergeObjects.h"
 
 #include "Gaffer/NumericPlug.h"
 #include "Gaffer/StringPlug.h"
@@ -48,15 +47,15 @@
 namespace GafferVDB
 {
 
-class GAFFERVDB_API LevelSetToMesh : public GafferScene::SceneElementProcessor
+class GAFFERVDB_API LevelSetToMesh : public GafferScene::MergeObjects
 {
 
 	public :
 
-		LevelSetToMesh( const std::string &name=defaultName<LevelSetToMesh>() );
+		explicit LevelSetToMesh( const std::string &name=defaultName<LevelSetToMesh>() );
 		~LevelSetToMesh() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferVDB::LevelSetToMesh, LevelSetToMeshTypeId, GafferScene::SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferVDB::LevelSetToMesh, LevelSetToMeshTypeId, GafferScene::MergeObjects );
 
 		Gaffer::StringPlug *gridPlug();
 		const Gaffer::StringPlug *gridPlug() const;
@@ -67,17 +66,15 @@ class GAFFERVDB_API LevelSetToMesh : public GafferScene::SceneElementProcessor
 		Gaffer::FloatPlug *adaptivityPlug();
 		const Gaffer::FloatPlug *adaptivityPlug() const;
 
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
-
 	protected :
 
-		bool processesObject() const override;
-		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const override;
+		bool affectsMergedObject( const Gaffer::Plug *input ) const override;
 
-		bool processesBound() const override;
-		void hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::Box3f computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const override;
+		void hashMergedObject(
+			const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h
+		) const override;
+
+		IECore::ConstObjectPtr computeMergedObject( const std::vector< std::pair< IECore::ConstObjectPtr, Imath::M44f > > &sources, const Gaffer::Context *context ) const override;
 
 	private :
 
@@ -88,5 +85,3 @@ class GAFFERVDB_API LevelSetToMesh : public GafferScene::SceneElementProcessor
 IE_CORE_DECLAREPTR( LevelSetToMesh )
 
 } // namespace GafferVDB
-
-#endif // GAFFERVDB_VOLUMETOMESH_H

@@ -75,9 +75,8 @@ class ErrorDialogue( GafferUI.Dialogue ) :
 				)
 
 			if messages is not None :
-				messageWidget = GafferUI.MessageWidget()
-				for m in messages :
-					messageWidget.messageHandler().handle( m.level, m.context, m.message )
+				messageWidget = GafferUI.MessageWidget( toolbars = True )
+				messageWidget.setMessages( messages )
 
 			if details is not None :
 				with GafferUI.Collapsible( label = "Details", collapsed = True ) :
@@ -119,13 +118,25 @@ class ErrorDialogue( GafferUI.Dialogue ) :
 
 			self.__splittingMessageHandler.__enter__()
 
-		def __exit__( self, type, value, traceback ) :
+		def __exit__( self, type, value, tb ) :
 
 			self.__splittingMessageHandler.__exit__( type, value, traceback )
 
 			result = False
 			if type is not None and self.__handleExceptions :
-				self.__capturingMessageHandler.handle( IECore.Msg.Level.Error, self.__kw.get( "title", "Error" ), str( value ) )
+				self.__capturingMessageHandler.handle(
+					IECore.Msg.Level.Error, self.__kw.get( "title", "Error" ),
+					"\n".join( traceback.format_exception_only( type, value ) )
+				)
+				self.__capturingMessageHandler.handle(
+					IECore.Msg.Level.Debug, "Traceback",
+					"\n".join(
+						traceback.format_list(
+							traceback.extract_tb( tb )
+						)
+					)
+				)
+
 				result = True
 
 			if len( self.__capturingMessageHandler.messages ) :
@@ -145,8 +156,12 @@ class ErrorDialogue( GafferUI.Dialogue ) :
 		if exceptionInfo[0] is None :
 			return
 
-		# this works for RuntimeError, but is this safe for all exceptions?
-		message = exceptionInfo[1].args[0].strip( "\n" ).split( "\n" )[-1]
+		excType, excValue, excTrace = exceptionInfo
+		if excValue :
+			message = str( excValue )
+		else:
+			message = str( excType.__name__ )
+
 		if messagePrefix :
 			message = messagePrefix + message
 

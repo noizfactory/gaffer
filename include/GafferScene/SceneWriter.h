@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEWRITER_H
-#define GAFFERSCENE_SCENEWRITER_H
+#pragma once
 
 #include "GafferScene/ScenePlug.h"
 #include "GafferScene/TypeIds.h"
@@ -55,10 +54,10 @@ class GAFFERSCENE_API SceneWriter : public GafferDispatch::TaskNode
 
 	public :
 
-		SceneWriter( const std::string &name=defaultName<SceneWriter>() );
+		explicit SceneWriter( const std::string &name=defaultName<SceneWriter>() );
 		~SceneWriter() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SceneWriter, SceneWriterTypeId, GafferDispatch::TaskNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SceneWriter, SceneWriterTypeId, GafferDispatch::TaskNode );
 
 		Gaffer::StringPlug *fileNamePlug();
 		const Gaffer::StringPlug *fileNamePlug() const;
@@ -70,6 +69,8 @@ class GAFFERSCENE_API SceneWriter : public GafferDispatch::TaskNode
 		const ScenePlug *outPlug() const;
 
 		IECore::MurmurHash hash( const Gaffer::Context *context ) const override;
+
+	protected :
 
 		void execute() const override;
 
@@ -87,10 +88,12 @@ class GAFFERSCENE_API SceneWriter : public GafferDispatch::TaskNode
 		static size_t g_firstPlugIndex;
 
 		static const double g_frameRate;
+
+		// Friendship for the bindings
+		friend struct GafferDispatchBindings::Detail::TaskNodeAccessor;
+
 };
 
 IE_CORE_DECLAREPTR( SceneWriter )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEWRITER_H

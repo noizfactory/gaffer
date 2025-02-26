@@ -48,9 +48,10 @@
 #include "Gaffer/Switch.h"
 
 #include "boost/algorithm/string/replace.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 
@@ -124,13 +125,13 @@ void applyDynamicFlag( Plug *plug )
 {
 	plug->setFlags( Plug::Dynamic, true );
 
-	auto compoundTypes = { PlugTypeId, ValuePlugTypeId, ArrayPlugTypeId };
+	auto compoundTypes = { PlugTypeId, ValuePlugTypeId };
 	if( find( begin( compoundTypes ), end( compoundTypes ), (Gaffer::TypeId)plug->typeId() ) != end( compoundTypes ) )
 	{
-		for( RecursivePlugIterator it( plug ); !it.done(); ++it )
+		for( Plug::RecursiveIterator it( plug ); !it.done(); ++it )
 		{
 			(*it)->setFlags( Plug::Dynamic, true );
-			if( find( begin( compoundTypes ), end( compoundTypes ), (Gaffer::TypeId)(*it)->typeId() ) != end( compoundTypes ) )
+			if( find( begin( compoundTypes ), end( compoundTypes ), (Gaffer::TypeId)(*it)->typeId() ) == end( compoundTypes ) )
 			{
 				it.prune();
 			}
@@ -151,7 +152,7 @@ void setFrom( Plug *dst, const Plug *src )
 	}
 	else
 	{
-		for( PlugIterator it( dst ); !it.done(); ++it )
+		for( Plug::Iterator it( dst ); !it.done(); ++it )
 		{
 			Plug *dstChild = it->get();
 			const Plug *srcChild = src->getChild<Plug>( dstChild->getName() );
@@ -167,7 +168,7 @@ void setFrom( Plug *dst, const Plug *src )
 // BoxIO
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( BoxIO );
+GAFFER_NODE_DEFINE_TYPE( BoxIO );
 
 size_t BoxIO::g_firstPlugIndex = 0;
 
@@ -213,10 +214,33 @@ void BoxIO::setup( const Plug *plug )
 	applyDynamicFlag( inPlugInternal() );
 	applyDynamicFlag( outPlugInternal() );
 
-	MetadataAlgo::copy(
+	MetadataAlgo::copyIf(
 		plug,
 		m_direction == Plug::In ? inPlugInternal() : outPlugInternal(),
-		/* exclude = */ "layout:*"
+		[]( const GraphComponent *from, const GraphComponent *to, InternedString name )
+		{
+			if( StringAlgo::matchMultiple( name.string(), "layout:*" ) )
+			{
+				/// \todo Remove this condition and rely on registered exclusions only. An obstacle
+				/// to doing this is making it easy to exclude `layout:*` without lots and lots of
+				/// individual exclusions.
+				return false;
+			}
+			if( !MetadataAlgo::isPromotable( from, to, name ) )
+			{
+				return false;
+			}
+			// Only copy if the destination doesn't already have the metadata.
+			// This avoids making unnecessary instance-level metadata when the
+			// same value is registered statically (against the plug type).
+			ConstDataPtr fromValue = Gaffer::Metadata::value( from, name );
+			ConstDataPtr toValue = Gaffer::Metadata::value( to, name );
+			if( fromValue && toValue )
+			{
+				return !toValue->isEqualTo( fromValue.get() );
+			}
+			return (bool)fromValue != (bool)toValue;
+		}
 	);
 
 	setupNoduleSectionMetadata(
@@ -410,15 +434,11 @@ void BoxIO::parentChanged( GraphComponent *oldParent )
 	// Manage inputChanged connections on our parent box,
 	// so we can discover our promoted plug when an output
 	// connection is made to it.
-	if( Box *box = runTimeCast<Box>( oldParent ) )
-	{
-		box->plugInputChangedSignal().disconnect(
-			boost::bind( &BoxIO::plugInputChanged, this, ::_1 )
-		);
-	}
+
+	m_boxPlugInputChangedConnection.disconnect();
 	if( Box *box = parent<Box>() )
 	{
-		box->plugInputChangedSignal().connect(
+		m_boxPlugInputChangedConnection = box->plugInputChangedSignal().connect(
 			boost::bind( &BoxIO::plugInputChanged, this, ::_1 )
 		);
 	}
@@ -487,8 +507,9 @@ void BoxIO::promotedPlugParentChanged( GraphComponent *graphComponent )
 	// ourselves too.
 	if( const ScriptNode *script = scriptNode() )
 	{
-		if( script->currentActionStage() == Action::Undo ||
-		    script->currentActionStage() == Action::Redo
+		if(
+			script->currentActionStage() == Action::Undo ||
+			script->currentActionStage() == Action::Redo
 		)
 		{
 			// We don't need to do anything during undo/redo
@@ -620,7 +641,7 @@ Plug *BoxIO::promote( Plug *plug )
 
 bool BoxIO::canInsert( const Box *box )
 {
-	for( PlugIterator it( box ); !it.done(); ++it )
+	for( Plug::Iterator it( box ); !it.done(); ++it )
 	{
 		const Plug *plug = it->get();
 		if( plug->direction() == Plug::In )
@@ -650,9 +671,9 @@ bool BoxIO::canInsert( const Box *box )
 void BoxIO::insert( Box *box )
 {
 	// Must take a copy of children because adding a child
-	// would invalidate our PlugIterator.
+	// would invalidate our Plug::Iterator.
 	GraphComponent::ChildContainer children = box->children();
-	for( PlugIterator it( children ); !it.done(); ++it )
+	for( Plug::Iterator it( children ); !it.done(); ++it )
 	{
 		Plug *plug = it->get();
 		if( plug->direction() == Plug::In )

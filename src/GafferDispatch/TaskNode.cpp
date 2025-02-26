@@ -45,6 +45,8 @@
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/SubGraph.h"
 
+#include "fmt/format.h"
+
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferDispatch;
@@ -54,15 +56,7 @@ using namespace GafferDispatch;
 //////////////////////////////////////////////////////////////////////////
 
 TaskNode::Task::Task( ConstTaskPlugPtr plug, const Gaffer::Context *context )
-	:	m_plug( plug ), m_context( new Context( *context ) )
-{
-}
-
-TaskNode::Task::Task( const Task &t ) : m_plug( t.m_plug ), m_context( t.m_context )
-{
-}
-
-TaskNode::Task::Task( TaskNodePtr n, const Context *c ) : m_plug( n->taskPlug() ), m_context( new Context( *c ) )
+	:	m_plug( plug ), m_context( context )
 {
 }
 
@@ -103,12 +97,12 @@ class TaskNodeProcess : public Gaffer::Process
 			const TaskNode *n = runTimeCast<const TaskNode>( plug()->node() );
 			if( !n )
 			{
-				throw IECore::Exception( boost::str( boost::format( "TaskPlug \"%s\" has no TaskNode." ) % plug()->fullName() ) );
+				throw IECore::Exception( fmt::format( "TaskPlug \"{}\" has no TaskNode.", plug()->fullName() ) );
 			}
 			return n;
 		}
 
-		void handleException()
+		void handleException() const
 		{
 			Gaffer::Process::handleException();
 		}
@@ -131,7 +125,7 @@ InternedString TaskNodeProcess::postTasksProcessType( "taskNode:postTasks" );
 
 } // namespace
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( TaskNode::TaskPlug );
+GAFFER_PLUG_DEFINE_TYPE( TaskNode::TaskPlug );
 
 TaskNode::TaskPlug::TaskPlug( const std::string &name, Direction direction, unsigned flags )
 	:	Plug( name, direction, flags )
@@ -278,7 +272,7 @@ void TaskNode::TaskPlug::postTasks( Tasks &tasks ) const
 // TaskNode implementation
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( TaskNode )
+GAFFER_NODE_DEFINE_TYPE( TaskNode )
 
 size_t TaskNode::g_firstPlugIndex;
 
@@ -292,8 +286,6 @@ TaskNode::TaskNode( const std::string &name )
 
 	PlugPtr dispatcherPlug = new Plug( "dispatcher", Plug::In );
 	addChild( dispatcherPlug );
-
-	Dispatcher::setupPlugs( dispatcherPlug.get() );
 }
 
 TaskNode::~TaskNode()
@@ -366,7 +358,7 @@ bool TaskNode::affectsTask( const Plug *input ) const
 
 void TaskNode::preTasks( const Context *context, Tasks &tasks ) const
 {
-	for( TaskPlugIterator cIt( preTasksPlug() ); !cIt.done(); ++cIt )
+	for( TaskPlug::Iterator cIt( preTasksPlug() ); !cIt.done(); ++cIt )
 	{
 		tasks.push_back( Task( *cIt, context ) );
 	}
@@ -374,7 +366,7 @@ void TaskNode::preTasks( const Context *context, Tasks &tasks ) const
 
 void TaskNode::postTasks( const Context *context, Tasks &tasks ) const
 {
-	for( TaskPlugIterator cIt( postTasksPlug() ); !cIt.done(); ++cIt )
+	for( TaskPlug::Iterator cIt( postTasksPlug() ); !cIt.done(); ++cIt )
 	{
 		tasks.push_back( Task( *cIt, context ) );
 	}
@@ -405,4 +397,18 @@ void TaskNode::executeSequence( const std::vector<float> &frames ) const
 bool TaskNode::requiresSequenceExecution() const
 {
 	return false;
+}
+
+void GafferDispatch::intrusive_ptr_add_ref( TaskNode *node )
+{
+	bool firstRef = node->refCount() == 0;
+	node->addRef();
+	if( firstRef )
+	{
+		// We defer calling `setupPlugs()` till we have our first reference, as
+		// otherwise Python `setupPlugs()` functions which accessed
+		// `plug.node()` would crash. This also means that `setupPlugs()` is able
+		// to introspect the node type and add different plugs on different nodes.
+		Dispatcher::setupPlugs( node->dispatcherPlug() );
+	}
 }

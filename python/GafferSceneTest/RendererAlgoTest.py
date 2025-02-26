@@ -36,49 +36,894 @@
 
 import unittest
 
+import imath
+
 import IECore
 
+import Gaffer
+import GafferTest
 import GafferScene
 import GafferSceneTest
 
 class RendererAlgoTest( GafferSceneTest.SceneTestCase ) :
 
-	def test( self ) :
+	def testObjectSamples( self ) :
+
+		frame = GafferTest.FrameNode()
+
+		sphere = GafferScene.Sphere()
+		sphere["type"].setValue( sphere.Type.Primitive )
+		sphere["radius"].setInput( frame["output"] )
+
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "sphere" ] )
+			samples = GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 0.75, 1.25 ] )
+
+		self.assertEqual( [ s.radius() for s in samples ], [ 0.75, 1.25 ] )
+
+	def testNonInterpolableObjectSamples( self ) :
+
+		frame = GafferTest.FrameNode()
+
+		procedural = GafferScene.ExternalProcedural()
+		procedural["parameters"]["frame"] = Gaffer.NameValuePlug( "frame", 0.0 )
+		procedural["parameters"]["frame"]["value"].setInput( frame["output"] )
+
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "procedural" ] )
+			samples = GafferScene.Private.RendererAlgo.objectSamples( procedural["out"]["object"], [ 0.75, 1.25 ] )
+
+		self.assertEqual( len( samples ), 1 )
+		self.assertEqual( samples[0].parameters()["frame"].value, 1.0 )
+
+	def testObjectSamplesForCameras( self ) :
+
+		frame = GafferTest.FrameNode()
+		camera = GafferScene.Camera()
+		camera["perspectiveMode"].setValue( camera.PerspectiveMode.ApertureFocalLength )
+		camera["focalLength"].setInput( frame["output"] )
+
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "camera" ] )
+			samples = GafferScene.Private.RendererAlgo.objectSamples( camera["out"]["object"], [ 0.75, 1.25 ] )
+
+		self.assertEqual( [ s.parameters()["focalLength"].value for s in samples ], [ 0.75, 1.25 ] )
+
+	def testOutputCameras( self ) :
+
+		frame = GafferTest.FrameNode()
+		camera = GafferScene.Camera()
+		camera["perspectiveMode"].setValue( camera.PerspectiveMode.ApertureFocalLength )
+		camera["focalLength"].setInput( frame["output"] )
+
+		options = GafferScene.StandardOptions()
+		options["in"].setInput( camera["out"] )
+
+		renderOptions = GafferScene.Private.RendererAlgo.RenderOptions( options["out"] )
+		renderSets = GafferScene.Private.RendererAlgo.RenderSets( options["out"] )
+
+		def expectedCamera( frame ) :
+
+			with Gaffer.Context() as c :
+				c.setFrame( frame )
+				camera = options["out"].object( "/camera" )
+
+			GafferScene.SceneAlgo.applyCameraGlobals( camera, options["out"].globals(), options["out"] )
+			return camera
+
+		# Non-animated case
+
+		renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+		GafferScene.Private.RendererAlgo.outputCameras( options["out"], renderOptions, renderSets, renderer )
+
+		capturedCamera = renderer.capturedObject( "/camera" )
+
+		self.assertEqual( capturedCamera.capturedSamples(), [ expectedCamera( 1 ) ] )
+		self.assertEqual( capturedCamera.capturedSampleTimes(), [] )
+
+		# Animated case
+
+		options["options"]["deformationBlur"]["enabled"].setValue( True )
+		options["options"]["deformationBlur"]["value"].setValue( True )
+
+		renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+		renderOptions = GafferScene.Private.RendererAlgo.RenderOptions( options["out"] )
+		GafferScene.Private.RendererAlgo.outputCameras( options["out"], renderOptions, renderSets, renderer )
+
+		capturedCamera = renderer.capturedObject( "/camera" )
+		self.assertEqual( capturedCamera.capturedSamples(), [ expectedCamera( 0.75 ), expectedCamera( 1.25 ) ] )
+		self.assertEqual( capturedCamera.capturedSampleTimes(), [ 0.75, 1.25 ] )
+
+	def testInvisibleCamera( self ) :
+
+		camera = GafferScene.Camera()
+
+		standardAttributes = GafferScene.StandardAttributes()
+		standardAttributes["in"].setInput( camera["out"] )
+		standardAttributes["attributes"]["visibility"]["enabled"].setValue( True )
+		standardAttributes["attributes"]["visibility"]["value"].setValue( False )
+
+		standardOptions = GafferScene.StandardOptions()
+		standardOptions["in"].setInput( standardAttributes["out"] )
+		standardOptions["options"]["renderCamera"]["enabled"].setValue( True )
+		standardOptions["options"]["renderCamera"]["value"].setValue( "/camera" )
+
+		renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+		with self.assertRaisesRegex( RuntimeError, "Camera \"/camera\" is hidden" ) :
+			GafferScene.Private.RendererAlgo.outputCameras(
+				standardOptions["out"],
+				GafferScene.Private.RendererAlgo.RenderOptions( standardOptions["out"] ),
+				GafferScene.Private.RendererAlgo.RenderSets( standardOptions["out"] ),
+				renderer
+			)
+
+	def testCoordinateSystemSamples( self ) :
+
+		coordinateSystem = GafferScene.CoordinateSystem()
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "coordinateSystem" ] )
+			samples = GafferScene.Private.RendererAlgo.objectSamples( coordinateSystem["out"]["object"], [ 0.75, 1.25 ] )
+			self.assertEqual( len( samples ), 1 )
+			self.assertEqual( samples[0], coordinateSystem["out"].object( "/coordinateSystem" ) )
+
+	def testLightSolo( self ) :
+
+		#   Light                       light:mute      soloLights  Mute Result
+		#   ---------------------------------------------------------------------------
+		# - lightSolo                   undefined       in          False
+		# - light                       undefined       out         True
+		# - lightSolo2                  False           in          False
+		# - lightMute                   True            out         True
+		# --- lightMuteChild            undefined       out         True
+		# --- lightMuteChildSolo        undefined       in          False
+		# - lightMuteSolo               True            in          True
+		# --- lightMuteSoloChild        undefined       out         False
+		# --- lightMuteSoloChildSolo    undefined       in          False
+		# - groupMute                   True            out         --
+		# --- lightGroupMuteChildSolo   undefined       in          False
+
+		lightSolo = GafferSceneTest.TestLight()
+		lightSolo["name"].setValue( "lightSolo" )
+		light = GafferSceneTest.TestLight()
+		light["name"].setValue( "light" )
+		lightSolo2 = GafferSceneTest.TestLight()
+		lightSolo2["name"].setValue( "lightSolo2" )
+		lightMute = GafferSceneTest.TestLight()
+		lightMute["name"].setValue( "lightMute" )
+		lightMuteChild = GafferSceneTest.TestLight()
+		lightMuteChild["name"].setValue( "lightMuteChild" )
+		lightMuteChildSolo = GafferSceneTest.TestLight()
+		lightMuteChildSolo["name"].setValue( "lightMuteChildSolo" )
+		lightMuteSolo = GafferSceneTest.TestLight()
+		lightMuteSolo["name"].setValue( "lightMuteSolo" )
+		lightMuteSoloChild = GafferSceneTest.TestLight()
+		lightMuteSoloChild["name"].setValue( "lightMuteSoloChild" )
+		lightMuteSoloChildSolo = GafferSceneTest.TestLight()
+		lightMuteSoloChildSolo["name"].setValue( "lightMuteSoloChildSolo" )
+		lightGroupMuteChildSolo = GafferSceneTest.TestLight()
+		lightGroupMuteChildSolo["name"].setValue( "lightGroupMuteChildSolo" )
+
+		parent = GafferScene.Parent()
+		parent["parent"].setValue( "/" )
+		parent["children"][0].setInput( lightSolo["out"] )
+		parent["children"][1].setInput( light["out"] )
+		parent["children"][2].setInput( lightSolo2["out"] )
+
+		parent["children"][3].setInput( lightMute["out"] )
+
+		lightMuteParent = GafferScene.Parent()
+		lightMuteParent["in"].setInput( parent["out"] )
+		lightMuteParent["parent"].setValue( "/lightMute" )
+		lightMuteParent["children"][0].setInput( lightMuteChild["out"] )
+		lightMuteParent["children"][1].setInput( lightMuteChildSolo["out"] )
+
+		parent["children"][4].setInput( lightMuteSolo["out"] )
+
+		lightMuteSoloParent = GafferScene.Parent()
+		lightMuteSoloParent["in"].setInput( lightMuteParent["out"] )
+		lightMuteSoloParent["parent"].setValue( "/lightMuteSolo" )
+		lightMuteSoloParent["children"][0].setInput( lightMuteSoloChild["out"] )
+		lightMuteSoloParent["children"][1].setInput( lightMuteSoloChildSolo["out"] )
+
+		groupMute = GafferScene.Group()
+		groupMute["name"].setValue( "groupMute" )
+		groupMute["in"][0].setInput( lightGroupMuteChildSolo["out"] )
+
+		parent["children"][5].setInput( groupMute["out"] )
+
+		unMuteFilter = GafferScene.PathFilter()
+		unMuteFilter["paths"].setValue(
+			IECore.StringVectorData( [ "/lightSolo2" ] )
+		)
+		unMuteAttributes = GafferScene.CustomAttributes()
+		unMuteAttributes["in"].setInput( lightMuteSoloParent["out"] )
+		unMuteAttributes["filter"].setInput( unMuteFilter["out"] )
+		unMuteAttributes["attributes"].addChild( Gaffer.NameValuePlug( "light:mute", False ) )
+
+		muteFilter = GafferScene.PathFilter()
+		muteFilter["paths"].setValue(
+			IECore.StringVectorData( [ "/lightMute", "/lightMuteSolo", "/groupMute" ] )
+		)
+		muteAttributes = GafferScene.CustomAttributes()
+		muteAttributes["in"].setInput( unMuteAttributes["out"] )
+		muteAttributes["filter"].setInput( muteFilter["out"] )
+		muteAttributes["attributes"].addChild( Gaffer.NameValuePlug( "light:mute", True ) )
+
+		soloFilter = GafferScene.PathFilter()
+		soloFilter["paths"].setValue(
+			IECore.StringVectorData(
+				[
+					"/lightSolo",
+					"/lightSolo2",
+					"/lightMute/lightMuteChildSolo",
+					"/lightMuteSolo",
+					"/lightMuteSolo/lightMuteSoloChildSolo",
+					"/groupMute/lightGroupMuteChildSolo",
+				]
+			)
+		)
+
+		soloSet = GafferScene.Set()
+		soloSet["in"].setInput( muteAttributes["out"])
+		soloSet["name"].setValue( "soloLights" )
+		soloSet["filter"].setInput( soloFilter["out"] )
+
+		# Make sure we got the hierarchy, attributes and set right
+		self.assertEqual(
+			parent["out"].childNames( "/" ),
+			IECore.InternedStringVectorData( [ "lightSolo", "light", "lightSolo2", "lightMute", "lightMuteSolo", "groupMute", ] )
+		)
+		self.assertEqual(
+			soloSet["out"].childNames( "/lightMute" ),
+			IECore.InternedStringVectorData( [ "lightMuteChild", "lightMuteChildSolo", ] )
+		)
+		self.assertEqual(
+			soloSet["out"].childNames( "/lightMuteSolo" ),
+			IECore.InternedStringVectorData( [ "lightMuteSoloChild", "lightMuteSoloChildSolo", ] )
+		)
+		self.assertEqual(
+			soloSet["out"].childNames( "/groupMute" ),
+			IECore.InternedStringVectorData( [ "lightGroupMuteChildSolo", ] )
+		)
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/lightSolo" ) )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/light" ) )
+		self.assertFalse( soloSet["out"].attributes( "/lightSolo2" )["light:mute"].value )
+		self.assertTrue( soloSet["out"].attributes( "/lightMute" )["light:mute"].value )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/lightMute/lightMuteChild" ) )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/lightMute/lightMuteChildSolo" ) )
+		self.assertTrue( soloSet["out"].attributes( "/lightMuteSolo" )["light:mute"].value )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/lightMuteSolo/lightMuteSoloChild" ) )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/lightMuteSolo/lightMuteSoloChildSolo" ) )
+		self.assertTrue( soloSet["out"].attributes( "/groupMute" )["light:mute"].value )
+		self.assertNotIn( "light:mute", soloSet["out"].attributes( "/groupMute/lightGroupMuteChildSolo" ) )
+		self.assertTrue( "light:mute", soloSet["out"].fullAttributes( "/groupMute/lightGroupMuteChildSolo" ) )
+
+		self.assertEqual(
+			sorted( soloSet["out"].set( "soloLights" ).value.paths() ),
+			sorted(
+				[
+					"/lightSolo",
+					"/lightSolo2",
+					"/lightMute/lightMuteChildSolo",
+					"/lightMuteSolo",
+					"/lightMuteSolo/lightMuteSoloChildSolo",
+					"/groupMute/lightGroupMuteChildSolo",
+				]
+			)
+		)
+
+		# Output the lights to the renderer
+
+		renderOptions = GafferScene.Private.RendererAlgo.RenderOptions( soloSet["out"] )
+		renderSets = GafferScene.Private.RendererAlgo.RenderSets( soloSet["out"] )
+		lightLinks = GafferScene.Private.RendererAlgo.LightLinks()
+
+		renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+		GafferScene.Private.RendererAlgo.outputLights( soloSet["out"], renderOptions, renderSets, lightLinks, renderer )
+
+		# Check that the output is correct
+
+		self.assertFalse( renderer.capturedObject( "/lightSolo" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertTrue( renderer.capturedObject( "/light" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/lightSolo2" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertTrue( renderer.capturedObject( "/lightMute" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertTrue( renderer.capturedObject( "/lightMute/lightMuteChild" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/lightMute/lightMuteChildSolo" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertTrue( renderer.capturedObject( "/lightMuteSolo" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/lightMuteSolo/lightMuteSoloChild" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/lightMuteSolo/lightMuteSoloChildSolo" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/groupMute/lightGroupMuteChildSolo" ).capturedAttributes().attributes()["light:mute"].value )
+
+	def testLightMute( self ) :
+
+		#   Light                   light:mute      Muted Result
+		#   --------------------------------------------------------
+		# - lightMute               True            True
+		# - light                   undefined       undefined
+		# - lightMute2              True            True
+		# - lightMute3              True            True
+		# --- lightMute3Child       False           False
+		# - light2                  undefined       undefined
+		# --- light2ChildMute       True            True
+		# --- light2Child           False           False
+		# - groupMute               True            --
+		# --- lightGroupMuteChild   undefined       True (inherited)
+
+		lightMute = GafferSceneTest.TestLight()
+		lightMute["name"].setValue( "lightMute" )
+		light = GafferSceneTest.TestLight()
+		light["name"].setValue( "light" )
+		lightMute2 = GafferSceneTest.TestLight()
+		lightMute2["name"].setValue( "lightMute2" )
+		lightMute3 = GafferSceneTest.TestLight()
+		lightMute3["name"].setValue( "lightMute3" )
+		lightMute3Child = GafferSceneTest.TestLight()
+		lightMute3Child["name"].setValue( "lightMute3Child" )
+		light2 = GafferSceneTest.TestLight()
+		light2["name"].setValue( "light2" )
+		light2ChildMute = GafferSceneTest.TestLight()
+		light2ChildMute["name"].setValue( "light2ChildMute" )
+		light2Child = GafferSceneTest.TestLight()
+		light2Child["name"].setValue( "light2Child" )
+		lightGroupMuteChild = GafferSceneTest.TestLight()
+		lightGroupMuteChild["name"].setValue( "lightGroupMuteChild" )
+
+		parent = GafferScene.Parent()
+		parent["parent"].setValue( "/" )
+		parent["children"][0].setInput( lightMute["out"] )
+		parent["children"][1].setInput( light["out"] )
+		parent["children"][2].setInput( lightMute2["out"] )
+		parent["children"][3].setInput( lightMute3["out"] )
+
+		lightMute3Parent = GafferScene.Parent()
+		lightMute3Parent["in"].setInput( parent["out"] )
+		lightMute3Parent["parent"].setValue( "/lightMute3" )
+		lightMute3Parent["children"][0].setInput( lightMute3Child["out"] )
+
+		parent["children"][4].setInput( light2["out"] )
+
+		light2Parent = GafferScene.Parent()
+		light2Parent["in"].setInput( lightMute3Parent["out"] )
+		light2Parent["parent"].setValue( "/light2" )
+		light2Parent["children"][0].setInput( light2ChildMute["out"] )
+		light2Parent["children"][1].setInput( light2Child["out"] )
+
+		groupMute = GafferScene.Group()
+		groupMute["name"].setValue( "groupMute" )
+		groupMute["in"][0].setInput( lightGroupMuteChild["out"] )
+
+		parent["children"][5].setInput( groupMute["out"] )
+
+		unMuteFilter = GafferScene.PathFilter()
+		unMuteFilter["paths"].setValue(
+			IECore.StringVectorData( [ "/lightMute3/lightMute3Child", "/light2/light2Child" ] )
+		)
+		unMuteAttributes = GafferScene.CustomAttributes()
+		unMuteAttributes["in"].setInput( light2Parent["out"] )
+		unMuteAttributes["filter"].setInput( unMuteFilter["out"] )
+		unMuteAttributes["attributes"].addChild( Gaffer.NameValuePlug( "light:mute", False ) )
+
+		muteFilter = GafferScene.PathFilter()
+		muteFilter["paths"].setValue(
+			IECore.StringVectorData( [ "/lightMute", "/lightMute2", "/lightMute3", "/light2/light2ChildMute", "/groupMute" ] )
+		)
+		muteAttributes = GafferScene.CustomAttributes()
+		muteAttributes["in"].setInput( unMuteAttributes["out"] )
+		muteAttributes["filter"].setInput( muteFilter["out"] )
+		muteAttributes["attributes"].addChild( Gaffer.NameValuePlug( "light:mute", True ) )
+
+		# Make sure we got the hierarchy and attributes right
+		self.assertEqual(
+			parent["out"].childNames( "/" ),
+			IECore.InternedStringVectorData( [ "lightMute", "light", "lightMute2", "lightMute3", "light2", "groupMute", ] )
+		)
+		self.assertEqual(
+			muteAttributes["out"].childNames( "/lightMute3" ),
+			IECore.InternedStringVectorData( [ "lightMute3Child", ] )
+		)
+		self.assertEqual(
+			muteAttributes["out"].childNames( "/light2" ),
+			IECore.InternedStringVectorData( [ "light2ChildMute", "light2Child", ] )
+		)
+		self.assertEqual(
+			muteAttributes["out"].childNames( "/groupMute" ),
+			IECore.InternedStringVectorData( [ "lightGroupMuteChild", ] )
+		)
+		self.assertTrue( muteAttributes["out"].attributes( "/lightMute" )["light:mute"].value )
+		self.assertNotIn( "light:mute", muteAttributes["out"].attributes( "/light" ) )
+		self.assertTrue( muteAttributes["out"].attributes( "/lightMute2" )["light:mute"].value )
+		self.assertTrue( muteAttributes["out"].attributes( "/lightMute3" )["light:mute"].value )
+		self.assertFalse( muteAttributes["out"].attributes( "/lightMute3/lightMute3Child" )["light:mute"].value )
+		self.assertNotIn( "light:mute", muteAttributes["out"].attributes( "/light2" ) )
+		self.assertTrue( muteAttributes["out"].attributes( "/light2/light2ChildMute" )["light:mute"].value )
+		self.assertFalse( muteAttributes["out"].attributes( "/light2/light2Child" )["light:mute"].value )
+		self.assertTrue( muteAttributes["out"].attributes( "/groupMute" )["light:mute"].value )
+		self.assertNotIn( "light:mute", muteAttributes["out"].attributes( "/groupMute/lightGroupMuteChild" ) )
+		self.assertTrue( muteAttributes["out"].fullAttributes( "/groupMute/lightGroupMuteChild" ) )
+
+		# Output the lights to the renderer
+
+		renderOptions = GafferScene.Private.RendererAlgo.RenderOptions( muteAttributes["out"] )
+		renderSets = GafferScene.Private.RendererAlgo.RenderSets( muteAttributes["out"] )
+		lightLinks = GafferScene.Private.RendererAlgo.LightLinks()
+
+		renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+		)
+		GafferScene.Private.RendererAlgo.outputLights( muteAttributes["out"], renderOptions, renderSets, lightLinks, renderer )
+
+		# Check that the output is correct
+
+		self.assertTrue( renderer.capturedObject( "/lightMute" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertNotIn( "light:mute", renderer.capturedObject( "/light" ).capturedAttributes().attributes() )
+		self.assertTrue( renderer.capturedObject( "/lightMute2" ).capturedAttributes().attributes()["light:mute"] .value)
+		self.assertTrue( renderer.capturedObject( "/lightMute3" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/lightMute3/lightMute3Child" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertNotIn( "light:mute", renderer.capturedObject( "/light2" ).capturedAttributes().attributes() )
+		self.assertTrue( renderer.capturedObject( "/light2/light2ChildMute" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertFalse( renderer.capturedObject( "/light2/light2Child" ).capturedAttributes().attributes()["light:mute"].value )
+		self.assertTrue( renderer.capturedObject( "/groupMute/lightGroupMuteChild" ).capturedAttributes().attributes()["light:mute"].value )
+
+	def testObjectSamplesHash( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["type"].setValue( sphere.Type.Primitive )
+
+		with Gaffer.Context() as c :
+
+			c["scene:path"] = IECore.InternedStringVectorData( [ "sphere" ] )
+
+			h1 = IECore.MurmurHash()
+			samples1 = GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 1.0 ], h1 )
+			self.assertEqual( samples1[0].radius(), 1 )
+			self.assertNotEqual( h1, IECore.MurmurHash() )
+
+			sphere["radius"].setValue( 2 )
+			h2 = IECore.MurmurHash( h1 )
+			samples2 = GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 1.0 ], h2 )
+			self.assertEqual( samples2[0].radius(), 2 )
+			self.assertNotEqual( h2, IECore.MurmurHash() )
+			self.assertNotEqual( h2, h1 )
+
+			h3 = IECore.MurmurHash( h2 )
+			samples3 = GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 1.0 ], h3 )
+			self.assertIsNone( samples3 ) # Hash matched, so no samples generated
+			self.assertEqual( h3, h2 )
+
+	def testTransformSamplesHash( self ) :
 
 		sphere = GafferScene.Sphere()
 
-		defaultAdaptors = GafferScene.createAdaptors()
-		defaultAdaptors["in"].setInput( sphere["out"] )
+		with Gaffer.Context() as c :
 
-		def a() :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "sphere" ] )
 
-			r = GafferScene.StandardAttributes()
-			r["attributes"]["doubleSided"]["enabled"].setValue( True )
-			r["attributes"]["doubleSided"]["value"].setValue( False )
+			h1 = IECore.MurmurHash()
+			samples1 = GafferScene.Private.RendererAlgo.transformSamples( sphere["out"]["transform"], [ 1.0 ], h1 )
+			self.assertEqual( samples1[0].translation().x, 0 )
+			self.assertNotEqual( h1, IECore.MurmurHash() )
 
-			return r
+			sphere["transform"]["translate"]["x"].setValue( 2 )
+			h2 = IECore.MurmurHash( h1 )
+			samples2 = GafferScene.Private.RendererAlgo.transformSamples( sphere["out"]["transform"], [ 1.0 ], h2 )
+			self.assertEqual( samples2[0].translation().x, 2 )
+			self.assertNotEqual( h2, IECore.MurmurHash() )
+			self.assertNotEqual( h2, h1 )
 
-		GafferScene.registerAdaptor( "Test", a )
+			h3 = IECore.MurmurHash( h2 )
+			samples3 = GafferScene.Private.RendererAlgo.transformSamples( sphere["out"]["transform"], [ 1.0 ], h3 )
+			self.assertIsNone( samples3 ) # Hash matched, so no samples generated
+			self.assertEqual( h3, h2 )
 
-		testAdaptors = GafferScene.createAdaptors()
-		testAdaptors["in"].setInput( sphere["out"] )
+	def testObjectSamplesCancellation( self ) :
 
-		self.assertFalse( "doubleSided" in sphere["out"].attributes( "/sphere" ) )
-		self.assertTrue( "doubleSided" in testAdaptors["out"].attributes( "/sphere" ) )
-		self.assertEqual( testAdaptors["out"].attributes( "/sphere" )["doubleSided"].value, False )
+		sphere = GafferScene.Sphere()
+		sphere["type"].setValue( sphere.Type.Primitive )
 
-		GafferScene.deregisterAdaptor( "Test" )
+		# Cache the hash now, so `objectSamples()` can get the hash without
+		# it being cancelled.
+		sphere["out"].objectHash( "/sphere" )
 
-		defaultAdaptors2 = GafferScene.createAdaptors()
-		defaultAdaptors2["in"].setInput( sphere["out"] )
+		# Call `objectSamples()` with a canceller that will immediately
+		# cancel any attempt to get the object.
 
-		self.assertScenesEqual( defaultAdaptors["out"], defaultAdaptors2["out"] )
-		self.assertSceneHashesEqual( defaultAdaptors["out"], defaultAdaptors2["out"] )
+		canceller = IECore.Canceller()
+		canceller.cancel()
 
-	def tearDown( self ) :
+		context = Gaffer.Context()
+		context["scene:path"] = IECore.InternedStringVectorData( [ "sphere" ] )
+		cancelledContext = Gaffer.Context( context, canceller )
 
-		GafferSceneTest.SceneTestCase.tearDown( self )
-		GafferScene.deregisterAdaptor( "Test" )
+		with cancelledContext :
+
+			h = IECore.MurmurHash()
+			with self.assertRaises( IECore.Cancelled ) :
+				GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 1.0 ], h )
+
+			# The hash should not have been updated, so that when we use
+			# it in a non-cancelled context, we get some samples returned.
+			self.assertEqual( h, IECore.MurmurHash() )
+
+		with context :
+
+			samples = GafferScene.Private.RendererAlgo.objectSamples( sphere["out"]["object"], [ 1.0 ], h )
+			self.assertEqual( [ s.radius() for s in samples ], [ 1.0 ] )
+			self.assertNotEqual( h, IECore.MurmurHash() )
+
+	def testTransformSamplesCancellation( self ) :
+
+		sphere = GafferScene.Sphere()
+
+		# Cache the hash now, so `transformSamples()` can get the hash without
+		# it being cancelled.
+		sphere["out"].transformHash( "/sphere" )
+
+		# Call `transformSamples()` with a canceller that will immediately
+		# cancel any attempt to get the object.
+
+		canceller = IECore.Canceller()
+		canceller.cancel()
+
+		context = Gaffer.Context()
+		context["scene:path"] = IECore.InternedStringVectorData( [ "sphere" ] )
+		cancelledContext = Gaffer.Context( context, canceller )
+
+		with cancelledContext :
+
+			h = IECore.MurmurHash()
+			with self.assertRaises( IECore.Cancelled ) :
+				GafferScene.Private.RendererAlgo.transformSamples( sphere["out"]["transform"], [ 1.0 ], h )
+
+			# The hash should not have been updated, so that when we use
+			# it in a non-cancelled context, we get some samples returned.
+			self.assertEqual( h, IECore.MurmurHash() )
+
+		with context :
+
+			samples = GafferScene.Private.RendererAlgo.transformSamples( sphere["out"]["transform"], [ 1.0 ], h )
+			self.assertEqual( [ s.translation().x for s in samples ], [ 0.0 ] )
+			self.assertNotEqual( h, IECore.MurmurHash() )
+
+	def testPurposes( self ) :
+
+		# /group
+		#    /innerGroup1   (default)
+		#		 /cube
+		#        /sphere    (render)
+		#    /innerGroup2
+		#        /cube      (proxy)
+		#        /sphere
+
+		def purposeAttribute( purpose ) :
+
+			result = GafferScene.CustomAttributes()
+			result["attributes"].addChild( Gaffer.NameValuePlug( "usd:purpose", purpose ) )
+			return result
+
+		rootFilter = GafferScene.PathFilter()
+		rootFilter["paths"].setValue( IECore.StringVectorData( [ "*" ] ) )
+
+		cube = GafferScene.Cube()
+
+		renderSphere = GafferScene.Sphere()
+		renderSphereAttributes = purposeAttribute( "render" )
+		renderSphereAttributes["in"].setInput( renderSphere["out"] )
+		renderSphereAttributes["filter"].setInput( rootFilter["out"] )
+
+		innerGroup1 = GafferScene.Group()
+		innerGroup1["name"].setValue( "innerGroup1" )
+		innerGroup1["in"][0].setInput( cube["out"] )
+		innerGroup1["in"][1].setInput( renderSphereAttributes["out"] )
+
+		innerGroup1Attributes = purposeAttribute( "default" )
+		innerGroup1Attributes["in"].setInput( innerGroup1["out"] )
+		innerGroup1Attributes["filter"].setInput( rootFilter["out"] )
+
+		proxyCube = GafferScene.Cube()
+
+		proxyCubeAttributes = purposeAttribute( "proxy" )
+		proxyCubeAttributes["in"].setInput( proxyCube["out"] )
+		proxyCubeAttributes["filter"].setInput( rootFilter["out"] )
+
+		sphere = GafferScene.Sphere()
+
+		innerGroup2 = GafferScene.Group()
+		innerGroup2["name"].setValue( "innerGroup2" )
+		innerGroup2["in"][0].setInput( proxyCubeAttributes["out"] )
+		innerGroup2["in"][1].setInput( sphere["out"] )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( innerGroup1Attributes["out"] )
+		group["in"][1].setInput( innerGroup2["out"] )
+
+		def assertIncludedObjects( scene, includedPurposes, paths ) :
+
+			renderOptions = GafferScene.Private.RendererAlgo.RenderOptions( scene )
+			if includedPurposes :
+				renderOptions.includedPurposes = IECore.StringVectorData( includedPurposes )
+
+			renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+				GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+			)
+			GafferScene.Private.RendererAlgo.outputObjects(
+				group["out"], renderOptions, GafferScene.Private.RendererAlgo.RenderSets( scene ), GafferScene.Private.RendererAlgo.LightLinks(),
+				renderer
+			)
+
+			allPaths = {
+				"/group/innerGroup1/cube",
+				"/group/innerGroup1/sphere",
+				"/group/innerGroup2/cube",
+				"/group/innerGroup2/sphere",
+			}
+
+			self.assertTrue( paths.issubset( allPaths ) )
+			for path in allPaths :
+				if path in paths :
+					self.assertIsNotNone( renderer.capturedObject( path ) )
+				else :
+					self.assertIsNone( renderer.capturedObject( path ) )
+
+		# If we don't specify a purpose, then we should get just "default"
+		# and "render".
+
+		assertIncludedObjects(
+			group["out"], None,
+			{
+				"/group/innerGroup1/cube",
+				"/group/innerGroup1/sphere",
+				"/group/innerGroup2/sphere",
+			}
+		)
+
+		# The default purpose should pick objects without any purpose attribute,
+		# and those that explicitly have a value of "default".
+
+		assertIncludedObjects(
+			group["out"], [ "default" ],
+			{
+				"/group/innerGroup1/cube",
+				"/group/innerGroup2/sphere",
+			}
+		)
+
+		# Purpose-based visibility isn't pruning, so we can see a child location
+		# with the right purpose even if it is parented below a location with the
+		# wrong purpose.
+
+		assertIncludedObjects(
+			group["out"], [ "render" ],
+			{
+				"/group/innerGroup1/sphere",
+			}
+		)
+
+		assertIncludedObjects(
+			group["out"], [ "proxy" ],
+			{
+				"/group/innerGroup2/cube",
+			}
+		)
+
+		# Multiple purposes can be rendered at once.
+
+		assertIncludedObjects(
+			group["out"], [ "render", "default" ],
+			{
+				"/group/innerGroup1/cube",
+				"/group/innerGroup1/sphere",
+				"/group/innerGroup2/sphere",
+			}
+		)
+
+		assertIncludedObjects(
+			group["out"], [ "proxy", "default" ],
+			{
+				"/group/innerGroup1/cube",
+				"/group/innerGroup2/cube",
+				"/group/innerGroup2/sphere",
+			}
+		)
+
+		assertIncludedObjects(
+			group["out"], [ "render", "proxy", "default" ],
+			{
+				"/group/innerGroup1/cube",
+				"/group/innerGroup1/sphere",
+				"/group/innerGroup2/cube",
+				"/group/innerGroup2/sphere",
+			}
+		)
+
+		assertIncludedObjects(
+			group["out"], [ "proxy", "render" ],
+			{
+				"/group/innerGroup1/sphere",
+				"/group/innerGroup2/cube",
+			}
+		)
+
+	def testCapsuleMotionBlur( self ) :
+
+		sphere = GafferScene.Sphere()
+		sphere["type"].setValue( sphere.Type.Primitive )
+		sphere["expression"] = Gaffer.Expression()
+		sphere["expression"].setExpression(
+			'parent["radius"] = context.getFrame() + 1; parent["transform"]["translate"]["x"] = context.getFrame()'
+		)
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sphere["out"] )
+
+		groupFilter = GafferScene.PathFilter()
+		groupFilter["paths"].setValue( IECore.StringVectorData( [ "/group" ] ) )
+
+		encapsulate = GafferScene.Encapsulate()
+		encapsulate["in"].setInput( group["out"] )
+		encapsulate["filter"].setInput( groupFilter["out"] )
+
+		camera = GafferScene.Camera()
+		camera["renderSettingOverrides"]["shutter"]["value"].setValue( imath.V2f( -0.5, 0.5 ) )
+
+		parent = GafferScene.Parent()
+		parent["in"].setInput( encapsulate["out"] )
+		parent["parent"].setValue( "/" )
+		parent["in"].setInput( encapsulate["out"] )
+		parent["children"][0].setInput( camera["out"] )
+
+		standardOptions = GafferScene.StandardOptions()
+		standardOptions["in"].setInput( parent["out"] )
+		standardOptions["options"]["transformBlur"]["enabled"].setValue( True )
+		standardOptions["options"]["deformationBlur"]["enabled"].setValue( True )
+		standardOptions["options"]["shutter"]["enabled"].setValue( True )
+		standardOptions["options"]["renderCamera"]["enabled"].setValue( True )
+		standardOptions["options"]["renderCamera"]["value"].setValue( "/camera" )
+
+		def assertExpectedMotion( scene ) :
+
+			# Render to capture Capsule. This will always contain only a single
+			# motion sample because procedurals themselves can't have motion samples
+			# (although their contents can).
+
+			renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+				GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+			)
+			GafferScene.Private.RendererAlgo.outputObjects(
+				scene, GafferScene.Private.RendererAlgo.RenderOptions( scene ),
+				GafferScene.Private.RendererAlgo.RenderSets( scene ), GafferScene.Private.RendererAlgo.LightLinks(),
+				renderer
+			)
+
+			capsule = renderer.capturedObject( "/group" )
+			self.assertEqual( len( capsule.capturedSamples() ), 1 )
+			capsule = capsule.capturedSamples()[0]
+			self.assertIsInstance( capsule, GafferScene.Capsule )
+
+			# Render again to expand contents of Capsule.
+
+			capsuleRenderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+				GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+			)
+			capsule.render( capsuleRenderer )
+
+			# Check transform blur of contents matches what was requested by the scene globals.
+
+			motionTimes = list( GafferScene.SceneAlgo.shutter( scene.globals(), scene ) )
+			sphere = capsuleRenderer.capturedObject( "/sphere" )
+			if scene.globals()["option:render:transformBlur"].value :
+				transformTimes = motionTimes
+			else :
+				transformTimes = [ Gaffer.Context.current().getFrame() ]
+
+			self.assertEqual( len( sphere.capturedTransforms() ), len( transformTimes ) )
+			self.assertEqual( sphere.capturedTransformTimes(), transformTimes if len( transformTimes ) > 1 else [] )
+			for index, time in enumerate( transformTimes ) :
+				with Gaffer.Context() as context :
+					context.setFrame( time )
+					self.assertEqual( sphere.capturedTransforms()[index], capsule.scene().transform( "/group/sphere" ) )
+
+			# Check deformation blur of contents matches what was requested by the scene globals.
+
+			if scene.globals()["option:render:deformationBlur"].value :
+				objectTimes = motionTimes
+			else :
+				objectTimes = [ Gaffer.Context.current().getFrame() ]
+
+			self.assertEqual( len( sphere.capturedSamples() ), len( objectTimes ) )
+			self.assertEqual( sphere.capturedSampleTimes(), objectTimes if len( objectTimes ) > 1 else [] )
+			for index, time in enumerate( objectTimes ) :
+				with Gaffer.Context() as context :
+					context.setFrame( time )
+					self.assertEqual( sphere.capturedSamples()[index].radius(), capsule.scene().object( "/group/sphere" ).radius() )
+
+		for frame in ( 0, 1 ) :
+			for deformation in ( False, True ) :
+				for transform in ( False, True ) :
+					for shutter in ( imath.V2f( -0.25, 0.25 ), imath.V2f( 0, 0.5 ) ) :
+						for overrideShutter in ( False, True ) :
+							with self.subTest( frame = frame, deformation = deformation, transform = transform, shutter = shutter, overrideShutter = overrideShutter ) :
+								standardOptions["options"]["transformBlur"]["value"].setValue( transform )
+								standardOptions["options"]["deformationBlur"]["value"].setValue( deformation )
+								standardOptions["options"]["shutter"]["value"].setValue( shutter )
+								camera["renderSettingOverrides"]["shutter"]["enabled"].setValue( overrideShutter )
+								with Gaffer.Context() as context :
+									context.setFrame( frame )
+									assertExpectedMotion( standardOptions["out"] )
+
+	def testCapsulePurposes( self ) :
+
+		rootFilter = GafferScene.PathFilter()
+		rootFilter["paths"].setValue( IECore.StringVectorData( [ "*" ] ) )
+
+		cube = GafferScene.Cube()
+
+		attributes = GafferScene.CustomAttributes()
+		attributes["in"].setInput( cube["out"] )
+		attributes["filter"].setInput( rootFilter["out"] )
+		attributes["attributes"].addChild( Gaffer.NameValuePlug( "usd:purpose", "${collect:rootName}" ) )
+
+		collect = GafferScene.CollectScenes()
+		collect["in"].setInput( attributes["out"] )
+		collect["rootNames"].setValue( IECore.StringVectorData( [ "default", "render", "proxy", "guide" ] ) )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( collect["out"] )
+
+		encapsulate = GafferScene.Encapsulate()
+		encapsulate["in"].setInput( group["out"] )
+		encapsulate["filter"].setInput( rootFilter["out"] )
+
+		standardOptions = GafferScene.StandardOptions()
+		standardOptions["in"].setInput( encapsulate["out"] )
+		standardOptions["options"]["includedPurposes"]["enabled"].setValue( True )
+
+		for includedPurposes in [
+			[ "default", "render" ],
+			[ "default", "proxy" ],
+			[ "default", "render", "proxy", "guide" ],
+			[ "default" ],
+		] :
+			with self.subTest( includedPurposes = includedPurposes ) :
+
+				standardOptions["options"]["includedPurposes"]["value"].setValue( IECore.StringVectorData( includedPurposes ) )
+
+				# Render to capture Capsule.
+
+				renderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+					GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+				)
+				GafferScene.Private.RendererAlgo.outputObjects(
+					standardOptions["out"], GafferScene.Private.RendererAlgo.RenderOptions( standardOptions["out"] ),
+					GafferScene.Private.RendererAlgo.RenderSets( standardOptions["out"] ), GafferScene.Private.RendererAlgo.LightLinks(),
+					renderer
+				)
+
+				capsule = renderer.capturedObject( "/group" )
+				capsule = capsule.capturedSamples()[0]
+				self.assertIsInstance( capsule, GafferScene.Capsule )
+
+				# Render again to expand contents of Capsule.
+
+				capsuleRenderer = GafferScene.Private.IECoreScenePreview.CapturingRenderer(
+					GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Batch
+				)
+				capsule.render( capsuleRenderer )
+
+				# Check that only objects with the right purpose have been included.
+
+				for purpose in [ "default", "render", "proxy", "guide" ] :
+					if purpose in includedPurposes :
+						self.assertIsNotNone( capsuleRenderer.capturedObject( f"/{purpose}/cube" ) )
+					else :
+						self.assertIsNone( capsuleRenderer.capturedObject( f"/{purpose}/cube" ) )
 
 if __name__ == "__main__":
 	unittest.main()

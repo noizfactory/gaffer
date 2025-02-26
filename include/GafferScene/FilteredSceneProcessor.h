@@ -35,8 +35,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_FILTEREDSCENEPROCESSOR_H
-#define GAFFERSCENE_FILTEREDSCENEPROCESSOR_H
+#pragma once
+
+#include "GafferScene/Export.h"
 
 #include "GafferScene/Filter.h"
 #include "GafferScene/FilterPlug.h"
@@ -54,10 +55,10 @@ class GAFFERSCENE_API FilteredSceneProcessor : public SceneProcessor
 
 	public :
 
-		FilteredSceneProcessor( const std::string &name=defaultName<FilteredSceneProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
+		explicit FilteredSceneProcessor( const std::string &name=defaultName<FilteredSceneProcessor>(), IECore::PathMatcher::Result filterDefault = IECore::PathMatcher::EveryMatch );
 		~FilteredSceneProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::FilteredSceneProcessor, FilteredSceneProcessorTypeId, SceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::FilteredSceneProcessor, FilteredSceneProcessorTypeId, SceneProcessor );
 
 		FilterPlug *filterPlug();
 		const FilterPlug *filterPlug() const;
@@ -89,5 +90,3 @@ class GAFFERSCENE_API FilteredSceneProcessor : public SceneProcessor
 IE_CORE_DECLAREPTR( FilteredSceneProcessor )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_FILTEREDSCENEPROCESSOR_H

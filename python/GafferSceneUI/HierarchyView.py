@@ -42,24 +42,27 @@ import IECore
 import Gaffer
 import GafferUI
 import GafferScene
-import _GafferSceneUI
+import GafferSceneUI
+from . import _GafferSceneUI
 
-import ContextAlgo
+from . import SetUI
 
 ##########################################################################
 # HierarchyView
 ##########################################################################
 
-class HierarchyView( GafferUI.NodeSetEditor ) :
+class HierarchyView( GafferSceneUI.SceneEditor ) :
 
 	def __init__( self, scriptNode, **kw ) :
 
 		column = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, borderWidth = 4, spacing = 4 )
 
-		GafferUI.NodeSetEditor.__init__( self, column, scriptNode, **kw )
+		GafferSceneUI.SceneEditor.__init__( self, column, scriptNode, **kw )
 
 		searchFilter = _GafferSceneUI._HierarchyViewSearchFilter()
+		searchFilter.setScene( self.settings()["in"] )
 		setFilter = _GafferSceneUI._HierarchyViewSetFilter()
+		setFilter.setScene( self.settings()["in"] )
 		setFilter.setEnabled( False )
 
 		self.__filter = Gaffer.CompoundPathFilter( [ searchFilter, setFilter ] )
@@ -68,78 +71,63 @@ class HierarchyView( GafferUI.NodeSetEditor ) :
 
 			with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
 
+				_VisibleSetBookmarkWidget()
+				GafferUI.Divider( GafferUI.Divider.Orientation.Vertical )
+
 				_SearchFilterWidget( searchFilter )
 				_SetFilterWidget( setFilter )
 
 			self.__pathListing = GafferUI.PathListingWidget(
 				Gaffer.DictPath( {}, "/" ), # temp till we make a ScenePath
-				columns = [ GafferUI.PathListingWidget.defaultNameColumn ],
-				allowMultipleSelection = True,
+				columns = [
+					GafferUI.PathListingWidget.defaultNameColumn,
+					_GafferSceneUI._HierarchyViewInclusionsColumn( scriptNode ),
+					_GafferSceneUI._HierarchyViewExclusionsColumn( scriptNode )
+				],
+				selectionMode = GafferUI.PathListingWidget.SelectionMode.Rows,
 				displayMode = GafferUI.PathListingWidget.DisplayMode.Tree,
 			)
 			self.__pathListing.setDragPointer( "objects" )
 			self.__pathListing.setSortable( False )
 
-			# Work around insanely slow selection of a range containing many
-			# objects (using a shift-click). The default selection behaviour
-			# is SelectRows and this triggers some terrible performance problems
-			# in Qt. Since we only have a single column, there is no difference
-			# between SelectItems and SelectRows other than the speed.
-			#
-			# This workaround isn't going to be sufficient when we come to add
-			# additional columns to the HierarchyView. What _might_ work instead
-			# is to override `QTreeView.setSelection()` in PathListingWidget.py,
-			# so that we manually expand the selected region to include full rows,
-			# and then don't have to pass the `QItemSelectionModel::Rows` flag to
-			# the subsequent `QItemSelectionModel::select()` call. This would be
-			# essentially the same method we used to speed up
-			# `PathListingWidget.setSelection()`.
-			#
-			# Alternatively we could avoid QItemSelectionModel entirely by managing
-			# the selection ourself as a persistent PathMatcher.
-			self.__pathListing._qtWidget().setSelectionBehavior(
-				self.__pathListing._qtWidget().SelectionBehavior.SelectItems
-			)
-
 			self.__selectionChangedConnection = self.__pathListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ) )
 			self.__expansionChangedConnection = self.__pathListing.expansionChangedSignal().connect( Gaffer.WeakMethod( self.__expansionChanged ) )
 
-		self.__plug = None
+			self.__pathListing.columnContextMenuSignal().connect( Gaffer.WeakMethod( self.__columnContextMenuSignal ) )
+			self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPressSignal ) )
+
+		self.__visibleSetChangedConnection = GafferSceneUI.ScriptNodeAlgo.visibleSetChangedSignal( scriptNode ).connect(
+			Gaffer.WeakMethod( self.__visibleSetChanged )
+		)
+		self.__selectedPathsChangedConnection = GafferSceneUI.ScriptNodeAlgo.selectedPathsChangedSignal( scriptNode ).connect(
+			Gaffer.WeakMethod( self.__selectedPathsChanged )
+		)
+
 		self._updateFromSet()
+		self.__setPathListingPath()
+		self.__transferExpansionFromScriptNode()
+		self.__transferSelectionFromScriptNode()
 
 	def scene( self ) :
 
-		return self.__plug
+		return self.settings()["in"].getInput()
+
+	## Returns the widget used for showing the main scene listing, with the
+	# intention that clients can add custom context menu items via
+	# `sceneListing.columnContextMenuSignal()`.
+	#
+	# > Caution : This currently returns a PathListingWidget, but in future
+	# > will probably return a more specialised widget with fewer privileges.
+	# > Please limit usage to `columnContextMenuSignal()`.
+	def sceneListing( self ) :
+
+		return self.__pathListing
 
 	def __repr__( self ) :
 
 		return "GafferSceneUI.HierarchyView( scriptNode )"
 
-	def _updateFromSet( self ) :
-
-		# first of all decide what plug we're viewing.
-		self.__plug = None
-		self.__plugParentChangedConnection = None
-		node = self._lastAddedNode()
-		if node is not None :
-			outputScenePlugs = [ p for p in node.children( GafferScene.ScenePlug ) if p.direction() == Gaffer.Plug.Direction.Out ]
-			if len( outputScenePlugs ) :
-				self.__plug = outputScenePlugs[0]
-				self.__plugParentChangedConnection = self.__plug.parentChangedSignal().connect( Gaffer.WeakMethod( self.__plugParentChanged ) )
-
-		# call base class update - this will trigger a call to _titleFormat(),
-		# hence the need for already figuring out the plug.
-		GafferUI.NodeSetEditor._updateFromSet( self )
-
-		# update our view of the hierarchy
-		self.__setPathListingPath()
-
 	def _updateFromContext( self, modifiedItems ) :
-
-		if any( ContextAlgo.affectsSelectedPaths( x ) for x in modifiedItems ) :
-			self.__transferSelectionFromContext()
-		elif any( ContextAlgo.affectsExpandedPaths( x ) for x in modifiedItems ) :
-			self.__transferExpansionFromContext()
 
 		for item in modifiedItems :
 			if not item.startswith( "ui:" ) :
@@ -148,73 +136,110 @@ class HierarchyView( GafferUI.NodeSetEditor ) :
 				self.__setPathListingPath()
 				break
 
-	def _titleFormat( self ) :
-
-		return GafferUI.NodeSetEditor._titleFormat(
-			self,
-			_maxNodes = 1 if self.__plug is not None else 0,
-			_reverseNodes = True,
-			_ellipsis = False
-		)
-
-	def __plugParentChanged( self, plug, oldParent ) :
-
-		# the plug we were viewing has been deleted or moved - find
-		# another one to view.
-		self._updateFromSet()
-
 	@GafferUI.LazyMethod( deferUntilPlaybackStops = True )
 	def __setPathListingPath( self ) :
 
+		# We take a static copy of our current context for use in the ScenePath for two reasons :
+		#
+		# 1. To prevent the PathListing from updating automatically when the original context
+		#    changes, which allows us to take control of updates ourselves in `_updateFromContext()`,
+		#    using LazyMethod to defer the calls to this function until we are visible and
+		#    playback has stopped.
+		# 2. Because the PathListingWidget uses a BackgroundTask to evaluate the Path, and it
+		#    would not be thread-safe to directly reference a context that could be modified by
+		#    the UI thread at any time.
+		contextCopy = Gaffer.Context( self.context() )
 		for f in self.__filter.getFilters() :
-			f.setScene( self.__plug )
+			f.setContext( contextCopy )
+		with Gaffer.Signals.BlockedConnection( self.__selectionChangedConnection ) :
+			self.__pathListing.setPath( GafferScene.ScenePath( self.settings()["in"], contextCopy, "/", filter = self.__filter ) )
 
-		if self.__plug is not None :
-			# We take a static copy of our current context for use in the ScenePath - this prevents the
-			# PathListing from updating automatically when the original context changes, and allows us to take
-			# control of updates ourselves in _updateFromContext(), using LazyMethod to defer the calls to this
-			# function until we are visible and playback has stopped.
-			contextCopy = Gaffer.Context( self.getContext() )
-			for f in self.__filter.getFilters() :
-				f.setContext( contextCopy )
-			with Gaffer.BlockedConnection( self.__selectionChangedConnection ) :
-				self.__pathListing.setPath( GafferScene.ScenePath( self.__plug, contextCopy, "/", filter = self.__filter ) )
-			self.__transferExpansionFromContext()
-			self.__transferSelectionFromContext()
-		else :
-			with Gaffer.BlockedConnection( self.__selectionChangedConnection ) :
-				self.__pathListing.setPath( Gaffer.DictPath( {}, "/" ) )
+	def __visibleSetChanged( self, scriptNode ) :
+
+		self.__transferExpansionFromScriptNode()
+
+	def __selectedPathsChanged( self, scriptNode ) :
+
+		self.__transferSelectionFromScriptNode()
 
 	def __expansionChanged( self, pathListing ) :
 
 		assert( pathListing is self.__pathListing )
 
-		with Gaffer.BlockedConnection( self._contextChangedConnection() ) :
-			ContextAlgo.setExpandedPaths( self.getContext(), pathListing.getExpansion() )
+		with Gaffer.Signals.BlockedConnection( self.__visibleSetChangedConnection ) :
+			visibleSet = GafferSceneUI.ScriptNodeAlgo.getVisibleSet( self.scriptNode() )
+			visibleSet.expansions = pathListing.getExpansion()
+			GafferSceneUI.ScriptNodeAlgo.setVisibleSet( self.scriptNode(), visibleSet )
 
 	def __selectionChanged( self, pathListing ) :
 
 		assert( pathListing is self.__pathListing )
 
-		with Gaffer.BlockedConnection( self._contextChangedConnection() ) :
-			ContextAlgo.setSelectedPaths( self.getContext(), pathListing.getSelection() )
+		with Gaffer.Signals.BlockedConnection( self.__selectedPathsChangedConnection ) :
+			GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( self.scriptNode(), pathListing.getSelection() )
 
-	@GafferUI.LazyMethod( deferUntilPlaybackStops = True )
-	def __transferExpansionFromContext( self ) :
+	def __keyPressSignal( self, widget, event ) :
 
-		expandedPaths = ContextAlgo.getExpandedPaths( self.getContext() )
-		if expandedPaths is None :
+		if event.key == "C" and event.modifiers == event.Modifiers.Control :
+			self.__copySelectedPaths()
+			return True
+
+		elif event.key == "F" :
+			self.__frameSelectedPaths()
+			return True
+
+		return False
+
+	def __columnContextMenuSignal( self, column, pathListing, menuDefinition ) :
+
+		selection = pathListing.getSelection()
+		menuDefinition.append(
+			"Copy Path%s" % ( "" if selection.size() == 1 else "s" ),
+			{
+				"command" : Gaffer.WeakMethod( self.__copySelectedPaths ),
+				"active" : not selection.isEmpty(),
+				"shortCut" : "Ctrl+C"
+			}
+		)
+		menuDefinition.append(
+			"Frame Selection",
+			{
+				"command" : Gaffer.WeakMethod( self.__frameSelectedPaths ),
+				"active" : not selection.isEmpty(),
+				"shortCut" : "F"
+			}
+		)
+
+	def __copySelectedPaths( self, *unused ) :
+
+		if self.scene() is None :
 			return
 
-		with Gaffer.BlockedConnection( self.__expansionChangedConnection ) :
-			self.__pathListing.setExpansion( expandedPaths )
+		selection = self.__pathListing.getSelection()
+		if not selection.isEmpty() :
+			data = IECore.StringVectorData( selection.paths() )
+			self.scriptNode().ancestor( Gaffer.ApplicationRoot ).setClipboardContents( data )
+
+	def __frameSelectedPaths( self ) :
+
+		selection = self.__pathListing.getSelection()
+		if not selection.isEmpty() :
+			self.__pathListing.expandToSelection()
+			self.__pathListing.scrollToFirst( selection )
 
 	@GafferUI.LazyMethod( deferUntilPlaybackStops = True )
-	def __transferSelectionFromContext( self ) :
+	def __transferExpansionFromScriptNode( self ) :
 
-		selection = ContextAlgo.getSelectedPaths( self.getContext() )
-		with Gaffer.BlockedConnection( self.__selectionChangedConnection ) :
-			self.__pathListing.setSelection( selection, scrollToFirst=True, expandNonLeaf=False )
+		visibleSet = GafferSceneUI.ScriptNodeAlgo.getVisibleSet( self.scriptNode() )
+		with Gaffer.Signals.BlockedConnection( self.__expansionChangedConnection ) :
+			self.__pathListing.setExpansion( visibleSet.expansions )
+
+	@GafferUI.LazyMethod( deferUntilPlaybackStops = True )
+	def __transferSelectionFromScriptNode( self ) :
+
+		selection = GafferSceneUI.ScriptNodeAlgo.getSelectedPaths( self.scriptNode() )
+		with Gaffer.Signals.BlockedConnection( self.__selectionChangedConnection ) :
+			self.__pathListing.setSelection( selection, scrollToFirst=False )
 
 GafferUI.Editor.registerType( "HierarchyView", HierarchyView )
 
@@ -294,10 +319,12 @@ class _SetFilterWidget( GafferUI.PathFilterWidget ) :
 		if len( availableSets - builtInSets ) :
 			m.append( "/BuiltInDivider", { "divider" : True } )
 
+		pathFn = SetUI.getMenuPathFunction()
+
 		for s in sorted( availableSets | selectedSets ) :
 			if s in builtInSets :
 				continue
-			m.append( "/" + str( s ), item( s ) )
+			m.append( "/" + pathFn( s ), item( s ) )
 
 		return m
 
@@ -320,8 +347,8 @@ class _SearchFilterWidget( GafferUI.PathFilterWidget ) :
 		self.__patternWidget = GafferUI.TextWidget()
 		GafferUI.PathFilterWidget.__init__( self, self.__patternWidget, pathFilter )
 
-		self.__patternWidget._qtWidget().setPlaceholderText( "Filter..." )
-		self.__patternWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__patternEditingFinished ), scoped = False )
+		self.__patternWidget.setPlaceholderText( "Filter..." )
+		self.__patternWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__patternEditingFinished ) )
 
 		self._updateFromPathFilter()
 
@@ -332,3 +359,107 @@ class _SearchFilterWidget( GafferUI.PathFilterWidget ) :
 	def __patternEditingFinished( self, widget ) :
 
 		self.pathFilter().setMatchPattern( self.__patternWidget.getText() )
+
+##########################################################################
+# _VisibleSetBookmarkWidget
+##########################################################################
+
+class _VisibleSetBookmarkWidget( GafferUI.Widget ) :
+
+	def __init__( self ) :
+
+		button = GafferUI.MenuButton(
+			image = "bookmarks.png",
+			hasFrame = False,
+			toolTip = "Visible Set Bookmarks",
+			menu = GafferUI.Menu( Gaffer.WeakMethod( self.__menuDefinition ), title = "Visible Set Bookmarks" )
+		)
+
+		GafferUI.Widget.__init__( self, button )
+
+	def __menuDefinition( self ) :
+
+		scriptNode = self.ancestor( GafferUI.Editor ).scriptNode()
+		readOnly = Gaffer.MetadataAlgo.readOnly( scriptNode )
+
+		menuDefinition = IECore.MenuDefinition()
+
+		bookmarks = sorted( GafferSceneUI.ScriptNodeAlgo.visibleSetBookmarks( scriptNode ) )
+		if bookmarks :
+			for b in bookmarks :
+				menuDefinition.append(
+					"/" + b,
+					{
+						"command" : functools.partial( Gaffer.WeakMethod( self.__restore ), b ),
+						"checkBox" : GafferSceneUI.ScriptNodeAlgo.getVisibleSetBookmark( scriptNode, b ) == GafferSceneUI.ScriptNodeAlgo.getVisibleSet( scriptNode ),
+					}
+				)
+			menuDefinition.append( "/RestoreBookmarkDivider", { "divider" : True } )
+
+			for b in bookmarks :
+				menuDefinition.append(
+					"/Save As/" + b,
+					{
+						"command" : functools.partial( Gaffer.WeakMethod( self.__saveAs ), b ),
+						"active" : not readOnly,
+					}
+				)
+				menuDefinition.append(
+					"/Delete/" + b,
+					{
+						"command" : functools.partial( Gaffer.WeakMethod( self.__delete ), b ),
+						"active" : not readOnly,
+					}
+				)
+			menuDefinition.append( "/Save As/Divider", { "divider" : True } )
+		else :
+			menuDefinition.append( "/No Bookmarks Available", { "active" : False } )
+			menuDefinition.append( "/NoBookmarksDivider", { "divider" : True } )
+
+		menuDefinition.append(
+			"/Save As/New Bookmark...",
+			{
+				"command" : functools.partial( Gaffer.WeakMethod( self.__save ) ),
+				"active" : not readOnly,
+			}
+		)
+
+		return menuDefinition
+
+	def __save( self, *unused ) :
+
+		d = GafferUI.TextInputDialogue( initialText = "", title = "Save Bookmark", confirmLabel = "Save" )
+		name = d.waitForText( parentWindow = self.ancestor( GafferUI.Window ) )
+
+		if not name :
+			return
+
+		if name in GafferSceneUI.ScriptNodeAlgo.visibleSetBookmarks( self.ancestor( GafferUI.Editor ).scriptNode() ) :
+			c = GafferUI.ConfirmationDialogue(
+				"Replace existing bookmark?",
+				"A bookmark named {} already exists. Do you want to replace it?".format( name ),
+				confirmLabel = "Replace"
+			)
+			if not c.waitForConfirmation( parentWindow = self.ancestor( GafferUI.Window ) ) :
+				return
+
+		self.__saveAs( name )
+
+	def __saveAs( self, name, *unused ) :
+
+		scriptNode = self.ancestor( GafferUI.Editor ).scriptNode()
+		visibleSet = GafferSceneUI.ScriptNodeAlgo.getVisibleSet( scriptNode )
+		with Gaffer.UndoScope( scriptNode ) :
+			GafferSceneUI.ScriptNodeAlgo.addVisibleSetBookmark( scriptNode, name, visibleSet )
+
+	def __delete( self, name, *unused ) :
+
+		scriptNode = self.ancestor( GafferUI.Editor ).scriptNode()
+		with Gaffer.UndoScope( scriptNode ) :
+			GafferSceneUI.ScriptNodeAlgo.removeVisibleSetBookmark( scriptNode, name )
+
+	def __restore( self, name, *unused ) :
+
+		scriptNode = self.ancestor( GafferUI.Editor ).scriptNode()
+		visibleSet = GafferSceneUI.ScriptNodeAlgo.getVisibleSetBookmark( scriptNode, name )
+		GafferSceneUI.ScriptNodeAlgo.setVisibleSet( scriptNode, visibleSet )

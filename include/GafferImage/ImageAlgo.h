@@ -34,15 +34,19 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_IMAGEALGO_H
-#define GAFFERIMAGE_IMAGEALGO_H
+#pragma once
+
+#include "IECoreImage/ImagePrimitive.h"
 
 #include "GafferImage/Export.h"
 
+#include "Gaffer/Context.h"
+
+#include "IECore/CompoundObject.h"
 #include "IECore/Export.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathBox.h"
+#include "Imath/ImathBox.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 #include <vector>
@@ -79,25 +83,49 @@ GAFFERIMAGE_API std::vector<std::string> layerNames( const std::vector<std::stri
 /// Returns the name of the layer the channel belongs to.
 /// This is simply the portion of the channelName up to the
 /// last '.', or "" if no such separator exists.
-inline std::string layerName( const std::string &channelName );
+std::string layerName( const std::string &channelName );
 
 /// Returns the base name for a channel - the portion of
 /// the name following the last '.', or the whole name
 /// if no separator exists.
-inline std::string baseName( const std::string &channelName );
+std::string baseName( const std::string &channelName );
 
 /// Joins a layer name and base name to form a channel name.
-inline std::string channelName( const std::string &layerName, const std::string &baseName );
+std::string channelName( const std::string &layerName, const std::string &baseName );
 
 /// Returns 0, 1, 2 and 3 for base names "R", "G", "B"
 /// and "A" respectively. Returns -1 for all other base names.
-inline int colorIndex( const std::string &channelName );
+int colorIndex( const std::string &channelName );
 
 /// Returns true if the specified channel exists in image
-inline bool channelExists( const ImagePlug *image, const std::string &channelName );
+bool channelExists( const ImagePlug *image, const std::string &channelName );
 
 /// Returns true if the specified channel exists in channelNames
-inline bool channelExists( const std::vector<std::string> &channelNames, const std::string &channelName );
+bool channelExists( const std::vector<std::string> &channelNames, const std::string &channelName );
+
+/// We don't usually need to sort channel names, but it's useful to put them in a
+/// consistent order when displaying in the UI or writing to file.
+/// Our sort rules are:
+/// * channels not in a layer come first
+/// * the channels RGBA are sorted in that order, and come before any other channels in the same layer
+/// * otherwise, things are sorted using a natural ordering
+GAFFERIMAGE_API std::vector<std::string> sortedChannelNames( const std::vector<std::string> &channelNames );
+
+/// Default channel names
+/// ==============================
+///
+/// You can just use your own strings, but it can be convenient to use these
+
+GAFFERIMAGE_API extern const std::string channelNameA;
+GAFFERIMAGE_API extern const std::string channelNameR;
+GAFFERIMAGE_API extern const std::string channelNameG;
+GAFFERIMAGE_API extern const std::string channelNameB;
+GAFFERIMAGE_API extern const std::string channelNameZ;
+GAFFERIMAGE_API extern const std::string channelNameZBack;
+
+/// Parallel processing functions
+/// ==============================
+///
 
 enum TileOrder
 {
@@ -111,7 +139,7 @@ template <class TileFunctor>
 void parallelProcessTiles(
 	const ImagePlug *imagePlug,
 	TileFunctor &&functor, // Signature : void functor( const ImagePlug *imagePlug, const V2i &tileOrigin )
-	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified.
+	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified ( requires a valid view in the context )
 	TileOrder tileOrder = Unordered
 );
 
@@ -121,7 +149,7 @@ void parallelProcessTiles(
 	const ImagePlug *imagePlug,
 	const std::vector<std::string> &channelNames,
 	TileFunctor &&functor, // Signature : void functor( const ImagePlug *imagePlug, const string &channelName, const V2i &tileOrigin )
-	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified.
+	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified ( requires a valid view in the context )
 	TileOrder tileOrder = Unordered
 );
 
@@ -132,7 +160,7 @@ void parallelGatherTiles(
 	const ImagePlug *image,
 	const TileFunctor &tileFunctor, // Signature : T tileFunctor( const ImagePlug *imagePlug, const V2i &tileOrigin )
 	GatherFunctor &&gatherFunctor, // Signature : void gatherFunctor( const ImagePlug *imagePlug, const V2i &tileOrigin, T &tileFunctorResult )
-	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified.
+	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified ( requires a valid view in the context )
 	TileOrder tileOrder = Unordered
 );
 
@@ -144,14 +172,49 @@ void parallelGatherTiles(
 	const std::vector<std::string> &channelNames,
 	const TileFunctor &tileFunctor, // Signature : T tileFunctor( const ImagePlug *imagePlug, const string &channelName, const V2i &tileOrigin )
 	GatherFunctor &&gatherFunctor, // Signature : void gatherFunctor( const ImagePlug *imagePlug, const string &channelName, const V2i &tileOrigin, T &tileFunctorResult )
-	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified.
+	const Imath::Box2i &window = Imath::Box2i(), // Uses dataWindow if not specified ( requires a valid view in the context )
 	TileOrder tileOrder = Unordered
 );
+
+/// Whole view operations
+/// ==============================
+///
+/// The functions process a whole view of an image at once.  Not generally used in core Gaffer processing, since we
+/// prefer to process just one tile at a time, but useful for testing and interoperability.
+/// If the view is not specified, it must be set in the current Context.
+
+/// Returns a pointer to an IECore::ImagePrimitive. Note that the image's
+/// coordinate system will be converted to the OpenEXR and Cortex specification
+/// and have it's origin in the top left of it's display window with the positive
+/// Y axis pointing downwards rather than Gaffer's internal representation where
+/// the origin is in the bottom left of the display window with the Y axis
+/// ascending towards the top of the display window.
+GAFFERIMAGE_API IECoreImage::ImagePrimitivePtr image( const ImagePlug *imagePlug, const std::string *viewName = nullptr );
+
+/// Return a hash that will vary if any aspect of the return from image( ... ) varies
+GAFFERIMAGE_API IECore::MurmurHash imageHash( const ImagePlug *imagePlug, const std::string *viewName = nullptr );
+
+/// Return all pixel data as a big CompoundData with entries for each channel
+/// and tile.  Among other things, this makes it possible to efficiently test
+/// from Python whether two ImagePlugs have identical pixel data.  Unlike the
+/// image() method above, it works on deep images.
+GAFFERIMAGE_API IECore::ConstCompoundObjectPtr tiles( const ImagePlug *imagePlug, const std::string *viewName = nullptr );
+
+/// Deep Utils
+/// ==============================
+
+/// If the provided sample offsets do not match, raise an exception that indicates where the mismatch occured.
+GAFFERIMAGE_API void throwIfSampleOffsetsMismatch( const IECore::IntVectorData* sampleOffsetsA, const IECore::IntVectorData* sampleOffsetsB, const Imath::V2i &tileOrigin, const std::string &message );
+
+
+/// Multi-View Utils
+/// ==============================
+
+// Return true if the current view in the context is one of the viewNames, or is covered by a default view
+GAFFERIMAGE_API bool viewIsValid( const Gaffer::Context *context, const std::vector< std::string > &viewNames );
 
 } // namespace ImageAlgo
 
 } // namespace GafferImage
 
 #include "GafferImage/ImageAlgo.inl"
-
-#endif // GAFFERIMAGE_IMAGEALGO_H

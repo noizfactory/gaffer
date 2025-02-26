@@ -34,49 +34,40 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_AUXILIARYNODEGADGET_H
-#define GAFFERUI_AUXILIARYNODEGADGET_H
+#pragma once
 
-#include "GafferUI/NodeGadget.h"
+#include "GafferUI/StandardNodeGadget.h"
 
 namespace GafferUI
 {
 
-class GAFFERUI_API AuxiliaryNodeGadget : public NodeGadget
+class GAFFERUI_API AuxiliaryNodeGadget : public StandardNodeGadget
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::AuxiliaryNodeGadget, AuxiliaryNodeGadgetTypeId, NodeGadget );
+		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::AuxiliaryNodeGadget, AuxiliaryNodeGadgetTypeId, StandardNodeGadget );
 
-		AuxiliaryNodeGadget( Gaffer::NodePtr node );
+		explicit AuxiliaryNodeGadget( Gaffer::NodePtr node );
 		~AuxiliaryNodeGadget() override;
 
 		Imath::Box3f bound() const override;
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
 
 	private :
 
 		static NodeGadgetTypeDescription<AuxiliaryNodeGadget> g_nodeGadgetTypeDescription;
 
-		void nodeMetadataChanged( IECore::TypeId nodeTypeId, IECore::InternedString key, const Gaffer::Node *node );
+		void nodeMetadataChanged( IECore::InternedString key );
 		bool updateLabel();
-		bool updateUserColor();
 
-		// \todo Consolidate the mechanism for reading userColor with the one in StandardConnectionGadget
-		boost::optional<Imath::Color3f> m_userColor;
 		std::string m_label;
 		float m_radius;
 };
 
 IE_CORE_DECLAREPTR( AuxiliaryNodeGadget )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<AuxiliaryNodeGadget> > AuxiliaryNodeGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<AuxiliaryNodeGadget> > RecursiveAuxiliaryNodeGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_AUXILIARYNODEGADGET_H

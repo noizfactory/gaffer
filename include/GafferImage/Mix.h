@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_MIX_H
-#define GAFFERIMAGE_MIX_H
+#pragma once
 
 #include "GafferImage/ImagePlug.h"
 #include "GafferImage/ImageProcessor.h"
@@ -54,10 +53,10 @@ class GAFFERIMAGE_API Mix : public ImageProcessor
 
 	public :
 
-		Mix( const std::string &name=defaultName<Mix>() );
+		explicit Mix( const std::string &name=defaultName<Mix>() );
 		~Mix() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Mix, MixTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Mix, MixTypeId, ImageProcessor );
 
 		GafferImage::ImagePlug *maskPlug();
 		const GafferImage::ImagePlug *maskPlug() const;
@@ -77,13 +76,17 @@ class GAFFERIMAGE_API Mix : public ImageProcessor
 		void hashDataWindow( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelNames( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelData( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void hashDeep( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+
 
 		/// Sets the data window to the union of all of the data windows.
 		Imath::Box2i computeDataWindow( const Gaffer::Context *context, const ImagePlug *parent ) const override;
 		/// Creates a union of all of the connected inputs channelNames.
 		IECore::ConstStringVectorDataPtr computeChannelNames( const Gaffer::Context *context, const ImagePlug *parent ) const override;
-
 		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
+		bool computeDeep( const Gaffer::Context *context, const ImagePlug *parent ) const override;
+		IECore::ConstIntVectorDataPtr computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 	private :
 
@@ -94,5 +97,3 @@ class GAFFERIMAGE_API Mix : public ImageProcessor
 IE_CORE_DECLAREPTR( Mix )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_MIX_H

@@ -44,12 +44,15 @@
 #include "Gaffer/Node.h"
 #include "Gaffer/PerformanceMonitor.h"
 #include "Gaffer/Plug.h"
+#include "Gaffer/ThreadMonitor.h"
 #include "Gaffer/VTuneMonitor.h"
 
 #include "IECorePython/RefCountedBinding.h"
 #include "IECorePython/ScopedGILRelease.h"
 
-#include "boost/format.hpp"
+#include "boost/python/suite/indexing/container_utils.hpp"
+
+#include "fmt/format.h"
 
 using namespace boost::python;
 using namespace Gaffer;
@@ -60,12 +63,9 @@ namespace
 
 std::string repr( PerformanceMonitor::Statistics &s )
 {
-	return boost::str(
-		boost::format( "Gaffer.PerformanceMonitor.Statistics( hashCount = %d, computeCount = %d, hashDuration = %d, computeDuration = %d )" )
-			% s.hashCount
-			% s.computeCount
-			% s.hashDuration.count()
-			% s.computeDuration.count()
+	return fmt::format(
+		"Gaffer.PerformanceMonitor.Statistics( hashCount = {}, computeCount = {}, hashDuration = {}, computeDuration = {} )",
+			s.hashCount, s.computeCount, s.hashDuration.count(), s.computeDuration.count()
 	);
 }
 
@@ -122,22 +122,81 @@ list contextMonitorVariableNames( const ContextMonitor::Statistics &s )
 	return result;
 }
 
-void annotateWrapper1( Node &root, const PerformanceMonitor &monitor )
+dict contextMonitorVariableHashes( const ContextMonitor::Statistics &s, IECore::InternedString variableName )
 {
-	IECorePython::ScopedGILRelease gilRelease;
-	MonitorAlgo::annotate( root, monitor );
+	dict result;
+	for( const auto &[hash, count] : s.variableHashes( variableName ) )
+	{
+		result[hash] = count;
+	}
+	return result;
 }
 
-void annotateWrapper2( Node &root, const PerformanceMonitor &monitor, MonitorAlgo::PerformanceMetric metric )
+void annotateWrapper1( Node &root, const PerformanceMonitor &monitor, bool persistent )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	MonitorAlgo::annotate( root, monitor, metric );
+	MonitorAlgo::annotate( root, monitor, persistent );
 }
 
-void annotateWrapper3( Node &root, const ContextMonitor &monitor )
+void annotateWrapper2( Node &root, const PerformanceMonitor &monitor, MonitorAlgo::PerformanceMetric metric, bool persistent )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	MonitorAlgo::annotate( root, monitor );
+	MonitorAlgo::annotate( root, monitor, metric, persistent );
+}
+
+void annotateWrapper3( Node &root, const ContextMonitor &monitor, bool persistent )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	MonitorAlgo::annotate( root, monitor, persistent );
+}
+
+void removePerformanceAnnotationsWrapper( Node &root )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	MonitorAlgo::removePerformanceAnnotations( root );
+}
+
+void removeContextAnnotationsWrapper( Node &root )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	MonitorAlgo::removeContextAnnotations( root );
+}
+
+ThreadMonitor::Ptr threadMonitorConstructor( boost::python::object pythonProcessMask )
+{
+	std::vector<IECore::InternedString> processMask;
+	container_utils::extend_container( processMask, pythonProcessMask );
+	return new ThreadMonitor( processMask );
+}
+
+dict processesPerThreadToPython( const ThreadMonitor::ProcessesPerThread &processesPerThread )
+{
+	dict result;
+	for( auto [id, count] : processesPerThread )
+	{
+		result[id] = count;
+	}
+	return result;
+}
+
+dict threadMonitorAllStatisticsWrapper( const ThreadMonitor &monitor )
+{
+	dict result;
+	for( const auto &[plug, processesPerThread] : monitor.allStatistics() )
+	{
+		result[boost::const_pointer_cast<Plug>( plug )] = processesPerThreadToPython( processesPerThread );
+	}
+	return result;
+}
+
+dict threadMonitorPlugStatisticsWrapper( const ThreadMonitor &monitor, const Plug &plug )
+{
+	return processesPerThreadToPython( monitor.plugStatistics( &plug ) );
+}
+
+dict threadMonitorCombinedStatisticsWrapper( const ThreadMonitor &monitor )
+{
+	return processesPerThreadToPython( monitor.combinedStatistics() );
 }
 
 } // namespace
@@ -184,20 +243,23 @@ void GafferModule::bindMonitor()
 		def(
 			"annotate",
 			&annotateWrapper1,
-			( arg( "node" ), arg( "monitor" ) )
+			( arg( "node" ), arg( "monitor" ), arg( "persistent" ) = true )
 		);
 
 		def(
 			"annotate",
 			&annotateWrapper2,
-			( arg( "node" ), arg( "monitor" ), arg( "metric" ) )
+			( arg( "node" ), arg( "monitor" ), arg( "metric" ), arg( "persistent" ) = true )
 		);
 
 		def(
 			"annotate",
 			&annotateWrapper3,
-			( arg( "node" ), arg( "monitor" ) )
+			( arg( "node" ), arg( "monitor" ), arg( "persistent" ) = true )
 		);
+
+		def( "removePerformanceAnnotations", &removePerformanceAnnotationsWrapper, arg( "root" ) );
+		def( "removeContextAnnotations", &removeContextAnnotationsWrapper, arg( "root" ) );
 	}
 
 	{
@@ -247,8 +309,26 @@ void GafferModule::bindMonitor()
 			.def( "numUniqueContexts", &ContextMonitor::Statistics::numUniqueContexts )
 			.def( "variableNames", &contextMonitorVariableNames )
 			.def( "numUniqueValues", &ContextMonitor::Statistics::numUniqueValues )
+			.def( "variableHashes", &contextMonitorVariableHashes )
 			.def( self == self )
 			.def( self != self )
+		;
+	}
+
+	{
+		scope s = IECorePython::RefCountedClass<ThreadMonitor, Monitor>( "ThreadMonitor" )
+			.def(
+				"__init__",
+				make_constructor(
+					threadMonitorConstructor, default_call_policies(),
+					arg( "processMask" ) = boost::python::make_tuple( "computeNode:compute" )
+				)
+			)
+			.def( "thisThreadId", &ThreadMonitor::thisThreadId )
+			.staticmethod( "thisThreadId" )
+			.def( "allStatistics", &threadMonitorAllStatisticsWrapper )
+			.def( "plugStatistics", &threadMonitorPlugStatisticsWrapper )
+			.def( "combinedStatistics", &threadMonitorCombinedStatisticsWrapper )
 		;
 	}
 

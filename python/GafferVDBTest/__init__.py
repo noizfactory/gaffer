@@ -34,12 +34,15 @@
 #
 ##########################################################################
 
-from VDBTestCase import VDBTestCase
-from MeshToLevelSetTest import MeshToLevelSetTest
-from LevelSetToMeshTest import LevelSetToMeshTest
-from LevelSetOffsetTest import LevelSetOffsetTest
-from PointsGridToPointsTest import PointsGridToPointsTest
-from ModuleTest import ModuleTest
+from .VDBTestCase import VDBTestCase
+from .MeshToLevelSetTest import MeshToLevelSetTest
+from .LevelSetToMeshTest import LevelSetToMeshTest
+from .LevelSetOffsetTest import LevelSetOffsetTest
+from .PointsGridToPointsTest import PointsGridToPointsTest
+from .ModuleTest import ModuleTest
+from .SphereLevelSetTest import SphereLevelSetTest
+from .PointsToLevelSetTest import PointsToLevelSetTest
+from .VolumeScatterTest import VolumeScatterTest
 
 if __name__ == "__main__":
 	import unittest

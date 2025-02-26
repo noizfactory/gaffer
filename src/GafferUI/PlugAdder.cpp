@@ -44,15 +44,17 @@
 
 #include "Gaffer/ArrayPlug.h"
 #include "Gaffer/Metadata.h"
+#include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/UndoScope.h"
 #include "Gaffer/ScriptNode.h"
 
 #include "IECoreGL/Selector.h"
 #include "IECoreGL/Texture.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
@@ -65,23 +67,11 @@ using namespace GafferUI;
 namespace
 {
 
-static IECoreGL::Texture *texture( Style::State state )
+const IECoreGL::Texture *texture( Style::State state )
 {
-	static IECoreGL::TexturePtr normalTexture;
-	static IECoreGL::TexturePtr highlightedTexture;
-
-	IECoreGL::TexturePtr &texture = state == Style::HighlightedState ? highlightedTexture : normalTexture;
-	if( !texture )
-	{
-		texture = ImageGadget::textureLoader()->load(
-			state == Style::HighlightedState ? "plugAdderHighlighted.png" : "plugAdder.png"
-		);
-
-		IECoreGL::Texture::ScopedBinding binding( *texture );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
-	}
-	return texture.get();
+	static IECoreGL::ConstTexturePtr normalTexture = ImageGadget::loadTexture( "plugAdder.png" );
+	static IECoreGL::ConstTexturePtr highlightedTexture = ImageGadget::loadTexture( "plugAdderHighlighted.png" );
+	return state == Style::HighlightedState ? highlightedTexture.get() : normalTexture.get();
 }
 
 V3f tangent( const PlugAdder *g )
@@ -186,6 +176,11 @@ Imath::Box3f PlugAdder::bound() const
 
 bool PlugAdder::canCreateConnection( const Gaffer::Plug *endpoint ) const
 {
+	if( endpoint->direction() == Plug::In && MetadataAlgo::readOnly( endpoint ) )
+	{
+		return false;
+	}
+
 	ConstStringDataPtr noduleType = Gaffer::Metadata::value<StringData>( endpoint, IECore::InternedString( "nodule:type" ) );
 	if( noduleType )
 	{
@@ -203,29 +198,29 @@ void PlugAdder::updateDragEndPoint( const Imath::V3f position, const Imath::V3f 
 	m_dragPosition = position;
 	m_dragTangent = tangent;
 	m_dragging = true;
-	requestRender();
+	dirty( DirtyType::Render );
 }
 
 PlugAdder::PlugMenuSignal &PlugAdder::plugMenuSignal()
 {
-	static PlugMenuSignal s;
-	return s;
+	static PlugMenuSignal *s = new PlugMenuSignal;
+	return *s;
 }
 
 PlugAdder::MenuSignal &PlugAdder::menuSignal()
 {
-	static MenuSignal s;
-	return s;
+	static MenuSignal *s = new MenuSignal;
+	return *s;
 }
 
-void PlugAdder::doRenderLayer( Layer layer, const Style *style ) const
+void PlugAdder::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
 	switch( layer )
 	{
 		case GraphLayer::Connections :
 			if( m_dragging )
 			{
-				if( !IECoreGL::Selector::currentSelector() )
+				if( !isSelectionRender( reason ) )
 				{
 					const V3f srcTangent = tangent( this );
 					style->renderConnection( V3f( 0 ), srcTangent, m_dragPosition, m_dragTangent, Style::HighlightedState );
@@ -251,15 +246,54 @@ void PlugAdder::doRenderLayer( Layer layer, const Style *style ) const
 	}
 }
 
+unsigned PlugAdder::layerMask() const
+{
+	return GraphLayer::Connections | GraphLayer::Nodes | GraphLayer::Highlighting;
+}
+
+Imath::Box3f PlugAdder::renderBound() const
+{
+	return bound();
+}
+
 void PlugAdder::applyEdgeMetadata( Gaffer::Plug *plug, bool opposite ) const
 {
 	const StandardNodeGadget::Edge edge = tangentEdge( tangent( this ) );
 	updateMetadata( plug, "noduleLayout:section", edgeName( opposite ? oppositeEdge( edge ) : edge ) );
 }
 
+bool PlugAdder::couldCreateConnection() const
+{
+	// We actually have no idea which parent the plug will be added to -
+	// that is known only by subclasses. But when it is read-only, we want to
+	// avoid starting or accepting drags, because they will only end in
+	// disappointment. Subclasses do consider their own read-onliness in
+	// `canCreateConnection()`, but we can't call that until we've got a plug
+	// to pass to it. We want to know if we could _ever_ create a connection
+	// given the right plug. The best we can do right now is to cover the most
+	// common case, where the root node in the GraphGadget is read-only, making
+	// it impossible to edit _anything_ within.
+	//
+	/// \todo Extend the API so that we can detect the case where only the specific node
+	/// the plug will be added to is read-only. Perhaps we could could just pass
+	/// `nullptr` to `canCreateConnection()` since it should be checking read-onliness
+	/// already?
+	if( auto graphGadget = ancestor<GraphGadget>() )
+	{
+		if( Gaffer::MetadataAlgo::readOnly( graphGadget->getRoot() ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 void PlugAdder::enter( GadgetPtr gadget, const ButtonEvent &event )
 {
-	setHighlighted( true );
+	if( couldCreateConnection() )
+	{
+		setHighlighted( true );
+	}
 }
 
 void PlugAdder::leave( GadgetPtr gadget, const ButtonEvent &event )
@@ -274,7 +308,7 @@ bool PlugAdder::buttonPress( GadgetPtr gadget, const ButtonEvent &event )
 
 IECore::RunTimeTypedPtr PlugAdder::dragBegin( GadgetPtr gadget, const ButtonEvent &event )
 {
-	return this;
+	return couldCreateConnection() ? this : nullptr;
 }
 
 bool PlugAdder::dragEnter( const DragDropEvent &event )
@@ -311,7 +345,7 @@ bool PlugAdder::dragEnter( const DragDropEvent &event )
 bool PlugAdder::dragMove( GadgetPtr gadget, const DragDropEvent &event )
 {
 	m_dragPosition = V3f( event.line.p0.x, event.line.p0.y, 0 );
-	requestRender();
+	dirty( DirtyType::Render );
 	return true;
 }
 
@@ -338,6 +372,6 @@ bool PlugAdder::drop( const DragDropEvent &event )
 bool PlugAdder::dragEnd( const DragDropEvent &event )
 {
 	m_dragging = false;
-	requestRender();
+	dirty( DirtyType::Render );
 	return false;
 }

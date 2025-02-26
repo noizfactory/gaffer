@@ -34,13 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_ROTATEHANDLE_H
-#define GAFFERUI_ROTATEHANDLE_H
+#pragma once
 
 #include "GafferUI/Handle.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathEuler.h"
+#include "Imath/ImathEuler.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 namespace GafferUI
@@ -51,7 +50,7 @@ class GAFFERUI_API RotateHandle : public Handle
 
 	public :
 
-		RotateHandle( Style::Axes axes );
+		explicit RotateHandle( Style::Axes axes );
 		~RotateHandle() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::RotateHandle, RotateHandleTypeId, Handle );
@@ -65,7 +64,7 @@ class GAFFERUI_API RotateHandle : public Handle
 		Imath::V3i axisMask() const;
 
 		// Measured in radians
-		Imath::Eulerf rotation( const DragDropEvent &event ) const;
+		Imath::Eulerf rotation( const DragDropEvent &event );
 
 	protected :
 
@@ -78,22 +77,23 @@ class GAFFERUI_API RotateHandle : public Handle
 		bool mouseMove( const ButtonEvent &event );
 		Imath::V3f pointOnSphere( const IECore::LineSegment3f &line ) const;
 
+		void updatePreciseMotionState( const DragDropEvent &event );
+		IECore::LineSegment3f updatedLineFromEvent( const DragDropEvent &event ) const;
+
 		Style::Axes m_axes;
 		// For X, Y and Z handles.
-		PlanarDrag m_drag;
+		AngularDrag m_drag;
 		float m_rotation;
-		// For XYZ handle.
+		// For free rotation handle.
 		Imath::M44f m_dragBeginWorldTransform;
 		Imath::V3f m_dragBeginPointOnSphere;
 		Imath::V3f m_highlightVector;
+
+		bool m_preciseMotionEnabled;
+		IECore::LineSegment3f m_preciseMotionOriginLine;
 
 };
 
 IE_CORE_DECLAREPTR( RotateHandle )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<RotateHandle> > RotateHandleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<RotateHandle> > RecursiveRotateHandleIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_ROTATEHANDLE_H

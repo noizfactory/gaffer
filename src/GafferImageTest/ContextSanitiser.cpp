@@ -43,21 +43,12 @@
 
 #include "IECore/MessageHandler.h"
 
+#include "fmt/format.h"
+
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferImage;
 using namespace GafferImageTest;
-
-namespace IECore
-{
-
-/// \todo Move to Cortex
-size_t tbb_hasher( const InternedString &s )
-{
-	return tbb::tbb_hasher( s.string() );
-}
-
-} // namespace IECore
 
 ContextSanitiser::ContextSanitiser()
 {
@@ -67,15 +58,30 @@ void ContextSanitiser::processStarted( const Gaffer::Process *process )
 {
 	if( const ImagePlug *image = process->plug()->parent<ImagePlug>() )
 	{
-		if( process->plug() != image->channelDataPlug() )
+		if( process->plug() == image->sampleOffsetsPlug() )
 		{
-			if( process->context()->get<IECore::Data>( ImagePlug::channelNameContextName, nullptr ) )
+			if( process->context()->getIfExists<std::string>( ImagePlug::channelNameContextName ) )
 			{
 				warn( *process, ImagePlug::channelNameContextName );
 			}
-			if( process->context()->get<IECore::Data>( ImagePlug::tileOriginContextName, nullptr ) )
+		}
+		else if( process->plug() != image->channelDataPlug() )
+		{
+			if( process->context()->getIfExists<std::string>( ImagePlug::channelNameContextName ) )
+			{
+				warn( *process, ImagePlug::channelNameContextName );
+			}
+			if( process->context()->getIfExists<Imath::V2i>( ImagePlug::tileOriginContextName ) )
 			{
 				warn( *process, ImagePlug::tileOriginContextName );
+			}
+		}
+
+		if( process->plug() == image->viewNamesPlug() )
+		{
+			if( process->context()->getIfExists<std::string>( ImagePlug::viewNameContextName ) )
+			{
+				warn( *process, ImagePlug::viewNameContextName );
 			}
 		}
 
@@ -95,22 +101,22 @@ void ContextSanitiser::warn( const Gaffer::Process &process, const IECore::Inter
 
 	if( m_warningsEmitted.insert( warning ).second )
 	{
-		std::string message = boost::str(
-			boost::format( "%s in context for %s %s" )
-				% contextVariable.string()
-				% process.plug()->relativeName(
-					process.plug()->ancestor<ScriptNode>()
-				)
-				% process.type()
+		std::string message = fmt::format(
+			"{} in context for {} {}",
+			contextVariable.string(),
+			process.plug()->relativeName(
+				process.plug()->ancestor<ScriptNode>()
+			),
+			process.type().string()
 		);
 		if( process.parent() )
 		{
-			message += boost::str(
-				boost::format( " (called from %s %s)" )
-					% process.parent()->plug()->relativeName(
-						process.parent()->plug()->ancestor<ScriptNode>()
-					)
-					% process.parent()->type()
+			message += fmt::format(
+				" (called from {} {})",
+				process.parent()->plug()->relativeName(
+					process.parent()->plug()->ancestor<ScriptNode>()
+				),
+				process.parent()->type().string()
 			);
 		}
 		IECore::msg(

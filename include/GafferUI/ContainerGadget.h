@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_CONTAINERGADGET_H
-#define GAFFERUI_CONTAINERGADGET_H
+#pragma once
 
 #include "GafferUI/Gadget.h"
 
@@ -55,7 +54,7 @@ class GAFFERUI_API ContainerGadget : public Gadget
 
 	public :
 
-		ContainerGadget( const std::string &name=defaultName<ContainerGadget>() );
+		explicit ContainerGadget( const std::string &name=defaultName<ContainerGadget>() );
 		~ContainerGadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::ContainerGadget, ContainerGadgetTypeId, Gadget );
@@ -79,9 +78,4 @@ class GAFFERUI_API ContainerGadget : public Gadget
 
 IE_CORE_DECLAREPTR( ContainerGadget );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<ContainerGadget> > ContainerGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<ContainerGadget> > RecursiveContainerGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_CONTAINERGADGET_H

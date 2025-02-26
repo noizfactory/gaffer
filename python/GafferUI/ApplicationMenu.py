@@ -55,37 +55,21 @@ def quit( menu ) :
 	scriptWindow = menu.ancestor( GafferUI.ScriptWindow )
 	application = scriptWindow.scriptNode().ancestor( Gaffer.ApplicationRoot )
 
-	unsavedNames = []
-	for script in application["scripts"].children() :
-		if script["unsavedChanges"].getValue() :
-			f = script["fileName"].getValue()
-			f = f.rpartition( "/" )[2] if f else "untitled"
-			unsavedNames.append( f )
+	# Defer the actual closing of windows till an idle event, because our menu
+	# item is a child of one of the windows, and deleting it now could cause a crash.
+	GafferUI.EventLoop.addIdleCallback( functools.partial( __closeAllScriptWindows, application ) )
 
-	if unsavedNames :
-
-		dialogue = GafferUI.ConfirmationDialogue(
-			"Discard Unsaved Changes?",
-			"The following files have unsaved changes : \n\n" +
-			"\n".join( [ " - " + n for n in unsavedNames ] ) +
-			"\n\nDo you want to discard the changes and quit?",
-			confirmLabel = "Discard and Quit"
-		)
-
-		if not dialogue.waitForConfirmation( parentWindow=scriptWindow ) :
-			return
-
-	# Defer the actual removal of scripts till an idle event - removing all
-	# the scripts will result in the removal of the window our menu item is
-	# parented to, which would cause a crash as it's deleted away from over us.
-	GafferUI.EventLoop.addIdleCallback( functools.partial( __removeAllScripts, application ) )
-
-def __removeAllScripts( application ) :
+def __closeAllScriptWindows( application ) :
 
 	for script in application["scripts"].children() :
-		application["scripts"].removeChild( script )
+		window = GafferUI.ScriptWindow.acquire( script, createIfNecessary = False )
+		if window is None :
+			continue
+		if not window.close() :
+			# Window refused to close, cancelling the Quit action.
+			break
 
-	return False # remove idle callback
+	return False # Remove idle callback
 
 __aboutWindow = None
 def about( menu ) :
@@ -115,20 +99,11 @@ def preferences( menu ) :
 	else :
 		window = GafferUI.Dialogue( "Preferences" )
 		closeButton = window._addButton( "Close" )
-		window.__closeButtonConnection = closeButton.clickedSignal().connect( __closePreferences )
+		closeButton.clickedSignal().connect( __closePreferences )
 		saveButton = window._addButton( "Save" )
-		window.__saveButtonConnection = saveButton.clickedSignal().connect( __savePreferences )
-
+		saveButton.clickedSignal().connect( __savePreferences )
 		window._setWidget( GafferUI.NodeUI.create( application["preferences"] ) )
-
 		__preferencesWindows[application] = weakref.ref( window )
-
-		# The NodeUI builds lazily, so we force it to build now so we can
-		# resize the window to fit. Since the plugs are configured per
-		# application, we need to build them all.
-		for plug in application["preferences"].children( Gaffer.Plug ) :
-			window._getWidget().plugValueWidget( plug, lazy=False )
-		window.resizeToFitChild()
 		scriptWindow.addChildWindow( window )
 
 	window.setVisible( True )

@@ -47,6 +47,8 @@ import GafferDelight
 @unittest.skipIf( GafferTest.inCI(), "No license available in cloud" )
 class InteractiveDelightRenderTest( GafferSceneTest.InteractiveRenderTest ) :
 
+	renderer = "3Delight"
+
 	# Temporarily disable this test (which is implemented in the
 	# base class) because it fails. The issue is that we're automatically
 	# instancing the geometry for the two lights, and that appears to
@@ -63,6 +65,13 @@ class InteractiveDelightRenderTest( GafferSceneTest.InteractiveRenderTest ) :
 
 		pass
 
+	# Disable this test for now as we don't have light linking support in
+	# 3Delight, yet.
+	@unittest.skip( "No light linking support just yet" )
+	def testHideLinkedLight( self ) :
+
+		pass
+
 	# Disable this test for now as we don't have light filter support in
 	# 3Delight, yet.
 	@unittest.skip( "No light filter support just yet" )
@@ -70,19 +79,27 @@ class InteractiveDelightRenderTest( GafferSceneTest.InteractiveRenderTest ) :
 
 		pass
 
-	def _createInteractiveRender( self ) :
+	# Disable this test for now as we don't have light filter support in
+	# 3Delight, yet.
+	@unittest.skip( "No light filter support just yet" )
+	def testLightFiltersAndSetEdits( self ) :
 
-		return GafferDelight.InteractiveDelightRender()
+		pass
+
+	@unittest.skip( "Need to be able to close old driver _after_ opening new one" )
+	def testEditCropWindow( self ) :
+
+		pass
 
 	def _createConstantShader( self ) :
 
 		shader = GafferOSL.OSLShader()
 		shader.loadShader( "Surface/Constant" )
-		return shader, shader["parameters"]["Cs"]
+		return shader, shader["parameters"]["Cs"], shader["out"]["out"]
 
 	def _createTraceSetShader( self ) :
 
-		return None, None
+		return None, None, None
 
 	def _cameraVisibilityAttribute( self ) :
 
@@ -91,15 +108,15 @@ class InteractiveDelightRenderTest( GafferSceneTest.InteractiveRenderTest ) :
 	def _createMatteShader( self ) :
 
 		shader = GafferOSL.OSLShader()
-		shader.loadShader( "maya/osl/lambert" )
-		return shader, shader["parameters"]["i_color"]
+		shader.loadShader( "lambert" )
+		return shader, shader["parameters"]["i_color"], shader["out"]["outColor"]
 
 	def _createPointLight( self ) :
 
 		light = GafferOSL.OSLLight()
 		light["shape"].setValue( light.Shape.Sphere )
 		light["radius"].setValue( 0.01 )
-		light.loadShader( "maya/osl/pointLight" )
+		light.loadShader( "pointLight" )
 		light["attributes"].addChild( Gaffer.NameValuePlug( "dl:visibility.camera", False ) )
 
 		return light, light["parameters"]["i_color"]

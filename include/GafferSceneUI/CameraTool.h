@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENEUI_CAMERATOOL_H
-#define GAFFERSCENEUI_CAMERATOOL_H
+#pragma once
 
 #include "GafferSceneUI/TransformTool.h"
 #include "GafferSceneUI/TypeIds.h"
@@ -56,10 +55,10 @@ class GAFFERSCENEUI_API CameraTool : public GafferSceneUI::SelectionTool
 
 	public :
 
-		CameraTool( SceneView *view, const std::string &name = defaultName<CameraTool>() );
+		explicit CameraTool( SceneView *view, const std::string &name = defaultName<CameraTool>() );
 		~CameraTool() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferSceneUI::CameraTool, CameraToolTypeId, GafferSceneUI::SelectionTool );
+		GAFFER_NODE_DECLARE_TYPE( GafferSceneUI::CameraTool, CameraToolTypeId, GafferSceneUI::SelectionTool );
 
 	private :
 
@@ -67,11 +66,7 @@ class GAFFERSCENEUI_API CameraTool : public GafferSceneUI::SelectionTool
 		const Gaffer::BoolPlug *lookThroughEnabledPlug() const;
 		const Gaffer::StringPlug *lookThroughCameraPlug() const;
 
-		void connectToViewContext();
-		void contextChanged( const IECore::InternedString &name );
-
-		boost::signals::scoped_connection m_contextChangedConnection;
-
+		void contextChanged();
 		void plugDirtied( const Gaffer::Plug *plug );
 		GafferScene::ScenePlug::ScenePath cameraPath() const;
 		const TransformTool::Selection &cameraSelection();
@@ -91,12 +86,12 @@ class GAFFERSCENEUI_API CameraTool : public GafferSceneUI::SelectionTool
 
 		void viewportCameraChanged();
 
-		boost::signals::connection m_viewportCameraChangedConnection;
+		Gaffer::Signals::Connection m_viewportCameraChangedConnection;
 
 		void setCameraCenterOfInterest( const GafferScene::ScenePlug::ScenePath &camera, float centerOfInterest );
 		float getCameraCenterOfInterest( const GafferScene::ScenePlug::ScenePath &camera ) const;
 
-		typedef std::unordered_map<std::string, float> CameraCentersOfInterest;
+		using CameraCentersOfInterest = std::unordered_map<std::string, float>;
 		CameraCentersOfInterest m_cameraCentersOfInterest;
 
 		static ToolDescription<CameraTool, SceneView> g_toolDescription;
@@ -107,5 +102,3 @@ class GAFFERSCENEUI_API CameraTool : public GafferSceneUI::SelectionTool
 IE_CORE_DECLAREPTR( CameraTool )
 
 } // namespace GafferSceneUI
-
-#endif // GAFFERSCENEUI_CAMERATOOL_H

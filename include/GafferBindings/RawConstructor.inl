@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_RAWCONSTRUCTOR_INL
-#define GAFFERBINDINGS_RAWCONSTRUCTOR_INL
+#pragma once
 
 #include "boost/functional.hpp"
 
@@ -49,7 +48,7 @@ template <class F>
 struct RawConstructorDispatcher
 {
 
-	typedef typename boost::binary_traits<F>::result_type ResultType;
+	using ResultType = typename boost::binary_traits<F>::result_type;
 
 	RawConstructorDispatcher( F f )
 		: m_f( f )
@@ -102,5 +101,3 @@ boost::python::object rawConstructor( F f )
 }
 
 } // namespace GafferBindings
-
-#endif // GAFFERBINDINGS_RAWCONSTRUCTOR_INL

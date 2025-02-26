@@ -43,7 +43,7 @@
 using namespace IECore;
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Dot );
+GAFFER_NODE_DEFINE_TYPE( Dot );
 
 static InternedString g_inPlugName( "in" );
 static InternedString g_outPlugName( "out" );
@@ -67,7 +67,8 @@ void Dot::setup( const Plug *plug )
 {
 	const Plug *originalPlug = plug;
 
-	if( const Plug *inputPlug = plug->getInput() )
+	const Plug *inputPlug = plug->getInput();
+	if( plug->direction() == Gaffer::Plug::In && inputPlug != nullptr )
 	{
 		// We'd prefer to set up based on an input plug if possible - see comments
 		// in DotNodeGadgetTest.testCustomNoduleTangentsPreferInputIfAvailable().

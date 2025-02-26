@@ -79,10 +79,10 @@ ContextPtr getContext( RenderController &r )
 	return const_cast<Context *>( r.getContext() );
 }
 
-void setExpandedPaths( RenderController &r, const IECore::PathMatcher &expandedPaths )
+void setVisibleSet( RenderController &r, const GafferScene::VisibleSet &visibleSet )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	r.setExpandedPaths( expandedPaths );
+	r.setVisibleSet( visibleSet );
 }
 
 void setMinimumExpansionDepth( RenderController &r, size_t depth )
@@ -91,16 +91,59 @@ void setMinimumExpansionDepth( RenderController &r, size_t depth )
 	r.setMinimumExpansionDepth( depth );
 }
 
-void update( RenderController &r )
+RenderController::ProgressCallback progressCallbackFromPython( object &callback )
 {
-	IECorePython::ScopedGILRelease gilRelease;
-	r.update();
+	if( callback.is_none() )
+	{
+		return RenderController::ProgressCallback();
+	}
+
+	return [callback] ( Gaffer::BackgroundTask::Status status ) {
+		IECorePython::ScopedGILLock gilLock;
+		callback( status );
+	};
 }
 
-void updateMatchingPaths( RenderController &r, const IECore::PathMatcher &pathsToUpdate )
+void update( RenderController &r, object &pythonCallback )
 {
-	IECorePython::ScopedGILRelease gilRelease;
-	r.updateMatchingPaths( pathsToUpdate );
+	// Callback owns a Python object, so must be destroyed outside of the GIL release scope.
+	RenderController::ProgressCallback callback = progressCallbackFromPython( pythonCallback );
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		r.update( callback );
+	}
+}
+
+std::shared_ptr<Gaffer::BackgroundTask> updateInBackground( RenderController &r, object &pythonCallback, const IECore::PathMatcher &priorityPaths )
+{
+	RenderController::ProgressCallback callback = progressCallbackFromPython( pythonCallback );
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		return r.updateInBackground( callback, priorityPaths );
+	}
+}
+
+void updateMatchingPaths( RenderController &r, const IECore::PathMatcher &pathsToUpdate, object &pythonCallback )
+{
+	RenderController::ProgressCallback callback = progressCallbackFromPython( pythonCallback );
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		r.updateMatchingPaths( pathsToUpdate, callback );
+	}
+}
+
+object pathForID( RenderController &r, uint32_t id )
+{
+	if( auto path = r.pathForID( id ) )
+	{
+		return object( ScenePlug::pathToString( *path ) );
+	}
+	return object();
+}
+
+IECore::UIntVectorDataPtr idsForPaths( RenderController &r, const IECore::PathMatcher &paths, bool createIfNecessary )
+{
+	return new IECore::UIntVectorData( r.idsForPaths( paths, createIfNecessary ) );
 }
 
 } // namespace
@@ -115,13 +158,19 @@ void GafferSceneModule::bindRenderController()
 		.def( "getScene", &getScene )
 		.def( "setContext", &setContext )
 		.def( "getContext", &getContext )
-		.def( "setExpandedPaths", &setExpandedPaths )
-		.def( "getExpandedPaths", &RenderController::getExpandedPaths, return_value_policy<copy_const_reference>() )
+		.def( "setVisibleSet", &setVisibleSet )
+		.def( "getVisibleSet", &RenderController::getVisibleSet, return_value_policy<copy_const_reference>() )
 		.def( "setMinimumExpansionDepth", &setMinimumExpansionDepth )
 		.def( "getMinimumExpansionDepth", &RenderController::getMinimumExpansionDepth )
 		.def( "updateRequiredSignal", &RenderController::updateRequiredSignal, return_internal_reference<1>() )
-		.def( "update", &update )
-		.def( "updateMatchingPaths", &updateMatchingPaths )
+		.def( "updateRequired", &RenderController::updateRequired )
+		.def( "update", &update, ( arg( "callback" ) = object() ) )
+		.def( "updateMatchingPaths", &updateMatchingPaths, ( arg( "pathsToUpdate" ), arg( "callback" ) = object() ) )
+		.def( "updateInBackground", &updateInBackground, ( arg( "callback" ) = object(), arg( "priorityPaths" ) = IECore::PathMatcher() ) )
+		.def( "pathForID", &pathForID )
+		.def( "pathsForIDs", &RenderController::pathsForIDs )
+		.def( "idForPath", &RenderController::idForPath, ( arg( "path" ), arg( "createIfNecessary" ) = false ) )
+		.def( "idsForPaths", &idsForPaths, ( arg( "paths" ), arg( "createIfNecessary" ) = false ) )
 	;
 
 	SignalClass<RenderController::UpdateRequiredSignal>( "UpdateRequiredSignal" );

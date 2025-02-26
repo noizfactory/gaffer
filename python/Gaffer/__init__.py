@@ -35,26 +35,56 @@
 #
 ##########################################################################
 
+import os
+import pathlib
+
+# Make sure we can can find DLLs that are linked into Python modules on Windows.
+if hasattr( os, "add_dll_directory" ) :
+	os.add_dll_directory( ( pathlib.Path( os.environ["GAFFER_ROOT"] ) / "lib" ).resolve() )
+	for extensionPath in os.environ.get( "GAFFER_EXTENSION_PATHS", "" ).split( os.pathsep ) :
+		for dllPath in [ pathlib.Path( extensionPath ) / d for d in [ "bin", "lib" ] ] :
+			if dllPath.is_dir() :
+				os.add_dll_directory( dllPath.resolve() )
+
 __import__( "IECore" )
 
-from _Gaffer import *
-from About import About
-from Application import Application
-from WeakMethod import WeakMethod
-from BlockedConnection import BlockedConnection
-from FileNamePathFilter import FileNamePathFilter
-from UndoScope import UndoScope
-from Context import Context
-from InfoPathFilter import InfoPathFilter
-from LazyModule import lazyImport, LazyModule
-from DictPath import DictPath
-from PythonExpressionEngine import PythonExpressionEngine
-from SequencePath import SequencePath
-from GraphComponentPath import GraphComponentPath
-from OutputRedirection import OutputRedirection
-from Monitor import Monitor
+from ._Gaffer import *
+from .import _Range
+from .About import About
+from .Application import Application
+from .WeakMethod import WeakMethod
+from . import _BlockedConnection
+from .FileNamePathFilter import FileNamePathFilter
+from .UndoScope import UndoScope
+from .Context import Context
+from .InfoPathFilter import InfoPathFilter
+from .DictPath import DictPath
+from .PythonExpressionEngine import PythonExpressionEngine
+from .SequencePath import SequencePath
+from .GraphComponentPath import GraphComponentPath
+from .OutputRedirection import OutputRedirection
+from .Monitor import Monitor
 
-import NodeAlgo
-import ExtensionAlgo
+from . import NodeAlgo
+from . import ExtensionAlgo
+
+# Class-level non-UI metadata registration
+Metadata.registerValue( Reference, "childNodesAreReadOnly", True )
+
+def rootPath() :
+
+	return pathlib.Path( os.path.expandvars( "$GAFFER_ROOT" ) )
+
+# Returns the path of the Gaffer executable for the current platform.
+# If `absolute` is `True`, the full path will be returned, otherwise
+# only a path with the executable name and extension are returned.
+def executablePath( absolute = True ) :
+
+	executable = pathlib.Path( "gaffer" ) if os.name != "nt" else pathlib.Path( "gaffer.cmd" )
+
+	if absolute :
+		return rootPath() / "bin" / executable
+
+	return executable
 
 __import__( "IECore" ).loadConfig( "GAFFER_STARTUP_PATHS", subdirectory = "Gaffer" )

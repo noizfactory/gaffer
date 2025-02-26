@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_MODIFIABLEEVENT_H
-#define GAFFERUI_MODIFIABLEEVENT_H
+#pragma once
 
 #include "GafferUI/Event.h"
 
@@ -61,12 +60,10 @@ struct GAFFERUI_API ModifiableEvent : public Event
 		All = Shift | Control | Alt
 	};
 
-	ModifiableEvent( Modifiers m = None ) : modifiers( m ) {};
+	explicit ModifiableEvent( Modifiers m = None ) : modifiers( m ) {};
 
 	/// The state of the modifier keys.
 	Modifiers modifiers;
 };
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_MODIFIABLEEVENT_H

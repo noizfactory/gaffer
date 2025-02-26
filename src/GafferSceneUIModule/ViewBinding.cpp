@@ -52,6 +52,7 @@
 #include "IECorePython/ExceptionAlgo.h"
 
 #include <string>
+#include <filesystem>
 
 using namespace std;
 using namespace boost::python;
@@ -108,6 +109,31 @@ boost::python::list registeredShadingModes()
 	return result;
 }
 
+void sceneViewRegisterRenderer( const std::string &name, object settingsCreator )
+{
+	SceneView::registerRenderer(
+		name,
+		// Deliberately "leaking" `settingsCreator` because this lambda will be
+		// stored in a static map which will be destroyed _after_ Python is shutdown,
+		// at which point deleting a PyObject will crash.
+		[settingsCreator = new object( settingsCreator )] {
+			IECorePython::ScopedGILLock gilLock;
+			SceneProcessorPtr result = extract<SceneProcessorPtr>( (*settingsCreator)() );
+			return result;
+		}
+	);
+}
+
+boost::python::list sceneViewRegisteredRenderers()
+{
+	boost::python::list result;
+	for( auto &r : SceneView::registeredRenderers() )
+	{
+		result.append( r );
+	}
+	return result;
+}
+
 void frame( SceneView &view, PathMatcher &filter, Imath::V3f &direction )
 {
 	IECorePython::ScopedGILRelease gilRelease;
@@ -124,6 +150,12 @@ void collapseSelection( SceneView &view )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	view.collapseSelection();
+}
+
+Imath::Box2f resolutionGateWrapper( SceneView &view )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return view.resolutionGate();
 }
 
 } // namespace
@@ -171,7 +203,7 @@ struct CreatorWrapper
 struct ReferenceCreator
 {
 
-	ReferenceCreator( const std::string &referenceFileName )
+	ReferenceCreator( const std::filesystem::path &referenceFileName )
 		:	m_referenceFileName( referenceFileName )
 	{
 	}
@@ -192,7 +224,7 @@ struct ReferenceCreator
 
 	private :
 
-		std::string m_referenceFileName;
+		std::filesystem::path m_referenceFileName;
 
 };
 
@@ -201,12 +233,17 @@ void registerRenderer( const std::string &shaderPrefix, object creator )
 	ShaderView::registerRenderer( shaderPrefix, CreatorWrapper<InteractiveRender>( creator ) );
 }
 
+void deregisterRenderer( const std::string &shaderPrefix)
+{
+	ShaderView::deregisterRenderer( shaderPrefix );
+}
+
 void registerScene( const std::string &shaderPrefix, const std::string &name, object creator )
 {
 	ShaderView::registerScene( shaderPrefix, name, CreatorWrapper<Node>( creator ) );
 }
 
-void registerReferenceScene( const std::string &shaderPrefix, const std::string &name, const std::string &referenceFileName )
+void registerReferenceScene( const std::string &shaderPrefix, const std::string &name, const std::filesystem::path &referenceFileName )
 {
 	ShaderView::registerScene( shaderPrefix, name, ReferenceCreator( referenceFileName ) );
 }
@@ -226,18 +263,16 @@ boost::python::list registeredScenes( const IECore::InternedString &shaderPrefix
 
 struct SceneChangedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, ShaderViewPtr v )
+	void operator()( boost::python::object slot, ShaderViewPtr v )
 	{
 		try
 		{
 			slot( v );
-			return boost::signals::detail::unusable();
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
 			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -258,17 +293,16 @@ void setPaused( UVView &v, bool paused )
 
 struct UVViewSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, UVViewPtr g )
+	void operator()( boost::python::object slot, UVViewPtr g )
 	{
 		try
 		{
 			slot( g );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -281,22 +315,31 @@ struct UVViewSlotCaller
 void GafferSceneUIModule::bindViews()
 {
 
-	GafferBindings::NodeClass<SceneView>()
+	GafferBindings::NodeClass<SceneView>( nullptr, no_init )
+		.def( init<ScriptNodePtr>() )
 		.def( "frame", &frame, ( boost::python::arg_( "filter" ), boost::python::arg_( "direction" ) = Imath::V3f( -0.64, -0.422, -0.64 ) ) )
+		.def( "resolutionGate", &resolutionGateWrapper )
 		.def( "expandSelection", &expandSelection, ( boost::python::arg_( "depth" ) = 1 ) )
 		.def( "collapseSelection", &collapseSelection )
+		.def( "registerRenderer", &sceneViewRegisterRenderer )
+		.staticmethod( "registerRenderer" )
+		.def( "registeredRenderers", &sceneViewRegisteredRenderers )
+		.staticmethod( "registeredRenderers" )
 		.def( "registerShadingMode", &registerShadingMode )
 		.staticmethod( "registerShadingMode" )
 		.def( "registeredShadingModes", &registeredShadingModes )
 		.staticmethod( "registeredShadingModes" )
 	;
 
-	GafferBindings::NodeClass<ShaderView>()
+	GafferBindings::NodeClass<ShaderView>( nullptr, no_init )
+		.def( init<ScriptNodePtr>() )
 		.def( "shaderPrefix", &ShaderView::shaderPrefix )
 		.def( "scene", (Gaffer::Node *(ShaderView::*)())&ShaderView::scene, return_value_policy<CastToIntrusivePtr>() )
 		.def( "sceneChangedSignal", &ShaderView::sceneChangedSignal, return_internal_reference<1>() )
 		.def( "registerRenderer", &registerRenderer )
 		.staticmethod( "registerRenderer" )
+		.def( "deregisterRenderer", &deregisterRenderer )
+		.staticmethod( "deregisterRenderer" )
 		.def( "registerScene", &registerScene )
 		.def( "registerScene", &registerReferenceScene )
 		.staticmethod( "registerScene" )
@@ -307,7 +350,8 @@ void GafferSceneUIModule::bindViews()
 	SignalClass<ShaderView::SceneChangedSignal, DefaultSignalCaller<ShaderView::SceneChangedSignal>, SceneChangedSlotCaller>( "SceneChangedSignal" );
 
 	{
-		scope s = GafferBindings::NodeClass<UVView>()
+		scope s = GafferBindings::NodeClass<UVView>( nullptr, no_init )
+			.def( init<ScriptNodePtr>() )
 			.def( "setPaused", &setPaused )
 			.def( "getPaused", &UVView::getPaused )
 			.def( "state", &UVView::state )

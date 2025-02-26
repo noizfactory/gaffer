@@ -72,7 +72,7 @@ class DotSerialiser : public NodeSerialiser
 		return NodeSerialiser::childNeedsConstruction( child, serialisation );
 	}
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		std::string result = NodeSerialiser::postConstructor( graphComponent, identifier, serialisation );
 
@@ -97,6 +97,7 @@ class DotSerialiser : public NodeSerialiser
 
 		// Add a call to `setup()` to recreate the plugs.
 
+		/// \todo Avoid creating a temporary plug.
 		PlugPtr plug = dot->inPlug()->createCounterpart( "in", Plug::In );
 		plug->setFlags( Plug::Dynamic, false );
 
@@ -119,6 +120,7 @@ void GafferModule::bindDot()
 
 	enum_<Dot::LabelType>( "LabelType" )
 		.value( "None", Dot::None )
+		.value( "None_", Dot::None )
 		.value( "NodeName", Dot::NodeName )
 		.value( "UpstreamNodeName", Dot::UpstreamNodeName )
 		.value( "Custom", Dot::Custom )

@@ -35,15 +35,16 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_NODEBINDING_H
-#define GAFFERBINDINGS_NODEBINDING_H
+#pragma once
 
 #include "boost/python.hpp"
 
 #include "GafferBindings/GraphComponentBinding.h"
 #include "GafferBindings/Serialisation.h"
 
+#include "Gaffer/ContextProcessor.h"
 #include "Gaffer/Node.h"
+#include "Gaffer/Switch.h"
 
 #include "IECorePython/ExceptionAlgo.h"
 #include "IECorePython/ScopedGILLock.h"
@@ -68,7 +69,7 @@ class NodeWrapper : public GraphComponentWrapper<T>
 {
 	public :
 
-		typedef T WrappedType;
+		using WrappedType = T;
 
 		template<typename... Args>
 		NodeWrapper( PyObject *self, Args&&... args )
@@ -78,29 +79,42 @@ class NodeWrapper : public GraphComponentWrapper<T>
 
 		bool isInstanceOf( IECore::TypeId typeId ) const override
 		{
-			// Optimise for common queries we know should fail.
-			// The standard wrapper implementation of isInstanceOf()
-			// would have to enter Python only to discover this inevitable
-			// failure as it doesn't have knowledge of the relationships
-			// among types. Entering Python is incredibly costly for such
-			// a simple operation, and we perform these operations often,
-			// so this optimisation is well worth it.
-			//
-			// Note that we can't actually guarantee that we're not a
-			// ScriptNode or DependencyNode, but those queries are so
-			// common that we simply must accelerate them. We adjust for
-			// this slightly overzealous optimisation in ScriptNodeWrapper
-			// and DependencyNodeWrapper where we also override
-			// isInstanceOf() and make the necessary correction.
+			// Optimise for common queries for types we know about. The standard
+			// wrapper implementation of `isInstanceOf()` would have to enter
+			// Python just in case the type was implemented there. Entering
+			// Python is incredibly costly for such a simple operation, and we
+			// perform these operations often, so these optimisations are well
+			// worth it.
+
 			if(
-				typeId == (IECore::TypeId)Gaffer::ScriptNodeTypeId ||
-				typeId == (IECore::TypeId)Gaffer::DependencyNodeTypeId ||
+				// We're a Node, so we cannot be a plug.
 				typeId == (IECore::TypeId)Gaffer::PlugTypeId ||
 				typeId == (IECore::TypeId)Gaffer::ValuePlugTypeId
 			)
 			{
 				return false;
 			}
+
+			if(
+				// It's important to optimise for ContextProcessor and
+				// Switch specifically, because they are queried heavily during
+				// the `Dispatcher::dispatch()` process.
+				typeId == (IECore::TypeId)Gaffer::ContextProcessorTypeId ||
+				typeId == (IECore::TypeId)Gaffer::SwitchTypeId ||
+				// ScriptNode, DependencyNode, ComputeNode and EditScope also
+				// appear on performance critical code paths.
+				typeId == (IECore::TypeId)Gaffer::ScriptNodeTypeId ||
+				typeId == (IECore::TypeId)Gaffer::ComputeNodeTypeId ||
+				typeId == (IECore::TypeId)Gaffer::DependencyNodeTypeId ||
+				typeId == (IECore::TypeId)Gaffer::EditScopeTypeId
+			)
+			{
+				// The types above are implemented in C++, so there is no need
+				// to consider Python overrides for `isInstanceOf()`. The base
+				// class implementation is sufficient.
+				return WrappedType::isInstanceOf( typeId );
+			}
+
 			return GraphComponentWrapper<T>::isInstanceOf( typeId );
 		}
 
@@ -117,7 +131,7 @@ class NodeWrapper : public GraphComponentWrapper<T>
 						return f( Gaffer::PlugPtr( const_cast<Gaffer::Plug *>( plug ) ), Gaffer::PlugPtr( const_cast<Gaffer::Plug *>( inputPlug ) ) );
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -136,7 +150,7 @@ class GAFFERBINDINGS_API NodeSerialiser : public Serialisation::Serialiser
 
 		void moduleDependencies( const Gaffer::GraphComponent *graphComponent, std::set<std::string> &modules, const Serialisation &serialisation ) const override;
 		/// Implemented to serialise per-instance metadata.
-		std::string postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override;
+		std::string postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override;
 		/// Implemented so that only plugs are serialised - child nodes are expected to
 		/// be a part of the implementation of the node rather than something the user
 		/// has created themselves.
@@ -149,5 +163,3 @@ class GAFFERBINDINGS_API NodeSerialiser : public Serialisation::Serialiser
 } // namespace GafferBindings
 
 #include "GafferBindings/NodeBinding.inl"
-
-#endif // GAFFERBINDINGS_NODEBINDING_H

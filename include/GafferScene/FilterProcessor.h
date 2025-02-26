@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_FILTERPROCESSOR_H
-#define GAFFERSCENE_FILTERPROCESSOR_H
+#pragma once
 
 #include "GafferScene/Filter.h"
 
@@ -58,15 +57,15 @@ class GAFFERSCENE_API FilterProcessor : public Filter
 
 		/// Constructs with a single input filter plug named "in". Use inPlug()
 		/// to access this plug.
-		FilterProcessor( const std::string &name=defaultName<FilterProcessor>() );
+		explicit FilterProcessor( const std::string &name=defaultName<FilterProcessor>() );
 		/// Constructs with an ArrayPlug called "in". Use inPlug() as a
 		/// convenience for accessing the first child in the array, and use
 		/// inPlugs() to access the array itself.
-		FilterProcessor( const std::string &name, size_t minInputs, size_t maxInputs = Imath::limits<size_t>::max() );
+		FilterProcessor( const std::string &name, size_t minInputs, size_t maxInputs = std::numeric_limits<size_t>::max() );
 
 		~FilterProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::FilterProcessor, FilterProcessorTypeId, Filter );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::FilterProcessor, FilterProcessorTypeId, Filter );
 
 		/// Returns the primary filter input. For nodes with multiple inputs
 		/// this will be the first child of the inPlugs() array. For nodes
@@ -81,11 +80,11 @@ class GAFFERSCENE_API FilterProcessor : public Filter
 		Gaffer::ArrayPlug *inPlugs();
 		const Gaffer::ArrayPlug *inPlugs() const;
 
-		bool sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const override;
-
 		/// Returns inPlug() as the correspondingInput of outPlug();
 		Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) override;
 		const Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) const override;
+
+		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 	protected :
 
@@ -103,5 +102,3 @@ class GAFFERSCENE_API FilterProcessor : public Filter
 IE_CORE_DECLAREPTR( FilterProcessor )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_FILTERPROCESSOR_H

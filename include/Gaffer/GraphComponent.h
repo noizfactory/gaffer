@@ -35,16 +35,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_GRAPHCOMPONENT_H
-#define GAFFER_GRAPHCOMPONENT_H
+#pragma once
 
 #include "Gaffer/Export.h"
+#include "Gaffer/Signals.h"
 #include "Gaffer/TypeIds.h"
 
 #include "IECore/InternedString.h"
 #include "IECore/RunTimeTyped.h"
-
-#include "boost/signals.hpp"
 
 #include <memory>
 
@@ -78,18 +76,20 @@ class FilteredRecursiveChildRange;
 #define GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( TYPE ) \
 	IE_CORE_DEFINERUNTIMETYPED( TYPE )
 
-class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::signals::trackable
+class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public Signals::Trackable
 {
 
 	public :
 
-		GraphComponent( const std::string &name=GraphComponent::defaultName<GraphComponent>() );
+		explicit GraphComponent( const std::string &name=GraphComponent::defaultName<GraphComponent>() );
 		~GraphComponent() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::GraphComponent, GraphComponentTypeId, IECore::RunTimeTyped );
 
-		typedef boost::signal<void (GraphComponent *)> UnarySignal;
-		typedef boost::signal<void (GraphComponent *, GraphComponent *)> BinarySignal;
+		using UnarySignal = Signals::Signal<void (GraphComponent *), Signals::CatchingCombiner<void>>;
+		using NameChangedSignal = Signals::Signal<void (GraphComponent *, IECore::InternedString), Signals::CatchingCombiner<void>>;
+		using BinarySignal = Signals::Signal<void (GraphComponent *, GraphComponent *), Signals::CatchingCombiner<void>>;
+		using ChildrenReorderedSignal = Signals::Signal<void (GraphComponent *, const std::vector<size_t> &originalIndices ), Signals::CatchingCombiner<void>>;
 
 		/// @name Naming
 		/// All GraphComponents have a name, which must be unique among
@@ -110,8 +110,9 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		/// Returns the relative path name from the specified ancestor to this component.
 		/// Passing nullptr for ancestor yields the same result as calling fullName().
 		std::string relativeName( const GraphComponent *ancestor ) const;
-		/// A signal which is emitted whenever a name is changed.
-		UnarySignal &nameChangedSignal();
+		/// A signal which is emitted whenever a name is changed. The old name is passed
+		/// as an argument to the slot.
+		NameChangedSignal &nameChangedSignal();
 		/// Returns T::staticTypeName() without namespace prefixes, for use as the
 		/// default name in GraphComponent constructors.
 		template<typename T>
@@ -127,8 +128,8 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		////////////////////////////////////////////////////////////////////
 		//@{
 		/// The datatype used internally to store children.
-		typedef std::vector<GraphComponentPtr> ChildContainer;
-		typedef ChildContainer::const_iterator ChildIterator;
+		using ChildContainer = std::vector<GraphComponentPtr>;
+		using ChildIterator = ChildContainer::const_iterator;
 		/// Components can accept or reject potential children by implementing this
 		/// call. By default all children are accepted.
 		virtual bool acceptsChild( const GraphComponent *potentialChild ) const;
@@ -154,9 +155,6 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		/// \todo Do we need acceptsRemoval()?
 		/// \undoable
 		void removeChild( GraphComponentPtr child );
-		/// Removes all the children.
-		/// \undoable
-		void clearChildren();
 		/// Get an immediate child by name, performing a runTimeCast to T.
 		template<typename T=GraphComponent>
 		T *getChild( const IECore::InternedString &name );
@@ -166,22 +164,28 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		/// Get a child by index, performing a runTimeCast to T.
 		/// Note that this function does not perform any bounds checking.
 		template<typename T=GraphComponent>
-		inline T *getChild( size_t index );
+		T *getChild( size_t index );
 		/// Get a child by index, performing a runTimeCast to T.
 		/// Note that this function does not perform any bounds checking.
 		template<typename T=GraphComponent>
-		inline const T *getChild( size_t index ) const;
+		const T *getChild( size_t index ) const;
 		/// Read only access to the internal container of children. This
 		/// is useful for iteration over children.
 		const ChildContainer &children() const;
+		/// Reorders the existing children.
+		/// \undoable
+		void reorderChildren( const ChildContainer &newOrder );
+		/// Removes all the children.
+		/// \undoable
+		void clearChildren();
 		/// Returns a descendant of this node specified by a "." separated
 		/// relative path, performing a runTimeCast to T.
 		template<typename T=GraphComponent>
-		inline T *descendant( const std::string &relativePath );
+		T *descendant( const std::string &relativePath );
 		/// Returns a descendant of this node specified by a "." separated
 		/// relative path, performing a runTimeCast to T.
 		template<typename T=GraphComponent>
-		inline const T *descendant( const std::string &relativePath ) const;
+		const T *descendant( const std::string &relativePath ) const;
 		/// Returns the parent for this component, performing a runTimeCast to T.
 		template<typename T=GraphComponent>
 		T *parent();
@@ -221,9 +225,20 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		/// of a child being removed from the destructor of the parent, oldParent
 		/// will be null as it is no longer available.
 		BinarySignal &parentChangedSignal();
+		/// A signal emitted when children have been reordered. The original indices
+		/// corresponding to each child are passed, to facilitate reordering of any
+		/// mirrored data structures or UI.
+		ChildrenReorderedSignal &childrenReorderedSignal();
 		//@}
 
 	protected :
+
+		/// Called by `setName()` immediately prior to emitting
+		/// `nameChangedSignal()`. This provides an opportunity to respond to
+		/// the change before outside observers are notified. Implementations
+		/// should call the base class implementation before doing their own
+		/// work.
+		virtual void nameChanged( IECore::InternedString oldName );
 
 		/// Called just /before/ the parent of this GraphComponent is
 		/// changed to newParent. This is an opportunity to do things
@@ -258,6 +273,11 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		/// to maintain a consistent state even if badly behaved observers are
 		/// connected to the signal.
 		virtual void parentChanged( Gaffer::GraphComponent *oldParent );
+		// Called by `reorderChildren()` immediately before `childrenReorderedSignal()`
+		// is emitted. This provides an opportunity to respond to reordering before
+		// outside observers are notified. Implementations should call the base class
+		// implementation before doing their own work.
+		virtual void childrenReordered( const std::vector<size_t> &oldIndices );
 
 		/// It is common for derived classes to provide accessors for
 		/// constant-time access to specific children, as this can be
@@ -282,10 +302,10 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 		void removeChildInternal( GraphComponentPtr child, bool emitParentChanged );
 		size_t index() const;
 
-		struct Signals;
-		Signals *signals();
+		struct MemberSignals;
+		MemberSignals *signals();
 
-		std::unique_ptr<Signals> m_signals;
+		std::unique_ptr<MemberSignals> m_signals;
 		IECore::InternedString m_name;
 		GraphComponent *m_parent;
 		ChildContainer m_children;
@@ -295,5 +315,3 @@ class GAFFER_API GraphComponent : public IECore::RunTimeTyped, public boost::sig
 } // namespace Gaffer
 
 #include "Gaffer/GraphComponent.inl"
-
-#endif // GAFFER_GRAPHCOMPONENT_H

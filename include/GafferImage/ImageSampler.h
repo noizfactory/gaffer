@@ -34,14 +34,15 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_IMAGESAMPLER_H
-#define GAFFERIMAGE_IMAGESAMPLER_H
+#pragma once
 
+#include "GafferImage/DeepState.h"
 #include "GafferImage/Export.h"
 #include "GafferImage/TypeIds.h"
 
 #include "Gaffer/CompoundNumericPlug.h"
 #include "Gaffer/ComputeNode.h"
+#include "Gaffer/StringPlug.h"
 #include "Gaffer/TypedObjectPlug.h"
 
 namespace GafferImage
@@ -55,19 +56,25 @@ class GAFFERIMAGE_API ImageSampler : public Gaffer::ComputeNode
 
 	public :
 
-		ImageSampler( const std::string &name=defaultName<ImageSampler>() );
+		explicit ImageSampler( const std::string &name=defaultName<ImageSampler>() );
 		~ImageSampler() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ImageSampler, ImageSamplerTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ImageSampler, ImageSamplerTypeId, ComputeNode );
 
 		ImagePlug *imagePlug();
 		const ImagePlug *imagePlug() const;
+
+		Gaffer::StringPlug *viewPlug();
+		const Gaffer::StringPlug *viewPlug() const;
 
 		Gaffer::StringVectorDataPlug *channelsPlug();
 		const Gaffer::StringVectorDataPlug *channelsPlug() const;
 
 		Gaffer::V2fPlug *pixelPlug();
 		const Gaffer::V2fPlug *pixelPlug() const;
+
+		Gaffer::BoolPlug *interpolatePlug();
+		const Gaffer::BoolPlug *interpolatePlug() const;
 
 		Gaffer::Color4fPlug *colorPlug();
 		const Gaffer::Color4fPlug *colorPlug() const;
@@ -85,10 +92,17 @@ class GAFFERIMAGE_API ImageSampler : public Gaffer::ComputeNode
 		// returning the empty string if the channel doesn't exist.
 		std::string channelName( const Gaffer::ValuePlug *output ) const;
 
+		// Input plug to receive the flattened image from the internal
+		// deepState plug.
+		ImagePlug *flattenedInPlug();
+		const ImagePlug *flattenedInPlug() const;
+
+		// The internal DeepState node.
+		GafferImage::DeepState *deepState();
+		const GafferImage::DeepState *deepState() const;
+
 		static size_t g_firstPlugIndex;
 
 };
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_IMAGESAMPLER_H

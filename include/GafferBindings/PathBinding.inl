@@ -34,12 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_PATHBINDING_INL
-#define GAFFERBINDINGS_PATHBINDING_INL
+#pragma once
 
 #include "GafferBindings/DataBinding.h"
 
 #include "Gaffer/Path.h"
+#include "Gaffer/Plug.h"
 
 namespace GafferBindings
 {
@@ -48,22 +48,28 @@ namespace Detail
 {
 
 template<typename T>
-bool isValid( const T &p )
+bool isValid( const T &p, const IECore::Canceller *canceller )
 {
-	return p.T::isValid();
+	IECorePython::ScopedGILRelease gilRelease;
+	return p.T::isValid( canceller );
 }
 
 template<typename T>
-bool isLeaf( const T &p )
+bool isLeaf( const T &p, const IECore::Canceller *canceller )
 {
-	return p.T::isLeaf();
+	IECorePython::ScopedGILRelease gilRelease;
+	return p.T::isLeaf( canceller );
 }
 
 template<typename T>
-boost::python::list propertyNames( const T &p )
+boost::python::list propertyNames( const T &p, const IECore::Canceller *canceller )
 {
 	std::vector<IECore::InternedString> n;
-	p.T::propertyNames( n );
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		p.T::propertyNames( n, canceller );
+	}
+
 	boost::python::list result;
 	for( std::vector<IECore::InternedString>::const_iterator it = n.begin(), eIt = n.end(); it != eIt; ++it )
 	{
@@ -75,9 +81,14 @@ boost::python::list propertyNames( const T &p )
 GAFFERBINDINGS_API boost::python::object propertyToPython( IECore::ConstRunTimeTypedPtr a );
 
 template<typename T>
-boost::python::object property( const T &p, const IECore::InternedString &name )
+boost::python::object property( const T &p, const IECore::InternedString &name, const IECore::Canceller *canceller )
 {
-	return propertyToPython( p.T::property( name ) );
+	IECore::ConstRunTimeTypedPtr property;
+	{
+		IECorePython::ScopedGILRelease gilRelease;
+		property = p.T::property( name, canceller );
+	}
+	return propertyToPython( property );
 }
 
 template<typename T>
@@ -152,16 +163,23 @@ Gaffer::PathPtr copy( const T &p )
 	return p.T::copy();
 }
 
+template<typename T>
+Gaffer::PlugPtr cancellationSubject( const T &p )
+{
+	return const_cast<Gaffer::Plug *>( p.T::cancellationSubject() );
+}
+
 } // namespace Detail
 
 template<typename T, typename TWrapper>
 PathClass<T, TWrapper>::PathClass( const char *docString )
 	:	IECorePython::RunTimeTypedClass<T, TWrapper>( docString )
 {
-	this->def( "isValid", &Detail::isValid<T> );
-	this->def( "isLeaf", &Detail::isLeaf<T> );
-	this->def( "propertyNames", &Detail::propertyNames<T> );
-	this->def( "property", &Detail::property<T> );
+	this->def( "isValid", &Detail::isValid<T>, boost::python::arg( "canceller" ) = boost::python::object() );
+	this->def( "isLeaf", &Detail::isLeaf<T>, boost::python::arg( "canceller" ) = boost::python::object() );
+	this->def( "propertyNames", &Detail::propertyNames<T>, boost::python::arg( "canceller" ) = boost::python::object() );
+	this->def( "property", &Detail::property<T>, ( boost::python::arg( "name" ), boost::python::arg( "canceller" ) = boost::python::object() ) );
+	this->def( "cancellationSubject", &Detail::cancellationSubject<T> );
 	// Backwards compatibility with deprecated Path.info()
 	// method from original python implementation.
 	/// \todo Remove this in due course.
@@ -170,5 +188,3 @@ PathClass<T, TWrapper>::PathClass( const char *docString )
 }
 
 } // namespace GafferBindings
-
-#endif // GAFFERBINDINGS_PATHBINDING_INL

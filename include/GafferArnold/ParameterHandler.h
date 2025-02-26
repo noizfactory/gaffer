@@ -34,14 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_PARAMETERHANDLER_H
-#define GAFFERARNOLD_PARAMETERHANDLER_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 
 #include "Gaffer/Plug.h"
 
-#include "ai.h"
+#include "ai_node_entry.h"
 
 namespace GafferArnold
 {
@@ -61,5 +60,3 @@ class GAFFERARNOLD_API ParameterHandler
 };
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_PARAMETERHANDLER_H

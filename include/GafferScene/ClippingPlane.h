@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_CLIPPINGPLANE_H
-#define GAFFERSCENE_CLIPPINGPLANE_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -47,9 +46,9 @@ class GAFFERSCENE_API ClippingPlane : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ClippingPlane, ClippingPlaneTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ClippingPlane, ClippingPlaneTypeId, ObjectSource );
 
-		ClippingPlane( const std::string &name=defaultName<ClippingPlane>() );
+		explicit ClippingPlane( const std::string &name=defaultName<ClippingPlane>() );
 		~ClippingPlane() override;
 
 	protected :
@@ -64,5 +63,3 @@ class GAFFERSCENE_API ClippingPlane : public ObjectSource
 IE_CORE_DECLAREPTR( ClippingPlane )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_CLIPPINGPLANE_H

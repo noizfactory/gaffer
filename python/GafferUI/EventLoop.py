@@ -35,11 +35,13 @@
 #
 ##########################################################################
 
+import enum
 import time
 import weakref
 import threading
 import traceback
 import functools
+import queue
 
 import IECore
 
@@ -52,7 +54,7 @@ from Qt import QtWidgets
 ## This class provides the event loops used to run GafferUI based applications.
 class EventLoop( object ) :
 
-	__RunStyle = IECore.Enum.create( "Normal", "PumpThread", "AlreadyRunning", "Houdini" )
+	__RunStyle = enum.Enum( "__RunStyle", [ "Normal", "PumpThread", "AlreadyRunning", "Houdini" ] )
 
 	## Creates a new EventLoop. Note that if you are creating the primary
 	# EventLoop for an application then you should use mainEventLoop() instead.
@@ -154,11 +156,21 @@ class EventLoop( object ) :
 	if QtWidgets.QApplication.instance() :
 		__qtApplication = QtWidgets.QApplication.instance()
 	else :
-		# set the style explicitly so we don't inherit one from the desktop
-		# environment, which could mess with our own style (on gnome for instance,
+		# Set the style explicitly so we don't inherit one from the desktop
+		# environment, which could mess with our own style (on GNOME for instance,
 		# our icons can come out the wrong size).
-		QtWidgets.QApplication.setStyle( "plastique" )
+		style = QtWidgets.QApplication.setStyle( "Fusion" )
+		# Stop icons/fonts being tiny on high-dpi monitors. Must be set before
+		# the application is created.
+		QtWidgets.QApplication.setAttribute( QtCore.Qt.AA_EnableHighDpiScaling )
+		# Allow all `GafferUI.GLWidgets` to share OpenGL resources (via the underlying
+		# QOpenGLWidget).
+		QtWidgets.QApplication.setAttribute( QtCore.Qt.AA_ShareOpenGLContexts )
+		assert( style is not None )
 		__qtApplication = QtWidgets.QApplication( [ "gaffer" ] )
+		# Fixes laggy interaction with tablets, equivalent to the old
+		# QT_COMPRESS_TABLET_EVENTS env var supported in Maya Qt builds.
+		__qtApplication.setAttribute( QtCore.Qt.AA_CompressTabletEvents, True )
 
 	__mainEventLoop = None
 	## Returns the main event loop for the application. This should always
@@ -227,27 +239,25 @@ class EventLoop( object ) :
 	@classmethod
 	def executeOnUIThread( cls, callable, waitForResult=False ) :
 
-		if QtCore.QThread.currentThread() == cls.__qtApplication.thread() :
-			# Already on the UI thread - just do it.
-			return callable()
+		return _uiThreadExecutor.execute( callable, waitForResult )
 
-		resultCondition = threading.Condition() if waitForResult else None
+	## Context manager that blocks callables queued with `executeOnUIThread()`.
+	# The calls will be deferred until after the block exits. This is useful
+	# to defer graph edits that would cause unwanted cancellation of a
+	# BackgroundTask.
+	## \todo Blocking all UI thread execution is overkill. We could add a
+	# `subject` argument to `ParallelAlgo::callOnUIThread()`, mirroring the
+	# existing argument to `ParallelAlgo::callOnBackgroundThread()`. Then
+	# we could limit the blocking to calls with the relevant subject.
+	class BlockedUIThreadExecution( object ) :
 
-		# we only use a weakref here, because we don't want to be keeping the object
-		# alive from this thread, and hence deleting it from this thread. instead it
-		# is deleted in _UIThreadExecutor.event().
-		uiThreadExecutor = weakref.ref( _UIThreadExecutor( callable, resultCondition ) )
-		uiThreadExecutor().moveToThread( cls.__qtApplication.thread() )
+		def __enter__( self ) :
 
-		if resultCondition is not None :
-			resultCondition.acquire()
-			cls.__qtApplication.postEvent( uiThreadExecutor(), QtCore.QEvent( QtCore.QEvent.Type( _UIThreadExecutor.executeEventType ) ) )
-			resultCondition.wait()
-			resultCondition.release()
-			return resultCondition.resultValue
-		else :
-			cls.__qtApplication.postEvent( uiThreadExecutor(), QtCore.QEvent( QtCore.QEvent.Type( _UIThreadExecutor.executeEventType ) ) )
-			return None
+			_uiThreadExecutor.blockExecution()
+
+		def __exit__( self, type, value, traceBack ) :
+
+			_uiThreadExecutor.unblockExecution()
 
 	@classmethod
 	def __ensureIdleTimer( cls ) :
@@ -274,12 +284,12 @@ class EventLoop( object ) :
 			try :
 				if not c() :
 					EventLoop.__idleCallbacks.remove( c )
-			except Exception, e :
+			except Exception as e :
 				# if the callback throws then we remove it anyway, because
 				# we don't want to keep invoking the same error over and over.
 				EventLoop.__idleCallbacks.remove( c )
 				# report the error
-				IECore.msg( IECore.Msg.Level.Error, "EventLoop.__qtIdleCallback", "".join( traceback.format_exc( e ) ) )
+				IECore.msg( IECore.Msg.Level.Error, "EventLoop.__qtIdleCallback", "".join( traceback.format_exc() ) )
 
 		if len( EventLoop.__idleCallbacks )==0 and GafferUI.Gadget.idleSignal().empty() :
 			EventLoop.__idleTimer.stop()
@@ -306,42 +316,92 @@ class EventLoop( object ) :
 		for thrust in range( 0, thrusts ) :
 			self.__qtEventLoop.processEvents()
 
-_gadgetIdleSignalAccessedConnection = GafferUI.Gadget._idleSignalAccessedSignal().connect( EventLoop._gadgetIdleSignalAccessed )
+GafferUI.Gadget._idleSignalAccessedSignal().connect( EventLoop._gadgetIdleSignalAccessed )
 
+# Internal implementation for `EventLoop.executeOnUIThread()`. There are
+# multiple ways of achieving this in Qt, but they all boil down to scheduling an
+# event on the main loop. We have tried the following :
+#
+# - Creating a new QObject to wrap the callable, moving it to the main thread,
+#   and then using `postEvent()` to trigger a call to `customEvent()`, which
+#   executes the callable. This triggered GIL/refcount bugs in PySide which meant
+#   that the QObject was occasionally deleted prematurely.
+# - Having a single QObject living on the main thread, with a signal which we
+#   emitted from the background thread to schedule execution. This was more reliable,
+#   but still triggered occasional PySide crashes.
+# - Having a single QObject living on the main thread, and using `QMetaObject.invokeMethod()`
+#   to queue a call to one of its methods. This is the approach we currently use.
 class _UIThreadExecutor( QtCore.QObject ) :
 
-	executeEventType = QtCore.QEvent.registerEventType()
-
-	__instances = set()
-
-	def __init__( self, callable, resultCondition = None ) :
+	def __init__( self ) :
 
 		QtCore.QObject.__init__( self )
 
-		self.__callable = callable
-		self.__resultCondition = resultCondition
-		# we store a reference to ourselves in __instances, as otherwise
-		# we go out of scope and get deleted at the end of executeOnUIThread
-		# above. that's bad because we never live long enough to get our event,
-		# and we'll also be being deleted from the calling thread, not the ui
-		# thread where we live.
-		self.__instances.add( self )
+		# In an ideal world, we'd pass the callables via arguments to
+		# `__executeInternal`. But I haven't figured out how to do that via
+		# `invokeMethod()` and doing the equivalent via signals crashes PySide.
+		# So instead we pass the callables via this queue and just use
+		# `invokeMethod()` to schedule their removal on the UI thread.
+		self.__queue = queue.Queue()
+		self.__blockedCallables = None
 
-	def event( self, event ) :
+	def execute( self, callable, waitForResult ) :
 
-		if event.type() == self.executeEventType :
-			result = self.__callable()
-			if self.__resultCondition is not None :
-				self.__resultCondition.acquire()
-				self.__resultCondition.resultValue = result
-				self.__resultCondition.notify()
-				self.__resultCondition.release()
+		if QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() :
+			# Already on the UI thread - just do it.
+			return callable()
 
-			self.__instances.remove( self )
+		resultCondition = threading.Condition() if waitForResult else None
+		if resultCondition is not None :
+			resultCondition.acquire()
 
-			return True
+		self.__queue.put( ( callable, resultCondition ) )
+		QtCore.QMetaObject.invokeMethod( self, "__executeInternal", QtCore.Qt.ConnectionType.QueuedConnection )
 
-		return False
+		if resultCondition is not None :
+			resultCondition.wait()
+			resultCondition.release()
+			return resultCondition.resultValue
+
+	def blockExecution( self ) :
+
+		assert( QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() )
+
+		# Set up a container to buffer into
+		assert( self.__blockedCallables is None )
+		self.__blockedCallables = []
+
+	def unblockExecution( self ) :
+
+		assert( QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() )
+
+		# Schedule each of the buffered calls again, and then clear the buffer.
+		# We don't just execute them immediately because it would be surprising
+		# to the user of `BlockedUIThreadExecution` to have arbitrary code be
+		# executed in the middle of their function.
+		assert( isinstance( self.__blockedCallables, list ) )
+		for callable, resultCondition in self.__blockedCallables :
+			self.__queue.put( ( callable, resultCondition ) )
+			QtCore.QMetaObject.invokeMethod( self, "__executeInternal", QtCore.Qt.ConnectionType.QueuedConnection )
+
+		self.__blockedCallables = None
+
+	@QtCore.Slot()
+	def __executeInternal( self ) :
+
+		assert( QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() )
+		callable, resultCondition = self.__queue.get()
+		if self.__blockedCallables is not None :
+			self.__blockedCallables.append( ( callable, resultCondition ) )
+		else :
+			result = callable()
+			if resultCondition is not None :
+				resultCondition.acquire()
+				resultCondition.resultValue = result
+				resultCondition.notify()
+				resultCondition.release()
+
+_uiThreadExecutor = _UIThreadExecutor()
 
 # Service the requests made to `ParallelAlgo::callOnUIThread()`.
 Gaffer.ParallelAlgo.pushUIThreadCallHandler( EventLoop.executeOnUIThread )

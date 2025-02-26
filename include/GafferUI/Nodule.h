@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_NODULE_H
-#define GAFFERUI_NODULE_H
+#pragma once
 
 #include "GafferUI/ConnectionCreator.h"
 
@@ -79,7 +78,7 @@ class GAFFERUI_API Nodule : public ConnectionCreator
 		/// this case nullptr will be returned.
 		static NodulePtr create( Gaffer::PlugPtr plug );
 
-		typedef std::function<NodulePtr ( Gaffer::PlugPtr )> NoduleCreator;
+		using NoduleCreator = std::function<NodulePtr ( Gaffer::PlugPtr )>;
 		/// Registers a Nodule subclass, optionally registering it as the default
 		/// nodule type for a particular type of plug.
 		static void registerNodule( const std::string &noduleTypeName, NoduleCreator creator, IECore::TypeId plugType = IECore::InvalidTypeId );
@@ -88,7 +87,7 @@ class GAFFERUI_API Nodule : public ConnectionCreator
 
 	protected :
 
-		Nodule( Gaffer::PlugPtr plug );
+		explicit Nodule( Gaffer::PlugPtr plug );
 
 		/// Creating a static one of these is a convenient way of registering a Nodule type.
 		template<class T>
@@ -102,19 +101,14 @@ class GAFFERUI_API Nodule : public ConnectionCreator
 
 		Gaffer::PlugPtr m_plug;
 
-		typedef std::map<std::string, NoduleCreator> TypeNameCreatorMap;
+		using TypeNameCreatorMap = std::map<std::string, NoduleCreator>;
 		static TypeNameCreatorMap &typeNameCreators();
 
-		typedef std::map<IECore::TypeId, NoduleCreator> PlugCreatorMap;
+		using PlugCreatorMap = std::map<IECore::TypeId, NoduleCreator>;
 		static PlugCreatorMap &plugCreators();
 
 };
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<Nodule> > NoduleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<Nodule> > RecursiveNoduleIterator;
-
 IE_CORE_DECLAREPTR( Nodule );
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_NODULE_H

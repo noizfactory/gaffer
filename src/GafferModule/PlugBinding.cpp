@@ -99,7 +99,7 @@ PlugPtr source( Plug &p )
 
 void GafferModule::bindPlug()
 {
-	typedef PlugWrapper<Plug> Wrapper;
+	using Wrapper = PlugWrapper<Plug>;
 
 	PlugClass<Plug, Wrapper> c;
 	{
@@ -111,6 +111,7 @@ void GafferModule::bindPlug()
 		;
 		enum_<Plug::Flags>( "Flags" )
 			.value( "None", Plug::None )
+			.value( "None_", Plug::None )
 			.value( "Dynamic", Plug::Dynamic )
 			.value( "Serialisable", Plug::Serialisable )
 			.value( "AcceptsInputs", Plug::AcceptsInputs )

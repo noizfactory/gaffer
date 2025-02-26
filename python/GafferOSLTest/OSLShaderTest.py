@@ -35,9 +35,11 @@
 ##########################################################################
 
 import os
+import pathlib
 import unittest
 import imath
 import random
+import shutil
 
 import IECore
 import IECoreScene
@@ -53,7 +55,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def test( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
@@ -89,7 +91,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testOutputTypes( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
 
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
@@ -111,8 +113,8 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testNetwork( self ) :
 
-		typesShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
-		outputTypesShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
+		typesShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
+		outputTypesShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
 
 		typesNode = GafferOSL.OSLShader( "types" )
 		outputTypesNode = GafferOSL.OSLShader( "outputTypes" )
@@ -126,7 +128,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 		network = typesNode.attributes()["osl:surface"]
 		self.assertEqual( len( network ), 2 )
-		self.assertEqual( network.getOutput(), ( "types", "" ) )
+		self.assertEqual( network.getOutput(), ( "types", "out" ) )
 
 		types = network.getShader( "types" )
 		outputTypes = network.getShader( "outputTypes" )
@@ -147,7 +149,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testSerialiation( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
 
 		script = Gaffer.ScriptNode()
 		script["n"] = GafferOSL.OSLShader()
@@ -171,11 +173,11 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 		standardShaderPaths = os.environ["OSL_SHADER_PATHS"]
 		try:
-			s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+			s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 
-			os.environ["OSL_SHADER_PATHS"] = os.path.dirname( s )
+			os.environ["OSL_SHADER_PATHS"] = str( pathlib.Path( s ).parent )
 			n = GafferOSL.OSLShader()
-			n.loadShader( os.path.basename( s ) )
+			n.loadShader( pathlib.Path( s ).name )
 
 			self.assertEqual( n["parameters"].keys(), [ "i", "f", "c", "s", "m" ] )
 		finally:
@@ -199,7 +201,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testStructs( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/structs.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "structs.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -236,7 +238,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 		h2 = n.attributesHash()
 		self.assertNotEqual( h1, h2 )
 
-		s2 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
+		s2 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
 		g = GafferOSL.OSLShader()
 		g.loadShader( s2 )
 
@@ -275,11 +277,11 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testClosureParameters( self ) :
 
-		outputClosureShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputClosure.osl" )
+		outputClosureShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputClosure.osl" )
 		outputClosure = GafferOSL.OSLShader( "outputClosure" )
 		outputClosure.loadShader( outputClosureShader )
 
-		inputClosureShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/inputClosure.osl" )
+		inputClosureShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "inputClosure.osl" )
 		inputClosure = GafferOSL.OSLShader( "inputClosure" )
 		inputClosure.loadShader( inputClosureShader )
 
@@ -298,11 +300,11 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testClosureParametersInputAcceptance( self ) :
 
-		outputClosureShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputClosure.osl" )
+		outputClosureShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputClosure.osl" )
 		outputClosure = GafferOSL.OSLShader()
 		outputClosure.loadShader( outputClosureShader )
 
-		inputClosureShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/inputClosure.osl" )
+		inputClosureShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "inputClosure.osl" )
 		inputClosure = GafferOSL.OSLShader()
 		inputClosure.loadShader( inputClosureShader )
 
@@ -314,7 +316,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testOutputClosureDirtying( self ) :
 
-		outputClosureShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputClosure.osl" )
+		outputClosureShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputClosure.osl" )
 		outputClosure = GafferOSL.OSLShader()
 		outputClosure.loadShader( outputClosureShader )
 
@@ -327,8 +329,8 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testRepeatability( self ) :
 
-		s1 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
-		s2 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+		s1 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
+		s2 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 
 		sn1 = GafferOSL.OSLShader()
 		sn1.loadShader( s1 )
@@ -343,8 +345,8 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testHandlesAreHumanReadable( self ) :
 
-		s1 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
-		s2 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+		s1 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
+		s2 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 
 		sn1 = GafferOSL.OSLShader( "Shader1" )
 		sn1.loadShader( s1 )
@@ -359,8 +361,8 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testHandlesAreUniqueEvenIfNodeNamesArent( self ) :
 
-		s1 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" )
-		s2 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+		s1 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" )
+		s2 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 
 		script = Gaffer.ScriptNode()
 
@@ -387,7 +389,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testShaderMetadata( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/metadata.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "metadata.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -397,7 +399,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testParameterMetadata( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/metadata.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "metadata.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -411,7 +413,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testParameterArrayMetadata( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/arrayMetadata.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "arrayMetadata.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -421,7 +423,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testParameterMinMaxMetadata( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/metadataMinMax.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "metadataMinMax.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -444,7 +446,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testParameterSplineMetadata( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/splineMetadata.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "splineMetadata.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -460,7 +462,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testMetadataReuse( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/arrayMetadata.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "arrayMetadata.osl" )
 
 		n1 = GafferOSL.OSLShader()
 		n1.loadShader( s )
@@ -483,7 +485,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testAcceptsNoneInput( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -518,7 +520,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 	def testLoadNetworkFromVersion0_23( self ) :
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( os.path.dirname( __file__ ) + "/scripts/networkVersion-0.23.2.1.gfr" )
+		s["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "networkVersion-0.23.2.1.gfr" )
 		s.load()
 
 		for plug, expectedValue, expectedInput in [
@@ -546,14 +548,15 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testReload( self ) :
 
-		s1 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/version1.osl" )
-		s2 = self.compileShader( os.path.dirname( __file__ ) + "/shaders/version2.osl" )
+		s1 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "version1.osl" )
+		s2 = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "version2.osl" )
 
 		n = GafferOSL.OSLShader()
 		n.loadShader( s1 )
 
+		s1Parameters = n["parameters"].keys()
 		self.assertEqual(
-			n["parameters"].keys(),
+			s1Parameters,
 			[
 				"commonI",
 				"commonF",
@@ -679,13 +682,20 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 			if isinstance( plug, Gaffer.ValuePlug ) :
 				self.assertTrue( plug.isSetToDefault() )
 
+		shutil.copyfile( s1 + ".oso", s2 + ".oso" )
+		n.reloadShader()
+		self.assertEqual(
+			n["parameters"].keys(),
+			s1Parameters
+		)
+
 	def testSplineParameters( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/splineParameters.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "splineParameters.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
-		self.assertEqual( n["parameters"].keys(), [ "floatSpline", "colorSpline" ] )
+		self.assertEqual( n["parameters"].keys(), [ "floatSpline", "colorSpline", "checkLinearSpline" ] )
 
 		self.assertTrue( isinstance( n["parameters"]["floatSpline"], Gaffer.SplineffPlug ) )
 		self.assertEqual(
@@ -717,6 +727,21 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 			)
 		)
 
+		# Just adding documentation that this is currently broken, but I'm not supposed to be worrying about
+		# the parameter import path at the moment ( it's not using
+		# IECoreScene::ShaderNetworkAlgo::collapseSplineParameters yet )
+		"""self.assertTrue( isinstance( n["parameters"]["checkLinearSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["checkLinearSpline"].getValue().spline(),
+			IECore.Splineff(
+				IECore.CubicBasisf.linear(),
+				[
+					( 2, 3 ),
+					( 4, 5 ),
+				]
+			)
+		)"""
+
 		shader = n.attributes()["osl:shader"].outputShader()
 
 		self.assertEqual(
@@ -747,11 +772,114 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 			)
 		)
 
+	def test3delightSplineParameters( self ) :
+
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "delightSplineParameters.osl" )
+		n = GafferOSL.OSLShader()
+		n.loadShader( s )
+
+		self.assertEqual(
+			n["parameters"].keys(),
+			[
+				"floatSpline",
+				"colorSpline",
+				"dualInterpolationSpline",
+				"trimmedFloatSpline",
+				"mayaSpline",
+				"inconsistentNameSpline",
+				"notASpline",
+				"alsoNotASpline",
+				"sameHere",
+				"norMe",
+			]
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["floatSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["floatSpline"].getValue().spline(),
+			IECore.Splineff(
+				IECore.CubicBasisf.linear(),
+				[
+					( 0, 0 ),
+					( 0, 0 ),
+					( 1, 1 ),
+					( 1, 1 ),
+				]
+			)
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["colorSpline"], Gaffer.SplinefColor3fPlug ) )
+		self.assertEqual(
+			n["parameters"]["colorSpline"].getValue().spline(),
+			IECore.SplinefColor3f(
+				IECore.CubicBasisf.catmullRom(),
+				[
+					( 0, imath.Color3f( 0 ) ),
+					( 0, imath.Color3f( 0 ) ),
+					( 0, imath.Color3f( 0 ) ),
+					( 1, imath.Color3f( 1 ) ),
+					( 1, imath.Color3f( 1 ) ),
+					( 1, imath.Color3f( 1 ) ),
+				]
+			)
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["dualInterpolationSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["dualInterpolationSpline"].getValue().spline(),
+			IECore.Splineff(
+				IECore.CubicBasisf.linear(),
+				[
+					( 0, 0 ),
+					( 0, 0 ),
+					( 1, 1 ),
+					( 1, 1 ),
+				]
+			)
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["trimmedFloatSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["trimmedFloatSpline"].getValue().spline(),
+			IECore.Splineff(
+				IECore.CubicBasisf.catmullRom(),
+				[
+					( 0, 0 ),
+					( 0, 0 ),
+					( 1, 1 ),
+					( 1, 1 ),
+				]
+			)
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["mayaSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["mayaSpline"].getValue().spline(),
+			IECore.Splineff(
+				IECore.CubicBasisf.linear(),
+				[
+					( 0, 0 ),
+					( 0, 0 ),
+					( 1, 1 ),
+					( 1, 1 ),
+				]
+			)
+		)
+
+		self.assertTrue( isinstance( n["parameters"]["inconsistentNameSpline"], Gaffer.SplineffPlug ) )
+		self.assertEqual(
+			n["parameters"]["inconsistentNameSpline"].getValue().spline(),
+			Gaffer.SplineDefinitionff(
+				((0, 0), (0,0), (0,0), (1,1), (1,1), (1,1)),
+				Gaffer.SplineDefinitionInterpolation.MonotoneCubic
+			).spline()
+		)
+
 	def testSplineParameterEvaluation( self ) :
 
 		numSamples = 100
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/splineParameters.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "splineParameters.osl" )
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
 
@@ -781,7 +909,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 			n["parameters"]["colorSpline"].setValue( Gaffer.SplineDefinitionfColor3f( points, interpolation ) )
 
-			oslSamples = list( reversed( image['out'].image()["R"] ) )
+			oslSamples = list( reversed( GafferImage.ImageAlgo.image( image['out'] )["R"] ) )
 
 			s = n['parameters']['colorSpline'].getValue().spline()
 			cortexSamples = [ s( ( i + 0.5 ) / numSamples )[0] for i in range( numSamples ) ]
@@ -791,7 +919,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testArrays( self ) :
 
-		s = self.compileShader( os.path.dirname( __file__ ) + "/shaders/arrays.osl" )
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "arrays.osl" )
 
 		n = GafferOSL.OSLShader()
 		n.loadShader( s )
@@ -839,7 +967,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 	def testUnload( self ) :
 
 		n = GafferOSL.OSLShader()
-		n.loadShader( self.compileShader( os.path.dirname( __file__ ) + "/shaders/types.osl" ) )
+		n.loadShader( self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "types.osl" ) )
 		self.assertTrue( "osl:surface" in n.attributes() )
 
 		n.loadShader( "" )
@@ -851,10 +979,10 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 	def testLoadSurfaceAfterShader( self ) :
 
 		n = GafferOSL.OSLShader()
-		n.loadShader( self.compileShader( os.path.dirname( __file__ ) + "/shaders/outputTypes.osl" ) )
+		n.loadShader( self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "outputTypes.osl" ) )
 		self.assertEqual( len( n["out"] ), 5 )
 
-		n.loadShader( self.compileShader( os.path.dirname( __file__ ) + "/shaders/constant.osl" ) )
+		n.loadShader( self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "constant.osl" ) )
 		self.assertEqual( len( n["out"] ), 0 )
 
 	def testReconnectionOfChildPlugShader( self ) :
@@ -919,8 +1047,8 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 	def testDisabledShaderEvaluatesStateCorrectly( self ) :
 
-		redShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/red.osl" )
-		greenShader = self.compileShader( os.path.dirname( __file__ ) + "/shaders/green.osl" )
+		redShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "red.osl" )
+		greenShader = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "green.osl" )
 
 		n2 = GafferOSL.OSLShader( "red1" )
 		n2.loadShader( redShader )
@@ -929,7 +1057,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 		n3.loadShader( greenShader )
 
 		n1 = GafferOSL.OSLShader( "add" )
-		n1.loadShader( self.compileShader( os.path.dirname( __file__ ) + "/shaders/add.osl" ) )
+		n1.loadShader( self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "add.osl" ) )
 
 		n1['parameters']['a'].setInput(n2["out"]["out"])
 		n1['parameters']['b'].setInput(n3["out"]["out"])
@@ -978,7 +1106,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 
 		s = Gaffer.ScriptNode()
 
-		shad = self.compileShader( os.path.dirname( __file__ ) + "/shaders/splineParameters.osl" )
+		shad = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "splineParameters.osl" )
 		s['n'] = GafferOSL.OSLShader()
 		s['n'].loadShader( shad )
 
@@ -1053,7 +1181,7 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 		network3 = shaderPlug.attributes()["osl:shader"]
 		hash3 = shaderPlug.attributesHash()
 
-		self.assertEqual( network1.getOutput(), IECoreScene.ShaderNetwork.Parameter( "globals" ) )
+		self.assertEqual( network1.getOutput(), IECoreScene.ShaderNetwork.Parameter( "globals", "out" ) )
 		self.assertEqual( network2.getOutput(), IECoreScene.ShaderNetwork.Parameter( "globals", "globalP" ) )
 		self.assertEqual( network3.getOutput(), IECoreScene.ShaderNetwork.Parameter( "globals", "globalN" ) )
 
@@ -1079,6 +1207,119 @@ class OSLShaderTest( GafferOSLTest.OSLTestCase ) :
 		shaderAssignment["filter"].setInput( planeFilter["out"] )
 
 		self.assertEqual( shaderAssignment["out"].attributes( "/plane" ).keys(), [ "osl:surface" ] )
+
+	def testSurfaceShaderOutParameters( self ) :
+
+		# OSL is moving away from strong typing for shaders, and there
+		# are uses for connecting surface shaders as inputs to other shaders
+		# (layered shading etc). So we always load the output parameters
+		# for every shader, even if they are a surface shader.
+
+		shader = GafferOSL.OSLShader()
+		shader.loadShader( "Surface/Constant" )
+		self.assertEqual( shader["out"].keys(), [ "out" ] )
+		self.assertIsInstance( shader["out"]["out"], GafferOSL.ClosurePlug )
+
+	def testShadingEngineDeduplicate( self ) :
+
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "debugClosure.osl" )
+
+		n = GafferOSL.OSLShader()
+		n.loadShader( s )
+
+		n["parameters"]["name"].setValue( "o<attr:b><attr:d>" )
+
+		singlePoint = IECore.CompoundData( { "P" : IECore.V3fVectorData( [ imath.V3f(0) ] ) } )
+
+		defaultSE = n.shadingEngine( IECore.CompoundObject( {} ) )
+
+		self.assertEqual( set( defaultSE.shade( singlePoint ).keys() ), { "Ci", "o" } )
+
+		self.assertTrue( defaultSE.isSame( n.shadingEngine( IECore.CompoundObject( { "a" : IECore.StringData( "A" ) } ) ) ) )
+		firstSE = n.shadingEngine( IECore.CompoundObject( { "b" : IECore.StringData( "B" ) } ) )
+		self.assertEqual( set( firstSE.shade( singlePoint ).keys() ), { 'Ci', 'oB' } )
+		self.assertTrue( defaultSE.isSame( n.shadingEngine( IECore.CompoundObject( { "c" : IECore.StringData( "C" ) } ) ) ) )
+		self.assertTrue( firstSE.isSame( n.shadingEngine( IECore.CompoundObject( { "c" : IECore.StringData( "C" ), "b" : IECore.StringData( "B" ) } ) ) ) )
+		self.assertEqual( set( n.shadingEngine( IECore.CompoundObject( { "d" : IECore.StringData( "D" ) } ) ).shade( singlePoint ).keys() ), { "Ci", "oD" } )
+		bothSE = n.shadingEngine( IECore.CompoundObject( { "d" : IECore.StringData( "D" ), "b" : IECore.StringData( "B" ) } ) )
+		self.assertEqual( set( bothSE.shade( singlePoint ).keys() ), { "Ci", "oBD" } )
+		self.assertTrue( bothSE.isSame( n.shadingEngine( IECore.CompoundObject( { "c" : IECore.StringData( "C" ), "b" : IECore.StringData( "B" ), "d" : IECore.StringData( "D" ) } ) ) ) )
+
+		# \todo - need to figure out what n.shadingEngine() should do when substitutions are needed.
+		# Should it be a synonym for n.shadingEngine( IECore.CompoundObject( {} ) )?
+		# Or should it raise an exception?  The current behaviour of leaving unsubstituted strings is probably
+		# not right.
+
+	def testActivatorMetadata( self ) :
+		c = Gaffer.Context()
+
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "activatorMetadata.osl" )
+		n = GafferOSL.OSLShader()
+		n.loadShader( s )
+
+		parameters = n["parameters"]
+		for i in range( 5 ):
+			parameters["i"].setValue( i )
+			self.assertEqual( Gaffer.Metadata.value( parameters["test1"], "layout:activator" ), i > 2 )
+
+		self.assertEqual( Gaffer.Metadata.value( parameters["test2"], "layout:activator" ), False )
+		parameters["s"].setValue( "foo" )
+		self.assertEqual( Gaffer.Metadata.value( parameters["test2"], "layout:activator" ), True )
+
+		parameters["i"].setValue( 9 )
+		self.assertEqual( Gaffer.Metadata.value( parameters["test3"], "layout:visibilityActivator" ), False )
+		parameters["i2"].setValue( 8 )
+		self.assertEqual( Gaffer.Metadata.value( parameters["test3"], "layout:visibilityActivator" ), True )
+
+		self.assertEqual( Gaffer.Metadata.value( parameters["test4"], "layout:visibilityActivator" ), False )
+		parameters["c"].setValue( imath.Color3f( 0.2, 0.4, 0 ) )
+		self.assertEqual( Gaffer.Metadata.value( parameters["test4"], "layout:visibilityActivator" ), True )
+
+	def testVdbVolumeType( self ) :
+
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "vdbVolume.osl" )
+		n = GafferOSL.OSLShader()
+		n.loadShader( s )
+
+		self.assertEqual( n["type"].getValue(), "osl:volume" )
+
+		s = self.compileShader( pathlib.Path( __file__ ).parent / "shaders" / "notAvdbVolume.osl" )
+		n.loadShader( s )
+
+		self.assertEqual( n["type"].getValue(), "osl:shader" )
+
+	def testLoadSurfaceWithOutputParameters( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "surfaceWithOutputs-1.3.9.0.gfr" )
+		script.load()
+
+		# The script was saved from a version of Gaffer where we didn't load output parameters
+		# for surface shaders. But we expect to load them now.
+
+		self.assertEqual( script["Constant"]["out"].keys(), [ "out" ] )
+		self.assertIsInstance( script["Constant"]["out"]["out"], GafferOSL.ClosurePlug )
+
+		# And we expect the old connection from `Constant.out` to continue to work, even though
+		# we would now expect an equivalent connection to be made from `Constant.out.out`.
+
+		self.assertEqual( script["ShaderAssignment"]["shader"].getInput(), script["Constant"]["out"] )
+		self.assertIn( "osl:surface", script["ShaderAssignment"]["out"].attributes( "/sphere" ) )
+		network = script["ShaderAssignment"]["out"].attributes( "/sphere" )["osl:surface"]
+		self.assertIsInstance( network, IECoreScene.ShaderNetwork )
+		self.assertEqual( network.outputShader().name, "Surface/Constant" )
+
+	def testLoadColorToVectorFromVersion1_3( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["fileName"].setValue( pathlib.Path( __file__ ).parent / "scripts" / "colorToVector-1.3.11.0.gfr" )
+		script.load()
+
+		self.assertEqual( script["ColorToVector"]["parameters"]["col"].getInput(), script["VectorToColor"]["out"]["c"] )
+		self.assertEqual( script["ColorToVector1"]["parameters"]["col"].getValue(), imath.Color3f( 1, 2, 3 ) )
+		self.assertEqual( script["ColorToVector2"]["parameters"]["col"].getInput(), script["FloatToColor"]["out"]["c"] )
+		self.assertEqual( script["VectorToColor1"]["parameters"]["vec"].getInput(), script["ColorToVector"]["out"]["vec"] )
+		self.assertEqual( script["ColorToFloat"]["parameters"]["c"].getInput(), script["ColorToVector"]["out"]["vec"] )
 
 if __name__ == "__main__":
 	unittest.main()

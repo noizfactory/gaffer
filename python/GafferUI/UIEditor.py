@@ -41,19 +41,20 @@ import re
 import collections
 import imath
 import inspect
+import string
 
 import IECore
 
 import Gaffer
 import GafferUI
-import MetadataWidget
+from . import MetadataWidget
 
 ## The UIEditor class allows the user to edit the interfaces for nodes.
 class UIEditor( GafferUI.NodeSetEditor ) :
 
 	def __init__( self, scriptNode, **kw ) :
 
-		self.__frame = GafferUI.Frame( borderWidth = 0, borderStyle = GafferUI.Frame.BorderStyle.None )
+		self.__frame = GafferUI.Frame( borderWidth = 0, borderStyle = GafferUI.Frame.BorderStyle.None_ )
 
 		GafferUI.NodeSetEditor.__init__( self, self.__frame, scriptNode, **kw )
 
@@ -99,7 +100,7 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 					_Label( "Color" )
 
 					self.__nodeMetadataWidgets.append(
-						MetadataWidget.ColorSwatchMetadataWidget( key = "nodeGadget:color" )
+						MetadataWidget.ColorSwatchMetadataWidget( key = "nodeGadget:color", defaultValue = imath.Color3f( 0.4 ) )
 					)
 
 				with _Row() as self.__iconRow :
@@ -110,17 +111,34 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 						MetadataWidget.FileSystemPathMetadataWidget( key = "icon" )
 					)
 
+					GafferUI.Label( "Scale" )
+
+					scaleWidget = MetadataWidget.NumericMetadataWidget( key = "iconScale", defaultValue = 1.5 )
+					scaleWidget.numericWidget()._qtWidget().setMaximumWidth( 60 )
+					self.__nodeMetadataWidgets.append( scaleWidget )
+
+				with _Row() as self.__plugAddButtons :
+
+					_Label( "Plug Creators" )
+
+					for side in ( "Top", "Bottom", "Left", "Right" ) :
+						GafferUI.Label( side )
+						self.__nodeMetadataWidgets.append( MetadataWidget.BoolMetadataWidget(
+							key = "noduleLayout:customGadget:addButton%s:visible" % side,
+							defaultValue = True
+						) )
+
 			# Plugs tab
 			with GafferUI.SplitContainer( orientation=GafferUI.SplitContainer.Orientation.Horizontal, borderWidth = 8, parenting = { "label" : "Plugs" } ) as self.__plugTab :
 
 				self.__plugListing = _PlugListing()
-				self.__plugListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__plugListingSelectionChanged ), scoped = False )
+				self.__plugListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__plugListingSelectionChanged ) )
 
 				with GafferUI.TabbedContainer() as self.__plugAndSectionEditorsContainer :
 
 					self.__plugEditor = _PlugEditor()
 					self.__sectionEditor = _SectionEditor()
-					self.__sectionEditor.nameChangedSignal().connect( Gaffer.WeakMethod( self.__sectionEditorNameChanged ), scoped = False )
+					self.__sectionEditor.nameChangedSignal().connect( Gaffer.WeakMethod( self.__sectionEditorNameChanged ) )
 
 				self.__plugAndSectionEditorsContainer.setTabsVisible( False )
 
@@ -167,6 +185,24 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 				"active" : not Gaffer.MetadataAlgo.readOnly( node ),
 			}
 		)
+
+		nodeGadgetTypes = Gaffer.Metadata.value( node, "uiEditor:nodeGadgetTypes" )
+		if nodeGadgetTypes :
+			nodeGadgetTypes = set( nodeGadgetTypes )
+			if nodeGadgetTypes == { "GafferUI::AuxiliaryNodeGadget", "GafferUI::StandardNodeGadget" } :
+				nodeGadgetType = Gaffer.Metadata.value( node, "nodeGadget:type" ) or "GafferUI::StandardNodeGadget"
+				menuDefinition.append(
+					"/Show Name",
+					{
+						"command" : functools.partial( cls.__setNameVisible, node ),
+						"checkBox" : nodeGadgetType == "GafferUI::StandardNodeGadget",
+						"active" : not Gaffer.MetadataAlgo.readOnly( node ),
+					}
+				)
+			else :
+				# We want to present the options above as a simple "Show Name" checkbox, and haven't yet
+				# decided how to present other combinations of allowable gadgets.
+				IECore.msg( IECore.Msg.Level.Warning, "UIEditor", 'Unknown combination of "uiEditor:nodeGadgetTypes"' )
 
 	@classmethod
 	def appendNodeEditorToolMenuDefinitions( cls, nodeEditor, node, menuDefinition ) :
@@ -217,7 +253,7 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 
 			widgetClass = MetadataWidget.BoolMetadataWidget
 
-		elif isinstance( defaultValue, basestring ) :
+		elif isinstance( defaultValue, str ) :
 
 			widgetClass = MetadataWidget.StringMetadataWidget
 
@@ -251,6 +287,7 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 		self.__node = node
 		self.__nodeNameWidget.setGraphComponent( self.__node )
 		self.__nodeTab.setEnabled( self.__node is not None )
+		self.__plugAddButtons.setVisible( False )
 
 		if self.__node is None :
 			self.__plugListing.setPlugParent( None )
@@ -264,6 +301,7 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 				# is available for use by the user on Reference nodes once a Box has
 				# been exported and referenced.
 				plugParent = self.__node
+				self.__plugAddButtons.setVisible( True )
 			self.__plugListing.setPlugParent( plugParent )
 			self.__sectionEditor.setPlugParent( plugParent )
 
@@ -278,7 +316,7 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 		if selection is None or isinstance( selection, Gaffer.Plug ) :
 			self.__plugEditor.setPlug( selection )
 			self.__plugAndSectionEditorsContainer.setCurrent( self.__plugEditor )
-		elif isinstance( selection, basestring ) :
+		elif isinstance( selection, str ) :
 			self.__plugEditor.setPlug( None )
 			self.__sectionEditor.setSection( selection )
 			self.__plugAndSectionEditorsContainer.setCurrent( self.__sectionEditor )
@@ -297,12 +335,20 @@ class UIEditor( GafferUI.NodeSetEditor ) :
 	def __setColor( cls, menu, node ) :
 
 		color = Gaffer.Metadata.value( node, "nodeGadget:color" ) or imath.Color3f( 1 )
-		dialogue = GafferUI.ColorChooserDialogue( color = color, useDisplayTransform = False )
+		dialogue = GafferUI.ColorChooserDialogue( color = color, displayTransform = GafferUI.Widget.identityDisplayTransform )
 		color = dialogue.waitForColor( parentWindow = menu.ancestor( GafferUI.Window ) )
 		if color is not None :
 			with Gaffer.UndoScope( node.ancestor( Gaffer.ScriptNode ) ) :
 				Gaffer.Metadata.registerValue( node, "nodeGadget:color", color )
 
+	@staticmethod
+	def __setNameVisible( node, nameVisible ) :
+
+		with Gaffer.UndoScope( node.ancestor( Gaffer.ScriptNode ) ) :
+			Gaffer.Metadata.registerValue(
+				node, "nodeGadget:type",
+				"GafferUI::StandardNodeGadget" if nameVisible else "GafferUI::AuxiliaryNodeGadget"
+			)
 
 GafferUI.Editor.registerType( "UIEditor", UIEditor )
 
@@ -334,11 +380,11 @@ def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 	menuDefinition.append( "/Edit UI...",
 		{
 			"command" : functools.partial( __editPlugUI, node, plug ),
-			"active" : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug )
+			"active" : not Gaffer.MetadataAlgo.readOnly( plug )
 		}
 	)
 
-GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu, scoped = False )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
 
 ##########################################################################
 # Simple fixed width label and row classes
@@ -360,7 +406,7 @@ class _Row( GafferUI.ListContainer ) :
 
 	def __init__( self, *args, **kw ) :
 
-		GafferUI.ListContainer.__init__( self, GafferUI.ListContainer.Orientation.Horizontal, spacing = 4, *args, **kw )
+		GafferUI.ListContainer.__init__( self, GafferUI.ListContainer.Orientation.Horizontal, spacing = 8, *args, **kw )
 
 ##########################################################################
 # Hierarchical representation of a plug layout, suitable for manipulating
@@ -507,15 +553,15 @@ class _PlugListing( GafferUI.Widget ) :
 
 			return self.__class__( self.__rootItem, self[:], self.root(), self.getFilter() )
 
-		def isLeaf( self ) :
+		def isLeaf( self, canceller = None ) :
 
 			return not isinstance( self.item(), _SectionLayoutItem )
 
-		def isValid( self ) :
+		def isValid( self, canceller = None ) :
 
 			return self.item() is not None
 
-		def _children( self ) :
+		def _children( self, canceller ) :
 
 			item = self.item()
 			if item is None :
@@ -537,6 +583,10 @@ class _PlugListing( GafferUI.Widget ) :
 
 		column = GafferUI.ListContainer( spacing = 4 )
 		GafferUI.Widget.__init__( self, column, **kw )
+
+		# We don't have a way to do this with Widget directly at present, this
+		# stops the preset name/value fields being off-screen.
+		column._qtWidget().setMinimumWidth( 650 )
 
 		with column :
 
@@ -562,34 +612,44 @@ class _PlugListing( GafferUI.Widget ) :
 				)
 
 				self.__deleteButton = GafferUI.Button( image = "minus.png", hasFrame = False )
-				self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ), scoped = False )
+				self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ) )
 
 		self.__parent = None # the parent of the plugs we're listing
 		self.__dragItem = None
-		self.__selectionChangedSignal = Gaffer.Signal1()
+		self.__selectionChangedSignal = Gaffer.Signals.Signal1()
 
-		self.__pathListing.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ), scoped = False )
-		self.__pathListing.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ), scoped = False )
-		self.__pathListing.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ), scoped = False )
-		self.__pathListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ), scoped = False )
-		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
-
-		self.__nodeMetadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal().connect( Gaffer.WeakMethod( self.__nodeMetadataChanged ) )
-		self.__plugMetadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal().connect( Gaffer.WeakMethod( self.__plugMetadataChanged ) )
+		self.__pathListing.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ) )
+		self.__pathListing.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ) )
+		self.__pathListing.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ) )
+		self.__pathListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ) )
+		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
 
 	def setPlugParent( self, parent ) :
 
-		assert( isinstance( parent, ( Gaffer.Plug, Gaffer.Node, types.NoneType ) ) )
+		assert( isinstance( parent, ( Gaffer.Plug, Gaffer.Node, type( None ) ) ) )
 
 		self.__parent = parent
 
 		self.__childAddedConnection = None
 		self.__childRemovedConnection = None
 		self.__childNameChangedConnections = {}
+		self.__metadataChangedConnections = []
 
 		if self.__parent is not None :
-			self.__childAddedConnection = self.__parent.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
-			self.__childRemovedConnection = self.__parent.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
+
+			self.__childAddedConnection = self.__parent.childAddedSignal().connect(
+				Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = True
+			)
+			self.__childRemovedConnection = self.__parent.childRemovedSignal().connect(
+				Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = True
+			)
+
+			node = self.__parent if isinstance( self.__parent, Gaffer.Node ) else self.__parent.node()
+			self.__metadataChangedConnections = [
+				Gaffer.Metadata.nodeValueChangedSignal( node ).connect( Gaffer.WeakMethod( self.__nodeMetadataChanged ), scoped = True ),
+				Gaffer.Metadata.plugValueChangedSignal( node ).connect( Gaffer.WeakMethod( self.__plugMetadataChanged ), scoped = True )
+			]
+
 			for child in self.__parent.children() :
 				self.__updateChildNameChangedConnection( child )
 
@@ -622,7 +682,7 @@ class _PlugListing( GafferUI.Widget ) :
 				self.__pathListing.setSelectedPaths( [] )
 			else :
 				self.__pathListing.setSelectedPaths( [ path ] )
-		elif isinstance( selection, basestring ) :
+		elif isinstance( selection, str ) :
 			path = self.__pathListing.getPath().copy()
 			path[:] = selection.split( "." )
 			self.__pathListing.setSelectedPaths( [ path ] )
@@ -723,7 +783,7 @@ class _PlugListing( GafferUI.Widget ) :
 
 			return index
 
-		with Gaffer.BlockedConnection( self.__plugMetadataChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__metadataChangedConnections ) :
 			walk( self.__pathListing.getPath().copy().setFromString( "/" ).item() )
 			Gaffer.Metadata.registerValue( self.getPlugParent(), "uiEditor:emptySections", emptySections )
 			Gaffer.Metadata.registerValue( self.getPlugParent(), "uiEditor:emptySectionIndices", emptySectionIndices )
@@ -735,7 +795,7 @@ class _PlugListing( GafferUI.Widget ) :
 		self.__updateChildNameChangedConnection( child )
 		self.__updatePathLazily()
 
-	def __childNameChanged( self, child ) :
+	def __childNameChanged( self, child, oldName ) :
 
 		selection = self.getSelection()
 		self.__updatePath()
@@ -749,7 +809,7 @@ class _PlugListing( GafferUI.Widget ) :
 
 		if self.__parent.isSame( child.parent() ) :
 			if child not in self.__childNameChangedConnections :
-				self.__childNameChangedConnections[child] = child.nameChangedSignal().connect( Gaffer.WeakMethod( self.__childNameChanged ) )
+				self.__childNameChangedConnections[child] = child.nameChangedSignal().connect( Gaffer.WeakMethod( self.__childNameChanged ), scoped = True )
 		else :
 			if child in self.__childNameChangedConnections :
 				del self.__childNameChangedConnections[child]
@@ -800,7 +860,7 @@ class _PlugListing( GafferUI.Widget ) :
 		else :
 			# drag has gone above or below all listed items
 			newParent = self.__pathListing.getPath().rootItem()
-			newIndex = 0 if event.line.p0.y < 1 else len( newParent )
+			newIndex = 0 if event.line.p0.y < 1.5 else len( newParent )
 
 		# skip any attempted circular reparenting
 
@@ -835,7 +895,7 @@ class _PlugListing( GafferUI.Widget ) :
 
 		selection = self.__pathListing.getPath().copy()
 		selection[:] = self.__dragItem.fullName().split( "." )
-		self.__pathListing.setSelectedPaths( [ selection ], scrollToFirst = False, expandNonLeaf = False )
+		self.__pathListing.setSelectedPaths( [ selection ], scrollToFirst = False )
 
 		return True
 
@@ -859,28 +919,17 @@ class _PlugListing( GafferUI.Widget ) :
 
 		self.__deleteSelected()
 
-	def __nodeMetadataChanged( self, nodeTypeId, key, node ) :
+	def __nodeMetadataChanged( self, node, key, reason ) :
 
-		if self.__parent is None :
-			return
-
-		if node is not None and not self.__parent.isSame( node ) :
-			return
-
-		if not self.__parent.isInstanceOf( nodeTypeId ) :
+		if node != self.__parent :
 			return
 
 		if key in ( "uiEditor:emptySections", "uiEditor:emptySectionIndices" ) :
 			self.__updatePathLazily()
 
-	def __plugMetadataChanged( self, nodeTypeId, plugPath, key, plug ) :
+	def __plugMetadataChanged( self, plug, key, reason ) :
 
-		if self.__parent is None :
-			return
-
-		parentAffected = isinstance( self.__parent, Gaffer.Plug ) and Gaffer.MetadataAlgo.affectedByChange( self.__parent, nodeTypeId, plugPath, plug )
-		childAffected = Gaffer.MetadataAlgo.childAffectedByChange( self.__parent, nodeTypeId, plugPath, plug )
-		if not parentAffected and not childAffected :
+		if ( plug != self.__parent and plug.parent() != self.__parent ) :
 			return
 
 		if key in ( "layout:index", "layout:section", "uiEditor:emptySections", "uiEditor:emptySectionIndices" ) :
@@ -1045,25 +1094,25 @@ class _PresetsEditor( GafferUI.Widget ) :
 				self.__pathListing._qtWidget().setFixedWidth( 200 )
 				self.__pathListing._qtWidget().setFixedHeight( 200 )
 
-				self.__pathListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ), scoped = False )
-				self.__pathListing.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ), scoped = False )
-				self.__pathListing.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ), scoped = False )
-				self.__pathListing.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ), scoped = False )
+				self.__pathListing.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ) )
+				self.__pathListing.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ) )
+				self.__pathListing.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ) )
+				self.__pathListing.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ) )
 
 				with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal, spacing = 4 ) :
 
 					self.__addButton = GafferUI.Button( image = "plus.png", hasFrame = False )
-					self.__addButton.clickedSignal().connect( Gaffer.WeakMethod( self.__addButtonClicked ), scoped = False )
+					self.__addButton.clickedSignal().connect( Gaffer.WeakMethod( self.__addButtonClicked ) )
 
 					self.__deleteButton = GafferUI.Button( image = "minus.png", hasFrame = False )
-					self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ), scoped = False )
+					self.__deleteButton.clickedSignal().connect( Gaffer.WeakMethod( self.__deleteButtonClicked ) )
 
 			with GafferUI.ListContainer( spacing = 4 ) as self.__editingColumn :
 
 				GafferUI.Label( "Name" )
 
 				self.__nameWidget = GafferUI.TextWidget()
-				self.__nameWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__nameEditingFinished ), scoped = False )
+				self.__nameWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__nameEditingFinished ) )
 
 				GafferUI.Spacer( imath.V2i( 4 ), maximumSize = imath.V2i( 4 ) )
 
@@ -1072,7 +1121,9 @@ class _PresetsEditor( GafferUI.Widget ) :
 		# We make a UI for editing preset values by copying the plug
 		# onto this node and then making a PlugValueWidget for it.
 		self.__valueNode = Gaffer.Node( "PresetEditor" )
-		self.__valuePlugSetConnection = self.__valueNode.plugSetSignal().connect( Gaffer.WeakMethod( self.__valuePlugSet ) )
+		self.__valuePlugSetConnection = self.__valueNode.plugSetSignal().connect(
+			Gaffer.WeakMethod( self.__valuePlugSet )
+		)
 
 	def setPlug( self, plug ) :
 
@@ -1083,10 +1134,13 @@ class _PresetsEditor( GafferUI.Widget ) :
 
 		plugValueWidget = None
 		if self.__plug is not None :
-			self.__plugMetadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal().connect( Gaffer.WeakMethod( self.__plugMetadataChanged ) )
+			self.__plugMetadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal( plug.node() ).connect(
+				Gaffer.WeakMethod( self.__plugMetadataChanged ),
+				scoped = True
+			)
 			self.__valueNode["presetValue"] = plug.createCounterpart( "presetValue", plug.Direction.In )
 			if hasattr( self.__plug, "getValue" ) :
-				plugValueWidget = GafferUI.PlugValueWidget.create( self.__valueNode["presetValue"], useTypeOnly = True )
+				plugValueWidget = GafferUI.PlugValueWidget.create( self.__valueNode["presetValue"], typeMetadata = None )
 
 		self.__editingColumn.append( plugValueWidget if plugValueWidget is not None else GafferUI.TextWidget() )
 
@@ -1105,18 +1159,15 @@ class _PresetsEditor( GafferUI.Widget ) :
 		d = self.__pathListing.getPath().dict()
 		d.clear()
 		if self.__plug is not None :
-			for name in Gaffer.Metadata.registeredValues( self.__plug, instanceOnly = True, persistentOnly = True ) :
+			for name in Gaffer.Metadata.registeredValues( self.__plug, Gaffer.Metadata.RegistrationTypes.InstancePersistent ) :
 				if name.startswith( "preset:" ) :
 					d[name[7:]] = Gaffer.Metadata.value( self.__plug, name )
 
 		self.__pathListing.getPath().pathChangedSignal()( self.__pathListing.getPath() )
 
-	def __plugMetadataChanged( self, nodeTypeId, plugPath, key, plug ) :
+	def __plugMetadataChanged( self, plug, key, reason ) :
 
-		if self.__plug is None or not Gaffer.MetadataAlgo.affectedByChange( self.__plug, nodeTypeId, plugPath, plug ) :
-			return
-
-		if key.startswith( "preset:" ) :
+		if plug == self.__plug and key.startswith( "preset:" ) :
 			self.__updatePath()
 
 	def __selectionChanged( self, listing ) :
@@ -1125,7 +1176,7 @@ class _PresetsEditor( GafferUI.Widget ) :
 
 		self.__nameWidget.setText( selectedPaths[0][0] if selectedPaths else "" )
 		if selectedPaths :
-			with Gaffer.BlockedConnection( self.__valuePlugSetConnection ) :
+			with Gaffer.Signals.BlockedConnection( self.__valuePlugSetConnection ) :
 				self.__valueNode["presetValue"].setValue(
 					Gaffer.Metadata.value( self.getPlug(), "preset:" + selectedPaths[0][0] )
 				)
@@ -1147,18 +1198,18 @@ class _PresetsEditor( GafferUI.Widget ) :
 		d = self.__pathListing.getPath().dict()
 
 		srcPath = self.__pathListing.getPath().copy().setFromString( event.data[0] )
-		srcIndex = d.keys().index( srcPath[0] )
+		srcIndex = list( d.keys() ).index( srcPath[0] )
 
 		targetPath = self.__pathListing.pathAt( event.line.p0 )
 		if targetPath is not None :
-			targetIndex = d.keys().index( targetPath[0] )
+			targetIndex = list( d.keys() ).index( targetPath[0] )
 		else :
-			targetIndex = 0 if event.line.p0.y < 1 else len( d )
+			targetIndex = 0 if event.line.p0.y < 1.5 else len( d )
 
 		if srcIndex == targetIndex :
 			return True
 
-		items = d.items()
+		items = list( d.items() )
 		item = items[srcIndex]
 		del items[srcIndex]
 		items.insert( targetIndex, item )
@@ -1173,7 +1224,7 @@ class _PresetsEditor( GafferUI.Widget ) :
 	def __dragEnd( self, listing, event ) :
 
 		d = self.__pathListing.getPath().dict()
-		with Gaffer.BlockedConnection( self.__plugMetadataChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__plugMetadataChangedConnection ) :
 			with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
 				# reorder by removing everything and reregistering in the order we want
 				for item in d.items() :
@@ -1239,11 +1290,13 @@ class _PresetsEditor( GafferUI.Widget ) :
 			nameWidget.setText( oldName )
 			return True
 
-		# Sanitize name
-		newName = newName.replace( "/", "_")
+		# Sanitize name. Strictly speaking we should only need to replace '/',
+		# but PathListingWidget has a bug handling wildcards in selections, so
+		# we replace those too.
+		newName = newName.translate( str.maketrans( "/*?\\[", "_____" ) )
 
 		items = self.__pathListing.getPath().dict().items()
-		with Gaffer.BlockedConnection( self.__plugMetadataChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__plugMetadataChangedConnection ) :
 			with Gaffer.UndoScope( self.getPlug().ancestor( Gaffer.ScriptNode ) ) :
 				# retain order by removing and reregistering everything
 				for item in items :
@@ -1348,16 +1401,12 @@ class _PlugEditor( GafferUI.Widget ) :
 					with _Row() :
 
 						_Label( "Color" )
-						self.__metadataWidgets["nodule:color"] = MetadataWidget.ColorSwatchMetadataWidget( key = "nodule:color" )
+						self.__metadataWidgets["nodule:color"] = MetadataWidget.ColorSwatchMetadataWidget( key = "nodule:color", defaultValue = imath.Color3f( 0.4 ) )
 
 					with _Row() :
 
 						_Label( "Connection Color" )
-						self.__metadataWidgets["connectionGadget:color"] = MetadataWidget.ColorSwatchMetadataWidget( key = "connectionGadget:color" )
-
-			GafferUI.Spacer( imath.V2i( 0 ), parenting = { "expand" : True } )
-
-		Gaffer.Metadata.plugValueChangedSignal().connect( Gaffer.WeakMethod( self.__plugMetadataChanged ), scoped = False )
+						self.__metadataWidgets["connectionGadget:color"] = MetadataWidget.ColorSwatchMetadataWidget( key = "connectionGadget:color", defaultValue = imath.Color3f( 0.125 ) )
 
 		self.__plug = None
 
@@ -1368,6 +1417,12 @@ class _PlugEditor( GafferUI.Widget ) :
 		self.__nameWidget.setGraphComponent( self.__plug )
 		for widget in self.__metadataWidgets.values() :
 			widget.setTarget( self.__plug )
+
+		self.__plugMetadataChangedConnection = None
+		if self.__plug is not None :
+			self.__plugMetadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal( self.__plug.node() ).connect(
+				Gaffer.WeakMethod( self.__plugMetadataChanged ), scoped = True
+			)
 
 		self.__updateWidgetMenuText()
 		self.__updateWidgetSettings()
@@ -1428,12 +1483,9 @@ class _PlugEditor( GafferUI.Widget ) :
 
 		return result
 
-	def __plugMetadataChanged( self, nodeTypeId, plugPath, key, plug ) :
+	def __plugMetadataChanged( self, plug, key, reason ) :
 
-		if self.getPlug() is None :
-			return
-
-		if not Gaffer.MetadataAlgo.affectedByChange( self.getPlug(), nodeTypeId, plugPath, plug ) :
+		if plug != self.getPlug() :
 			return
 
 		if key == "plugValueWidget:type" :
@@ -1451,7 +1503,7 @@ class _PlugEditor( GafferUI.Widget ) :
 		metadata = Gaffer.Metadata.value( self.getPlug(), "plugValueWidget:type" )
 		registeredWidgets = self.__registeredPlugValueWidgets( self.getPlug() )
 
-		for label, widgetMetadata in registeredWidgets.iteritems() :
+		for label, widgetMetadata in registeredWidgets.items() :
 			if widgetMetadata == metadata :
 				self.__widgetMenu.setText( label )
 				return
@@ -1580,7 +1632,7 @@ class _SectionEditor( GafferUI.Widget ) :
 				_Label( "Name" )
 
 				self.__nameWidget = GafferUI.TextWidget()
-				self.__nameWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__nameWidgetEditingFinished ), scoped = False )
+				self.__nameWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__nameWidgetEditingFinished ) )
 
 			with _Row() :
 
@@ -1590,7 +1642,7 @@ class _SectionEditor( GafferUI.Widget ) :
 
 		self.__section = ""
 		self.__plugParent = None
-		self.__nameChangedSignal = Gaffer.Signal3()
+		self.__nameChangedSignal = Gaffer.Signals.Signal3()
 
 	def setPlugParent( self, plugParent ) :
 
@@ -1603,7 +1655,7 @@ class _SectionEditor( GafferUI.Widget ) :
 
 	def setSection( self, section ) :
 
-		assert( isinstance( section, basestring ) )
+		assert( isinstance( section, str ) )
 
 		self.__section = section
 		self.__nameWidget.setText( section.rpartition( "." )[-1] )
@@ -1653,7 +1705,7 @@ class _SectionEditor( GafferUI.Widget ) :
 					emptySections[i] = newSection( emptySections[i] )
 				Gaffer.Metadata.registerValue( self.getPlugParent(), "uiEditor:emptySections", emptySections )
 
-			for name in Gaffer.Metadata.registeredValues( self.getPlugParent(), instanceOnly = True, persistentOnly = True ) :
+			for name in Gaffer.Metadata.registeredValues( self.getPlugParent(), Gaffer.Metadata.RegistrationTypes.InstancePersistent ) :
 				m = re.match( "(layout:section:)(.*)(:.*)", name )
 				if m :
 					if newSection( m.group( 2 ) ) != m.group( 2 ) :
@@ -1686,6 +1738,62 @@ UIEditor.registerPlugValueWidget( "Button", Gaffer.Plug, "GafferUI.ButtonPlugVal
 ##########################################################################
 # Registering standard Widget Settings for the UIEditor
 ##########################################################################
+
+class _ButtonCodeMetadataWidget( GafferUI.MetadataWidget.MetadataWidget ) :
+
+	def __init__( self, target = None, **kw ) :
+
+		self.__codeWidget = GafferUI.CodeWidget( lineNumbersVisible=True )
+		GafferUI.MetadataWidget.MetadataWidget.__init__( self, self.__codeWidget, "buttonPlugValueWidget:clicked", target, defaultValue = "", **kw )
+
+		self.__codeWidget.setPlaceholderText( inspect.cleandoc(
+			"""
+			# Predefined variables :
+			#
+			# - `plug` : The plug the button represents.
+			# - `button` : The button widget.
+			#
+			# Examples :
+			#
+			# - `plug.node()` : Gets the node the plug belongs to.
+			# - `plug.node()["otherPlugName"]` : Gets another plug on the same node.
+			# - `button.ancestor( GafferUI.Window )` : Gets the window the button is in.
+			"""
+		) )
+
+		self.__codeWidget.setHighlighter( GafferUI.CodeWidget.PythonHighlighter() )
+
+		self.__codeWidget.editingFinishedSignal().connect(
+			Gaffer.WeakMethod( self.__editingFinished )
+		)
+
+	def setTarget( self, target ) :
+
+		GafferUI.MetadataWidget.MetadataWidget.setTarget( self, target )
+
+		if target is not None :
+
+			self.__codeWidget.setCompleter(
+				GafferUI.CodeWidget.PythonCompleter( {
+					"IECore" : IECore,
+					"Gaffer" : Gaffer,
+					"plug" : target,
+					"button" : GafferUI.ButtonPlugValueWidget( target ),
+				} )
+			)
+
+		else :
+
+			self.__codeWidget.setCompleter( None )
+
+	def _updateFromValue( self, value ) :
+
+		self.__codeWidget.setText( str( value ) )
+
+	def __editingFinished( self, *unused ) :
+
+		self._updateFromWidget( self.__codeWidget.getText() )
+
 UIEditor.registerWidgetMetadata( "File Extensions", "GafferUI.FileSystemPath*PlugValueWidget", "fileSystemPath:extensions", "" )
 UIEditor.registerWidgetMetadata( "Bookmarks Category", "GafferUI.FileSystemPath*PlugValueWidget", "path:bookmarks", "" )
 UIEditor.registerWidgetMetadata( "File Must Exist", "GafferUI.FileSystemPath*PlugValueWidget", "path:valid", False )
@@ -1697,7 +1805,8 @@ UIEditor.registerWidgetMetadata( "Sequences include frame range", "GafferUI.File
 UIEditor.registerWidgetSetting(
 	"Button Click Code",
 	"GafferUI.ButtonPlugValueWidget",
-	lambda plug : MetadataWidget.MultiLineStringMetadataWidget( "buttonPlugValueWidget:clicked", target = plug, role = GafferUI.MultiLineTextWidget.Role.Code ),
+	_ButtonCodeMetadataWidget,
 )
 UIEditor.registerWidgetMetadata( "Inline", "GafferUI.ButtonPlugValueWidget", "layout:accessory", False )
+UIEditor.registerWidgetMetadata( "Allow Custom Values", "GafferUI.PresetsPlugValueWidget", "presetsPlugValueWidget:allowCustom", False )
 UIEditor.registerWidgetMetadata( "Divider", "*", "divider", False )

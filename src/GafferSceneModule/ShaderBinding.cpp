@@ -47,6 +47,8 @@
 
 #include "Gaffer/StringPlug.h"
 
+#include "fmt/format.h"
+
 using namespace boost::python;
 
 using namespace Gaffer;
@@ -103,14 +105,14 @@ void reloadShader( Shader &shader )
 class ShaderSerialiser : public GafferBindings::NodeSerialiser
 {
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		std::string defaultPC = GafferBindings::NodeSerialiser::postConstructor( graphComponent, identifier, serialisation );
 		const Shader *shader = static_cast<const Shader *>( graphComponent );
 		const std::string shaderName = shader->namePlug()->getValue();
 		if( shaderName.size() )
 		{
-			return defaultPC + boost::str( boost::format( "%s.loadShader( \"%s\" )\n" ) % identifier % shaderName );
+			return defaultPC + fmt::format( "{}.loadShader( \"{}\" )\n", identifier, shaderName );
 		}
 
 		return defaultPC;
@@ -136,6 +138,12 @@ IECore::CompoundObjectPtr shaderPlugAttributes( const ShaderPlug &p, bool copy=t
 	{
 		return boost::const_pointer_cast<IECore::CompoundObject>( o );
 	}
+}
+
+Gaffer::ValuePlugPtr shaderPlugParameterSource( ShaderPlug &p, const IECoreScene::ShaderNetwork::Parameter &parameter )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return p.parameterSource( parameter );
 }
 
 } // namespace
@@ -165,6 +173,7 @@ void GafferSceneModule::bindShader()
 		// value accessors
 		.def( "attributesHash", &shaderPlugAttributesHash  )
 		.def( "attributes", &shaderPlugAttributes, ( boost::python::arg_( "_copy" ) = true ) )
+		.def( "parameterSource", &shaderPlugParameterSource )
 	;
 
 	GafferBindings::NodeClass<OpenGLShader>();

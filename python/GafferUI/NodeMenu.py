@@ -104,7 +104,7 @@ class NodeMenu( object ) :
 
 			commandArgs = []
 			with IECore.IgnoredExceptions( TypeError ) :
-				commandArgs = inspect.getargspec( nodeCreator )[0]
+				commandArgs = inspect.getfullargspec( nodeCreator ).args
 
 			with Gaffer.UndoScope( script ) :
 
@@ -116,7 +116,8 @@ class NodeMenu( object ) :
 				if node is None :
 					return
 
-				Gaffer.NodeAlgo.applyUserDefaults( node )
+				with script.context():
+					Gaffer.NodeAlgo.applyUserDefaults( node )
 
 				for plugName, plugValue in plugValues.items() :
 					node.descendant( plugName ).setValue( plugValue )

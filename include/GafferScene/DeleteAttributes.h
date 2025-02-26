@@ -34,32 +34,51 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_DELETEATTRIBUTES_H
-#define GAFFERSCENE_DELETEATTRIBUTES_H
+#pragma once
 
-#include "GafferScene/AttributeProcessor.h"
+#include "GafferScene/FilteredSceneProcessor.h"
+
+#include "Gaffer/StringPlug.h"
 
 namespace GafferScene
 {
 
-class GAFFERSCENE_API DeleteAttributes : public AttributeProcessor
+class GAFFERSCENE_API DeleteAttributes final : public FilteredSceneProcessor
 {
 
 	public :
 
-		DeleteAttributes( const std::string &name=defaultName<DeleteAttributes>() );
+		explicit DeleteAttributes( const std::string &name=defaultName<DeleteAttributes>() );
 		~DeleteAttributes() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeleteAttributes, DeleteAttributesTypeId, AttributeProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeleteAttributes, DeleteAttributesTypeId, FilteredSceneProcessor );
 
-	protected :
+		Gaffer::StringPlug *namesPlug();
+		const Gaffer::StringPlug *namesPlug() const;
 
-		IECore::ConstObjectPtr processAttribute( const ScenePath &path, const Gaffer::Context *context, const IECore::InternedString &attributeName, const IECore::Object *inputAttribute ) const override;
+		Gaffer::BoolPlug *invertNamesPlug();
+		const Gaffer::BoolPlug *invertNamesPlug() const;
+
+		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+
+	private :
+
+		enum class Operation
+		{
+			PassThrough,
+			Delete,
+			Clear
+		};
+
+		Operation operation( const Gaffer::Context *context, std::string &names, bool &invertNames ) const;
+
+		void hashAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const final;
+		IECore::ConstCompoundObjectPtr computeAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const final;
+
+		static size_t g_firstPlugIndex;
 
 };
 
 IE_CORE_DECLAREPTR( DeleteAttributes )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETEATTRIBUTES_H

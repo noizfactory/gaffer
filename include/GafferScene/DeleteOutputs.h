@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_DELETEOUTPUTS_H
-#define GAFFERSCENE_DELETEOUTPUTS_H
+#pragma once
 
 #include "GafferScene/DeleteGlobals.h"
 
@@ -47,10 +46,10 @@ class GAFFERSCENE_API DeleteOutputs : public DeleteGlobals
 
 	public :
 
-		DeleteOutputs( const std::string &name=defaultName<DeleteOutputs>() );
+		explicit DeleteOutputs( const std::string &name=defaultName<DeleteOutputs>() );
 		~DeleteOutputs() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeleteOutputs, DeleteOutputsTypeId, DeleteGlobals );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeleteOutputs, DeleteOutputsTypeId, DeleteGlobals );
 
 	protected :
 
@@ -61,5 +60,3 @@ class GAFFERSCENE_API DeleteOutputs : public DeleteGlobals
 IE_CORE_DECLAREPTR( DeleteOutputs );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETEOUTPUTS_H

@@ -34,10 +34,11 @@
 #
 ##########################################################################
 
-import os
 import unittest
+import unittest.mock
 import inspect
-import sys
+import warnings
+
 import imath
 
 import IECore
@@ -46,40 +47,83 @@ import Gaffer
 import GafferTest
 import GafferDispatch
 import GafferDispatchTest
+import GafferTractor
+import GafferTractorTest
 
-@unittest.skipIf( not IECore.SearchPath( sys.path ).find( "tractor" ), "Tractor not available" )
+@unittest.mock.patch( "GafferTractor.tractorAPI", new = GafferTractorTest.tractorAPI )
 class TractorDispatcherTest( GafferTest.TestCase ) :
 
 	def __dispatcher( self ) :
 
-		import GafferTractor
-
 		dispatcher = GafferTractor.TractorDispatcher()
-		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() + "/testJobDirectory" )
+		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() / "testJobDirectory" )
 
 		return dispatcher
 
 	def __job( self, nodes, dispatcher = None ) :
 
-		import GafferTractor
-
 		jobs = []
-		def f( dispatcher, job ) :
+		def f( dispatcher, job, taskData ) :
 
 			jobs.append( job )
 
-		c = GafferTractor.TractorDispatcher.preSpoolSignal().connect( f )
+		c = GafferTractor.TractorDispatcher.preSpoolSignal().connect( f, scoped = True )
 
 		if dispatcher is None :
 			dispatcher = self.__dispatcher()
 
-		dispatcher.dispatch( nodes )
+		for i, node in enumerate( nodes ) :
+			dispatcher["tasks"][i].setInput( node["task"] )
+
+		dispatcher["task"].execute()
 
 		return jobs[0]
 
-	def testPreSpoolSignal( self ) :
+	def testPreSpoolSignalTaskData( self ) :
 
-		import GafferTractor
+		script = Gaffer.ScriptNode()
+		script["variables"].addChild( Gaffer.NameValuePlug( "myVariable", "test" ) )
+
+		script["node"] = GafferDispatchTest.LoggingTaskNode()
+		script["node"]["frame"] = Gaffer.StringPlug( defaultValue = "${frame}", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["node"]["dispatcher"]["batchSize"].setValue( 4 )
+
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["node"]["task"] )
+		script["dispatcher"]["framesMode"].setValue( script["dispatcher"].FramesMode.CustomRange )
+		script["dispatcher"]["frameRange"].setValue( "1-10" )
+
+		taskDataChecked = False
+		def checkTaskData( dispatcher, job, taskData ) :
+
+			self.assertEqual( len( job.subtasks ), 3 )
+			self.assertEqual( len( taskData ), 3 )
+			for subtask in job.subtasks :
+
+				self.assertIn( subtask, taskData )
+				self.assertTrue( taskData[subtask].plug.isSame( script["node"]["task"] ) )
+
+				self.assertIsInstance( taskData[subtask].context, Gaffer.Context )
+				self.assertNotIn( "frame", taskData[subtask].context )
+				self.assertEqual( taskData[subtask].context["myVariable"], "test" )
+				self.assertIn( "dispatcher:jobDirectory", taskData[subtask].context )
+				self.assertIn( "dispatcher:scriptFileName", taskData[subtask].context )
+
+			self.assertEqual(
+				[ taskData[subtask].frames for subtask in job.subtasks ],
+				[ [ 1, 2, 3, 4 ], [ 5, 6, 7, 8 ], [ 9, 10 ] ]
+			)
+
+			nonlocal taskDataChecked
+			taskDataChecked = True
+
+		connection = GafferTractor.TractorDispatcher.preSpoolSignal().connect( checkTaskData, scoped = True )
+		with script.context() :
+			script["dispatcher"]["task"].execute()
+
+		self.assertTrue( taskDataChecked )
+
+	def testPreSpoolSignalCompatibility( self ) :
 
 		s = Gaffer.ScriptNode()
 		s["n"] = GafferDispatchTest.LoggingTaskNode()
@@ -89,10 +133,14 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 
 			spooled.append( ( dispatcher, job ) )
 
-		c = GafferTractor.TractorDispatcher.preSpoolSignal().connect( f )
+		# Connecting a function which doesn't have the additional `taskData` argument.
+		with warnings.catch_warnings() :
+			warnings.simplefilter( "ignore", DeprecationWarning )
+			c = GafferTractor.TractorDispatcher.preSpoolSignal().connect( f, scoped = True )
 
 		dispatcher = self.__dispatcher()
-		dispatcher.dispatch( [ s["n"] ] )
+		dispatcher["tasks"][0].setInput( s["n"]["task"] )
+		dispatcher["task"].execute()
 
 		self.assertEqual( len( spooled ), 1 )
 		self.assertTrue( spooled[0][0] is dispatcher )
@@ -103,9 +151,50 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 		s["n"] = GafferDispatchTest.LoggingTaskNode()
 
 		dispatcher = self.__dispatcher()
-		dispatcher.dispatch( [ s["n"] ] )
+		dispatcher["tasks"][0].setInput( s["n"]["task"] )
+		dispatcher["task"].execute()
 
-		self.assertTrue( os.path.isfile( dispatcher.jobDirectory() + "/job.alf" ) )
+		self.assertTrue( ( dispatcher.jobDirectory() / "job.alf" ).is_file() )
+
+	def testJobScriptInNestedDispatch( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		# Fake the creation of a `.alf` file from a downstream
+		# TractorDispatcher. We can't use a TractorDispatcher to do this because
+		# the Tractor API is mocked during testing.
+
+		script["pythonCommand"] = GafferDispatch.PythonCommand()
+		script["pythonCommand"]["command"].setValue( inspect.cleandoc(
+			"""
+			import pathlib
+			p = pathlib.Path( context["dispatcher:jobDirectory"] ) / "job.alf"
+			with open( p, "w", encoding = "utf-8" ) as f :
+					f.write( "First one wins" )
+			"""
+		) )
+
+		# That runs as a preTask for an actual TractorDispatcher.
+
+		script["node"] = GafferDispatchTest.LoggingTaskNode()
+
+		script["tractorDispatcher"] = self.__dispatcher()
+		script["tractorDispatcher"]["tasks"][0].setInput( script["node"]["task"] )
+		script["tractorDispatcher"]["preTasks"][0].setInput( script["pythonCommand"]["task"] )
+
+		# And then we use a LocalDispatcher to launch the whole thing.
+
+		script["localDispatcher"] = GafferDispatch.LocalDispatcher()
+		script["localDispatcher"]["tasks"][0].setInput( script["tractorDispatcher"]["task"] )
+		script["localDispatcher"]["jobsDirectory"].setValue( script["tractorDispatcher"]["jobsDirectory"].getValue() )
+		script["localDispatcher"]["task"].execute()
+
+		# We want our fake job script to have won, because it represents
+		# the downstream dispatch, which provides a full record of the job.
+
+		self.assertTrue( ( script["tractorDispatcher"].jobDirectory() / "job.alf" ).is_file() )
+		with open( script["tractorDispatcher"].jobDirectory() / "job.alf" ) as f :
+			self.assertEqual( f.readline(), "First one wins" )
 
 	def testJobAttributes( self ) :
 
@@ -123,28 +212,60 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 		self.assertEqual( job.service, "myService" )
 		self.assertEqual( job.envkey, [ "myEnvKey" ] )
 
+		dispatcher["jobName"].setValue( "${jobName}" )
+		dispatcher["service"].setValue( "${service}" )
+		dispatcher["envKey"].setValue( "${envKey}" )
+
+		with Gaffer.Context() as context :
+
+			context["jobName"] = "a"
+			context["service"] = "b"
+			context["envKey"] = "c"
+
+			job = self.__job( [ s["n" ] ], dispatcher )
+
+		self.assertEqual( job.title, "a" )
+		self.assertEqual( job.service, "b" )
+		self.assertEqual( job.envkey, [ "c" ] )
+
 	def testTaskAttributes( self ) :
 
 		s = Gaffer.ScriptNode()
 		s["n"] = GafferDispatchTest.LoggingTaskNode()
 		s["n"]["frame"] = Gaffer.StringPlug( defaultValue = "${frame}", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
 		s["n"]["dispatcher"]["batchSize"].setValue( 10 )
-		s["n"]["dispatcher"]["tractor"]["service"].setValue( "myService" )
-		s["n"]["dispatcher"]["tractor"]["tags"].setValue( "myTag1 myTag2" )
+		s["n"]["dispatcher"]["tractor"]["tags"].setValue( "myTag1 ${myTagContext2}" )
+		s["expression"] = Gaffer.Expression()
+		s["expression"].setExpression( """parent["n"]["dispatcher"]["tractor"]["service"] = context.get("service", "")""" )
+
+		# add context variables: myTagContext2 and service
+		s["context"] = Gaffer.ContextVariables()
+		s["context"].setup( GafferDispatch.TaskNode.TaskPlug() )
+		s["context"]["in"].setInput( s["n"]["task"] )
+		variable = s["context"]["variables"].addMember( "tag", Gaffer.StringPlug() )
+		variable["name"].setValue("myTagContext2")
+		variable["value"].setValue("myTag2")
+		variable = s["context"]["variables"].addMember( "service", Gaffer.StringPlug() )
+		variable["name"].setValue("service")
+		variable["value"].setValue("myService")
+
+		s["job"] = GafferDispatch.TaskList()
+		s["job"]["preTasks"][0].setInput( s["context"]["out"] )
 
 		dispatcher = self.__dispatcher()
 		dispatcher["framesMode"].setValue( dispatcher.FramesMode.CustomRange )
 		dispatcher["frameRange"].setValue( "1-10" )
 
-		job = self.__job( [ s["n"] ], dispatcher )
-		self.assertEqual( len( job.subtasks ), 1 )
+		job = self.__job( [ s["job"] ], dispatcher )
 
-		task = job.subtasks[0]
+		self.assertEqual( len( job.subtasks ), 10 )
+
+		task = job.subtasks[0].subtasks[0]
 		self.assertEqual( task.title, "n 1-10" )
 
 		self.assertEqual( len( task.cmds ), 1 )
 		command = task.cmds[0]
-		self.assertEqual( command.service, "myService" )
+		self.assertEqual( command.service, "myService", "context variables were not expanded correctly" )
 		self.assertEqual( command.tags, [ "myTag1", "myTag2" ] )
 
 	def testPreTasks( self ) :
@@ -171,8 +292,6 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 		self.assertEqual( len( job.subtasks[1].subtasks ), 0 )
 
 	def testSharedPreTasks( self ) :
-
-		import tractor.api.author as author
 
 		#   n1
 		#  / \
@@ -206,7 +325,10 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 		self.assertEqual( job.subtasks[0].subtasks[0].subtasks[0].title, "n1 1" )
 		self.assertEqual( job.subtasks[0].subtasks[1].subtasks[0].title, "n1 1" )
 
-		self.assertTrue( isinstance( job.subtasks[0].subtasks[1].subtasks[0], author.Instance ) )
+		self.assertIsInstance(
+			job.subtasks[0].subtasks[1].subtasks[0],
+			GafferTractor.tractorAPI().Instance
+		)
 
 	def testTaskPlugs( self ) :
 
@@ -226,13 +348,9 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 
 	def testTypeNamePrefixes( self ) :
 
-		import GafferTractor
-
 		self.assertTypeNamesArePrefixed( GafferTractor )
 
 	def testDefaultNames( self ) :
-
-		import GafferTractor
 
 		self.assertDefaultNamesAreCorrect( GafferTractor )
 
@@ -260,7 +378,7 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 
 		s["t"] = GafferDispatchTest.TextWriter()
-		s["t"]["fileName"].setValue( self.temporaryDirectory() + "/test.txt" )
+		s["t"]["fileName"].setValue( self.temporaryDirectory() / "test.txt" )
 
 		s["e"] = Gaffer.Expression()
 		s["e"].setExpression( inspect.cleandoc(
@@ -280,6 +398,18 @@ class TractorDispatcherTest( GafferTest.TestCase ) :
 			"imath.Color3f( 0, 1, 2 )",
 			task.cmds[0].argv
 		)
+
+	def testMissingTractorAPI( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["pythonCommand"] = GafferDispatch.PythonCommand()
+
+		script["dispatcher"] = self.__dispatcher()
+		script["dispatcher"]["tasks"][0].setInput( script["pythonCommand"]["task"] )
+
+		with unittest.mock.patch( "GafferTractor.tractorAPI", side_effect = ImportError() ) :
+			with self.assertRaisesRegex( RuntimeError, "Tractor API not found" ) :
+				script["dispatcher"]["task"].execute()
 
 if __name__ == "__main__":
 	unittest.main()

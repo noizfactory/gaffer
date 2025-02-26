@@ -40,15 +40,15 @@
 #include "Gaffer/Context.h"
 #include "Gaffer/StringPlug.h"
 
-#include "OpenEXR/ImathColorAlgo.h"
-#include "OpenEXR/ImathRandom.h"
+#include "Imath/ImathColorAlgo.h"
+#include "Imath/ImathRandom.h"
 
 #include "boost/functional/hash.hpp"
 
 using namespace Gaffer;
 using namespace Imath;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Random );
+GAFFER_NODE_DEFINE_TYPE( Random );
 
 size_t Random::g_firstPlugIndex = 0;
 
@@ -59,7 +59,7 @@ Random::Random( const std::string &name )
 	storeIndexOfNextChild( g_firstPlugIndex );
 
 	addChild( new IntPlug( "seed", Plug::In, 0, 0 ) );
-	addChild( new StringPlug( "contextEntry" ) );
+	addChild( new StringPlug( "seedVariable" ) );
 
 	addChild( new V2fPlug( "floatRange", Plug::In, V2f( 0, 1 ) ) );
 	addChild( new FloatPlug( "outFloat", Plug::Out ) );
@@ -86,12 +86,12 @@ const IntPlug *Random::seedPlug() const
 	return getChild<IntPlug>( g_firstPlugIndex );
 }
 
-StringPlug *Random::contextEntryPlug()
+StringPlug *Random::seedVariablePlug()
 {
 	return getChild<StringPlug>( g_firstPlugIndex + 1 );
 }
 
-const StringPlug *Random::contextEntryPlug() const
+const StringPlug *Random::seedVariablePlug() const
 {
 	return getChild<StringPlug>( g_firstPlugIndex + 1 );
 }
@@ -170,10 +170,10 @@ void Random::affects( const Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	ComputeNode::affects( input, outputs );
 
-	if( input == seedPlug() || input == contextEntryPlug() )
+	if( input == seedPlug() || input == seedVariablePlug() )
 	{
 		outputs.push_back( outFloatPlug() );
-		for( ValuePlugIterator componentIt( outColorPlug() ); !componentIt.done(); ++componentIt )
+		for( ValuePlug::Iterator componentIt( outColorPlug() ); !componentIt.done(); ++componentIt )
 		{
 			outputs.push_back( componentIt->get() );
 		}
@@ -189,7 +189,7 @@ void Random::affects( const Plug *input, AffectedPlugsContainer &outputs ) const
 		input == valuePlug()
 	)
 	{
-		for( ValuePlugIterator componentIt( outColorPlug() ); !componentIt.done(); ++componentIt )
+		for( ValuePlug::Iterator componentIt( outColorPlug() ); !componentIt.done(); ++componentIt )
 		{
 			outputs.push_back( componentIt->get() );
 		}
@@ -274,38 +274,26 @@ Imath::Color3f Random::randomColor( unsigned long int seed ) const
 void Random::hashSeed( const Context *context, IECore::MurmurHash &h ) const
 {
 	seedPlug()->hash( h );
-	std::string contextEntry = contextEntryPlug()->getValue();
-	if( contextEntry.size() )
+	const std::string seedVariable = seedVariablePlug()->getValue();
+	if( seedVariable.size() )
 	{
-		const IECore::Data *contextData = nullptr;
-		try
-		{
-			contextData = context->get<IECore::Data>( contextEntry );
-		}
-		catch( ... )
-		{
-		}
-		if( contextData )
-		{
-			contextData->hash( h );
-		}
+		h.append( context->variableHash( seedVariable ).h1() );
 	}
 }
 
 unsigned long int Random::computeSeed( const Context *context ) const
 {
 	unsigned long int seed = seedPlug()->getValue();
-	std::string contextEntry = contextEntryPlug()->getValue();
-	if( contextEntry.size() )
+	const std::string seedVariable = seedVariablePlug()->getValue();
+	if( seedVariable.size() )
 	{
-		const IECore::Data *contextData = nullptr;
-		try
-		{
-			contextData = context->get<IECore::Data>( contextEntry );
-		}
-		catch( ... )
-		{
-		}
+		// \todo:  It is wasteful to call getAsData, allocating a fresh data here.
+		// We should be able to just use `seed += context->variableHash( contextEntry ).h1()`,
+		// however this would yield inconsistent hashes due to variableHash including the
+		// entry name as the address of an internal string.  If we come up with a way to do
+		// fast consistent hashes of InternedString ( ie. the proposal of storing a hash in
+		// the InternedString table ) then we should switch this to the less wasteful version
+		IECore::DataPtr contextData = context->getAsData( seedVariable, nullptr );
 		if( contextData )
 		{
 			IECore::MurmurHash hash = contextData->Object::hash();

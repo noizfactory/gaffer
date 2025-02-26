@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_TYPEIDS_H
-#define GAFFERARNOLD_TYPEIDS_H
+#pragma once
 
 namespace GafferArnold
 {
@@ -48,8 +47,8 @@ enum TypeId
 	ArnoldAttributesTypeId = 110902,
 	ArnoldLightTypeId = 110903,
 	ArnoldVDBTypeId = 110904,
-	InteractiveArnoldRenderTypeId = 110905,
-	ArnoldRenderTypeId = 110906,
+	InteractiveArnoldRenderTypeId = 110905, // Available for reuse
+	ArnoldRenderTypeId = 110906, // Available for reuse
 	ArnoldDisplacementTypeId = 110907,
 	ArnoldMeshLightTypeId = 110908,
 	ArnoldAOVShaderTypeId = 110909,
@@ -57,10 +56,10 @@ enum TypeId
 	ArnoldBackgroundTypeId = 110911,
 	ArnoldCameraShadersTypeId = 110912,
 	ArnoldLightFilterTypeId = 110913,
+	ArnoldColorManagerTypeId = 110914,
+	ArnoldImagerTypeId = 110915,
 
 	LastTypeId = 110924
 };
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_TYPEIDS_H

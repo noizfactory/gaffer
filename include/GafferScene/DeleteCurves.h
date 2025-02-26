@@ -35,10 +35,9 @@
 /////////////////////////////////////////////////////////////////////////
 
 
-#ifndef GAFFERSCENE_DELETECURVES_H
-#define GAFFERSCENE_DELETECURVES_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/Deformer.h"
 
 namespace Gaffer
 {
@@ -50,12 +49,12 @@ IE_CORE_FORWARDDECLARE( StringPlug )
 namespace GafferScene
 {
 
-class GAFFERSCENE_API DeleteCurves : public SceneElementProcessor
+class GAFFERSCENE_API DeleteCurves : public Deformer
 {
 
 	public :
 
-		DeleteCurves( const std::string &name = defaultName<DeleteCurves>() );
+		explicit DeleteCurves( const std::string &name = defaultName<DeleteCurves>() );
 		~DeleteCurves() override;
 
 		Gaffer::StringPlug *curvesPlug();
@@ -64,18 +63,16 @@ class GAFFERSCENE_API DeleteCurves : public SceneElementProcessor
 		Gaffer::BoolPlug *invertPlug();
 		const Gaffer::BoolPlug *invertPlug() const;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeleteCurves, DeleteCurvesTypeId, SceneElementProcessor );
-		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+		Gaffer::BoolPlug *ignoreMissingVariablePlug();
+		const Gaffer::BoolPlug *ignoreMissingVariablePlug() const;
+
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeleteCurves, DeleteCurvesTypeId, Deformer );
 
 	protected :
 
-		bool processesBound() const override;
-		void hashProcessedBound( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		Imath::Box3f computeProcessedBound( const ScenePath &path, const Gaffer::Context *context, const Imath::Box3f &inputBound ) const override;
-
-		bool processesObject() const override;
+		bool affectsProcessedObject( const Gaffer::Plug *input ) const override;
 		void hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const override;
+		IECore::ConstObjectPtr computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const override;
 
 	private :
 
@@ -86,6 +83,3 @@ class GAFFERSCENE_API DeleteCurves : public SceneElementProcessor
 IE_CORE_DECLAREPTR( DeleteCurves )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETECURVES_H
-

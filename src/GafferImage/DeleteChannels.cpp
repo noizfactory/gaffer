@@ -45,7 +45,7 @@ using namespace Gaffer;
 namespace GafferImage
 {
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( DeleteChannels );
+GAFFER_NODE_DEFINE_TYPE( DeleteChannels );
 
 size_t DeleteChannels::g_firstPlugIndex = 0;
 
@@ -60,11 +60,13 @@ DeleteChannels::DeleteChannels( const std::string &name )
 	// Direct pass-through for the things we don't ever change.
 	// This not only simplifies our implementation, but it is also
 	// faster to compute.
+	outPlug()->viewNamesPlug()->setInput( inPlug()->viewNamesPlug() );
 	outPlug()->formatPlug()->setInput( inPlug()->formatPlug() );
 	outPlug()->dataWindowPlug()->setInput( inPlug()->dataWindowPlug() );
 	outPlug()->metadataPlug()->setInput( inPlug()->metadataPlug() );
+	outPlug()->deepPlug()->setInput( inPlug()->deepPlug() );
+	outPlug()->sampleOffsetsPlug()->setInput( inPlug()->sampleOffsetsPlug() );
 	outPlug()->channelDataPlug()->setInput( inPlug()->channelDataPlug() );
-
 }
 
 DeleteChannels::~DeleteChannels()
@@ -120,7 +122,7 @@ IECore::ConstStringVectorDataPtr DeleteChannels::computeChannelNames( const Gaff
 	const string channels = channelsPlug()->getValue();
 
 	ConstStringVectorDataPtr inChannelNamesData = inPlug()->channelNamesPlug()->getValue();
-	const vector<string> inChannelNames = inChannelNamesData->readable();
+	const vector<string> &inChannelNames = inChannelNamesData->readable();
 
 	StringVectorDataPtr resultData = new StringVectorData();
 	vector<string> &result = resultData->writable();

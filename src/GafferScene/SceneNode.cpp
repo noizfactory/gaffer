@@ -39,13 +39,22 @@
 
 #include "Gaffer/Context.h"
 
+#include "IECore/MessageHandler.h"
+
+#include "boost/bind/bind.hpp"
+
+#include "tbb/blocked_range.h"
+#include "tbb/parallel_reduce.h"
+
 using namespace std;
+using namespace boost::placeholders;
+using namespace tbb;
 using namespace Imath;
 using namespace IECore;
 using namespace GafferScene;
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SceneNode );
+GAFFER_NODE_DEFINE_TYPE( SceneNode );
 
 size_t SceneNode::g_firstPlugIndex = 0;
 
@@ -55,6 +64,8 @@ SceneNode::SceneNode( const std::string &name )
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new ScenePlug( "out", Gaffer::Plug::Out ) );
 	addChild( new BoolPlug( "enabled", Gaffer::Plug::In, true ) );
+
+	plugInputChangedSignal().connect( boost::bind( &SceneNode::plugInputChanged, this, ::_1 ) );
 }
 
 SceneNode::~SceneNode()
@@ -87,7 +98,7 @@ void SceneNode::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outp
 
 	if( input == enabledPlug() )
 	{
-		for( ValuePlugIterator it( outPlug() ); !it.done(); ++it )
+		for( ValuePlug::Iterator it( outPlug() ); !it.done(); ++it )
 		{
 			if( (*it)->getInput() )
 			{
@@ -99,12 +110,37 @@ void SceneNode::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outp
 			outputs.push_back( it->get() );
 		}
 	}
+
+	if( auto scenePlug = input->parent<ScenePlug>() )
+	{
+		if( scenePlug->direction() == Plug::Out )
+		{
+			if( input == scenePlug->childNamesPlug() )
+			{
+				outputs.push_back( scenePlug->sortedChildNamesPlug() );
+			}
+
+			if( input == scenePlug->sortedChildNamesPlug() )
+			{
+				outputs.push_back( scenePlug->existsPlug() );
+			}
+
+			if(
+				input == scenePlug->childNamesPlug() ||
+				input == scenePlug->boundPlug() ||
+				input == scenePlug->transformPlug()
+			)
+			{
+				outputs.push_back( scenePlug->childBoundsPlug() );
+			}
+		}
+	}
 }
 
 void SceneNode::hash( const ValuePlug *output, const Context *context, IECore::MurmurHash &h ) const
 {
 	const ScenePlug *scenePlug = output->parent<ScenePlug>();
-	if( scenePlug && enabledPlug()->getValue() )
+	if( scenePlug && enabled( context ) )
 	{
 		// We don't call ComputeNode::hash() immediately here, because for subclasses which
 		// want to pass through a specific hash in the hash*() methods it's a waste of time (the
@@ -121,10 +157,8 @@ void SceneNode::hash( const ValuePlug *output, const Context *context, IECore::M
 			const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
 			if( scenePath.empty() )
 			{
-				// the result of compute() will actually be different if we're at the root, so
-				// we hash an identity M44fData:
-				h.append( IECore::M44fData::staticTypeId() );
-				h.append( Imath::M44f() );
+				// Scene root must have identity transform
+				h = output->defaultHash();
 			}
 			else
 			{
@@ -176,6 +210,18 @@ void SceneNode::hash( const ValuePlug *output, const Context *context, IECore::M
 		{
 			const IECore::InternedString &setName = context->get<IECore::InternedString>( ScenePlug::setNameContextName );
 			hashSet( setName, context, scenePlug, h );
+		}
+		else if( output == scenePlug->existsPlug() )
+		{
+			hashExists( context, scenePlug, h );
+		}
+		else if( output == scenePlug->sortedChildNamesPlug() )
+		{
+			hashSortedChildNames( context, scenePlug, h );
+		}
+		else if( output == scenePlug->childBoundsPlug() )
+		{
+			hashChildBounds( context, scenePlug, h );
 		}
 	}
 	else
@@ -229,7 +275,7 @@ void SceneNode::compute( ValuePlug *output, const Context *context ) const
 	ScenePlug *scenePlug = output->parent<ScenePlug>();
 	if( scenePlug )
 	{
-		if( enabledPlug()->getValue() )
+		if( enabled( context ) )
 		{
 			if( output == scenePlug->boundPlug() )
 			{
@@ -241,12 +287,17 @@ void SceneNode::compute( ValuePlug *output, const Context *context ) const
 			else if( output == scenePlug->transformPlug() )
 			{
 				const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
-				M44f transform;
-				if( scenePath.size() ) // scene root must have identity transform
+				if( scenePath.empty() )
 				{
-					transform = computeTransform( scenePath, context, scenePlug );
+					// Scene root must have identity transform
+					output->setToDefault();
 				}
-				static_cast<M44fPlug *>( output )->setValue( transform );
+				else
+				{
+					static_cast<M44fPlug *>( output )->setValue(
+						computeTransform( scenePath, context, scenePlug )
+					);
+				}
 			}
 			else if( output == scenePlug->attributesPlug() )
 			{
@@ -300,6 +351,18 @@ void SceneNode::compute( ValuePlug *output, const Context *context ) const
 					computeSet( setName, context, scenePlug )
 				);
 			}
+			else if( output == scenePlug->existsPlug() )
+			{
+				static_cast<BoolPlug *>( output )->setValue( computeExists( context, scenePlug ) );
+			}
+			else if( output == scenePlug->sortedChildNamesPlug() )
+			{
+				static_cast<InternedStringVectorDataPlug *>( output )->setValue( computeSortedChildNames( context, scenePlug ) );
+			}
+			else if( output == scenePlug->childBoundsPlug() )
+			{
+				static_cast<AtomicBox3fPlug *>( output )->setValue( computeChildBounds( context, scenePlug ) );
+			}
 		}
 		else
 		{
@@ -349,64 +412,263 @@ IECore::ConstPathMatcherDataPtr SceneNode::computeSet( const IECore::InternedStr
 	throw IECore::NotImplementedException( string( typeName() ) + "::computeSet" );
 }
 
-IECore::MurmurHash SceneNode::hashOfTransformedChildBounds( const ScenePath &path, const ScenePlug *out, const IECore::InternedStringVectorData *childNamesData ) const
+Gaffer::ValuePlug::CachePolicy SceneNode::hashCachePolicy( const Gaffer::ValuePlug *output ) const
 {
-	ConstInternedStringVectorDataPtr computedChildNames;
-	if( !childNamesData )
+	if( auto parent = output->parent<ScenePlug>() )
 	{
-		computedChildNames = out->childNames( path );
-		childNamesData = computedChildNames.get();
-	}
-	const vector<InternedString> &childNames = childNamesData->readable();
-
-	IECore::MurmurHash result;
-	if( childNames.size() )
-	{
-		ScenePlug::PathScope pathScope( Context::current() );
-
-		ScenePath childPath( path );
-		childPath.push_back( InternedString() ); // room for the child name
-		for( vector<InternedString>::const_iterator it = childNames.begin(); it != childNames.end(); it++ )
+		if( output == parent->childBoundsPlug() )
 		{
-			childPath[path.size()] = *it;
-			pathScope.setPath( childPath );
-			out->boundPlug()->hash( result );
-			out->transformPlug()->hash( result );
+			return ValuePlug::CachePolicy::TaskCollaboration;
 		}
 	}
-	else
+
+	return ComputeNode::hashCachePolicy( output );
+}
+
+Gaffer::ValuePlug::CachePolicy SceneNode::computeCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	if( auto parent = output->parent<ScenePlug>() )
 	{
-		result.append( typeId() );
-		result.append( "emptyBound" );
+		if( output == parent->childBoundsPlug() )
+		{
+			return ValuePlug::CachePolicy::TaskCollaboration;
+		}
 	}
-	return result;
+
+	return ComputeNode::computeCachePolicy( output );
+}
+
+IECore::MurmurHash SceneNode::hashOfTransformedChildBounds( const ScenePath &path, const ScenePlug *out, const IECore::InternedStringVectorData *childNamesData ) const
+{
+	ScenePlug::PathScope pathScope( Context::current(), &path );
+	return out->childBoundsPlug()->hash();
 }
 
 Imath::Box3f SceneNode::unionOfTransformedChildBounds( const ScenePath &path, const ScenePlug *out, const IECore::InternedStringVectorData *childNamesData ) const
 {
-	ConstInternedStringVectorDataPtr computedChildNames;
-	if( !childNamesData )
+	ScenePlug::PathScope pathScope( Context::current(), &path );
+	return out->childBoundsPlug()->getValue();
+}
+
+bool SceneNode::enabled( const Gaffer::Context *context ) const
+{
+	const BoolPlug *plug = enabledPlug();
+	const BoolPlug *sourcePlug = plug->source<BoolPlug>();
+	if( !sourcePlug || sourcePlug->direction() == Plug::Out )
 	{
-		computedChildNames = out->childNames( path );
-		childNamesData = computedChildNames.get();
+		// Value may be computed. We use a global scope
+		// for two reasons :
+		//
+		// - Because our implementation assumes the result
+		//   is constant across the scene, and allowing it to
+		//   vary could produce scenes which are not internally
+		//   consistent. FilteredSceneProcessor provides the
+		//   concept of varying enabled-ness via filters.
+		// - To reduce pressure on the hash cache.
+		//
+		// > Note : `sourcePlug` will be null if the source is
+		// > not a BoolPlug. In this case we call `getValue()`
+		// > on `plug` and it will perform the appropriate type
+		// > conversion.
+		ScenePlug::GlobalScope globalScope( context );
+		return sourcePlug ? sourcePlug->getValue() : plug->getValue();
 	}
+	else
+	{
+		// Value is not computed so context is irrelevant.
+		// Avoid overhead of context creation.
+		return sourcePlug->getValue();
+	}
+}
+
+void SceneNode::plugInputChanged( Gaffer::Plug *plug )
+{
+	// If a node makes a pass-through connection for a `childNamesPlug()` then we
+	// want to automatically create the equivalent pass-throughs for the
+	// `existsPlug()` and `sortedChildNamesPlug()`, to avoid unnecessary computes.
+	// We can't expect derived classes to do this for us, because those plugs are
+	// private, so we do it ourselves here.
+
+	if( plug->direction() != Plug::Out )
+	{
+		return;
+	}
+
+	auto scene = plug->parent<ScenePlug>();
+	if( !scene || plug != scene->childNamesPlug() )
+	{
+		return;
+	}
+
+	ScenePlug *sourceScene = nullptr;
+	if( Plug *source = plug->getInput() )
+	{
+		sourceScene = source->parent<ScenePlug>();
+	}
+
+	scene->existsPlug()->setInput( sourceScene ? sourceScene->existsPlug() : nullptr );
+	scene->sortedChildNamesPlug()->setInput( sourceScene ? sourceScene->sortedChildNamesPlug() : nullptr );
+}
+
+void SceneNode::hashExists( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->existsPlug(), context, h );
+
+	const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
+	if( scenePath.empty() )
+	{
+		h.append( true );
+		return;
+	}
+
+	ScenePath parentPath( scenePath );
+	parentPath.pop_back();
+	ScenePlug::PathScope parentScope( context, &parentPath );
+	if( !parent->existsPlug()->getValue() )
+	{
+		h.append( false );
+		return;
+	}
+
+	parent->sortedChildNamesPlug()->hash( h );
+	h.append( scenePath.back() );
+}
+
+bool SceneNode::computeExists( const Gaffer::Context *context, const ScenePlug *parent ) const
+{
+	const ScenePath &scenePath = context->get<ScenePath>( ScenePlug::scenePathContextName );
+	if( scenePath.empty() )
+	{
+		// Root always exists
+		return true;
+	}
+
+	ScenePath parentPath( scenePath );
+	parentPath.pop_back();
+	ScenePlug::PathScope parentScope( context, &parentPath );
+	if( !parent->existsPlug()->getValue() )
+	{
+		// If `parentPath` doesn't exist, then neither can `scenePath`
+		return false;
+	}
+
+	// Search in the sorted child names of our parent.
+
+	auto sortedChildNamesData = parent->sortedChildNamesPlug()->getValue();
+	auto &sortedChildNames = sortedChildNamesData->readable();
+	return std::binary_search( sortedChildNames.begin(), sortedChildNames.end(), scenePath.back() );
+}
+
+void SceneNode::hashSortedChildNames( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->sortedChildNamesPlug(), context, h );
+	parent->childNamesPlug()->hash( h );
+}
+
+IECore::ConstInternedStringVectorDataPtr SceneNode::computeSortedChildNames( const Gaffer::Context *context, const ScenePlug *parent ) const
+{
+	ConstInternedStringVectorDataPtr childNamesData = parent->childNamesPlug()->getValue();
+	if( childNamesData->readable().size() <= 1 )
+	{
+		// Already sorted
+		return childNamesData;
+	}
+
+	InternedStringVectorDataPtr sorted = new InternedStringVectorData;
+	sorted->writable() = childNamesData->readable();
+	std::sort( sorted->writable().begin(), sorted->writable().end() );
+	return sorted;
+}
+
+void SceneNode::hashChildBounds( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->childBoundsPlug(), context, h );
+	ConstInternedStringVectorDataPtr childNamesData = parent->childNamesPlug()->getValue();
 	const vector<InternedString> &childNames = childNamesData->readable();
-
-	Box3f result;
-	if( childNames.size() )
+	if( childNames.empty() )
 	{
-		ScenePlug::PathScope pathScope( Context::current() );
-
-		ScenePath childPath( path );
-		childPath.push_back( InternedString() ); // room for the child name
-		for( vector<InternedString>::const_iterator it = childNames.begin(); it != childNames.end(); it++ )
-		{
-			childPath[path.size()] = *it;
-			pathScope.setPath( childPath );
-			Box3f childBound = out->boundPlug()->getValue();
-			childBound = transform( childBound, out->transformPlug()->getValue() );
-			result.extendBy( childBound );
-		}
+		return;
 	}
-	return result;
+
+	const ThreadState &threadState = ThreadState::current();
+	using SizeRange = blocked_range<size_t>;
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+
+	const IECore::MurmurHash reduction = parallel_deterministic_reduce(
+		SizeRange( 0, childNames.size() ),
+		IECore::MurmurHash(),
+		[&] ( const SizeRange &range, const MurmurHash &hash ) {
+
+			ScenePlug::PathScope pathScope( threadState );
+			auto childPath = context->get<ScenePath>( ScenePlug::scenePathContextName );
+			childPath.push_back( InternedString() ); // room for the child name
+
+			MurmurHash result = hash;
+			for( size_t i = range.begin(); i != range.end(); ++i )
+			{
+				childPath.back() = childNames[i];
+				pathScope.setPath( &childPath );
+				parent->boundPlug()->hash( result );
+				parent->transformPlug()->hash( result );
+			}
+			return result;
+
+		},
+		[] ( const MurmurHash &x, const MurmurHash &y ) {
+
+			MurmurHash result = x;
+			result.append( y );
+			return result;
+		},
+		simple_partitioner(),
+		taskGroupContext
+	);
+
+	h.append( reduction );
+}
+
+Imath::Box3f SceneNode::computeChildBounds( const Gaffer::Context *context, const ScenePlug *parent ) const
+{
+	ConstInternedStringVectorDataPtr childNamesData = parent->childNamesPlug()->getValue();
+	const vector<InternedString> &childNames = childNamesData->readable();
+	if( childNames.empty() )
+	{
+		return Box3f();
+	}
+
+	const ThreadState &threadState = ThreadState::current();
+	using sizeRange = blocked_range<size_t>;
+	tbb::task_group_context taskGroupContext( tbb::task_group_context::isolated );
+
+	return tbb::parallel_reduce(
+		sizeRange( 0, childNames.size() ),
+		Box3f(),
+		[&] ( const sizeRange &range, const Box3f &bound ) {
+
+			ScenePlug::PathScope pathScope( threadState );
+			auto childPath = context->get<ScenePath>( ScenePlug::scenePathContextName );
+			childPath.push_back( InternedString() ); // room for the child name
+
+			Box3f result = bound;
+			for( size_t i = range.begin(); i != range.end(); ++i )
+			{
+				childPath.back() = childNames[i];
+				pathScope.setPath( &childPath );
+				Box3f childBound = parent->boundPlug()->getValue();
+				childBound = transform( childBound, parent->transformPlug()->getValue() );
+				result.extendBy( childBound );
+			}
+			return result;
+
+		},
+		[] ( const Box3f &x, const Box3f &y ) {
+
+			Box3f result = x;
+			result.extendBy( y );
+			return result;
+
+		},
+		tbb::auto_partitioner(),
+		taskGroupContext
+	);
 }

@@ -5,7 +5,7 @@ Reference
 
 <!-- TOC -->
 
-```eval_rst
+```{eval-rst}
 .. toctree::
     :titlesonly:
     :maxdepth: 1
@@ -13,4 +13,5 @@ Reference
     NodeReference/index.md
     ScriptingReference/index.md
     CommandLineReference/index.md
+    ContextVariables/index.md
 ```

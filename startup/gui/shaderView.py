@@ -34,35 +34,56 @@
 #
 ##########################################################################
 
+import os
+
 import IECore
 
+import GafferScene
 import GafferSceneUI
 
+if os.environ.get( "CYCLES_ROOT" ) :
+
+	with IECore.IgnoredExceptions( ImportError ) :
+
+		import GafferCycles
+
+		def __cyclesRenderer() :
+
+			result = GafferScene.InteractiveRender()
+			result["renderer"].setValue( "Cycles" )
+			return result
+
+		GafferSceneUI.ShaderView.registerRenderer( "cycles", __cyclesRenderer )
+
+		def __cyclesShaderBall() :
+
+			result = GafferCycles.CyclesShaderBall()
+
+			# Reserve some cores for the rest of the UI
+			result["threads"]["enabled"].setValue( True )
+			result["threads"]["value"].setValue( -3 )
+
+			# Less issues when mixing around OSL shaders
+			result["shadingSystem"]["enabled"].setValue( True )
+			result["shadingSystem"]["value"].setValue( "OSL" )
+
+			return result
+
+		GafferSceneUI.ShaderView.registerScene( "cycles", "Default", __cyclesShaderBall )
+
+		GafferSceneUI.ShaderView.registerRenderer( "osl", __cyclesRenderer )
+		GafferSceneUI.ShaderView.registerScene( "osl", "Default", __cyclesShaderBall )
+
 with IECore.IgnoredExceptions( ImportError ) :
 
-	import GafferAppleseed
-	GafferSceneUI.ShaderView.registerRenderer( "osl", GafferAppleseed.InteractiveAppleseedRender )
+	def __arnoldRenderer() :
 
-	def __appleseedShaderBall() :
-
-		result = GafferAppleseed.AppleseedShaderBall()
-
-		# Limit the number of samples.
-		result["maxSamples"]["enabled"].setValue( True )
-		result["maxSamples"]["value"].setValue( 32 )
-
-		# Reserve some cores for the rest of the UI
-		result["threads"]["enabled"].setValue( True )
-		result["threads"]["value"].setValue( -3 )
-
+		result = GafferScene.InteractiveRender()
+		result["renderer"].setValue( "Arnold" )
 		return result
 
-	GafferSceneUI.ShaderView.registerScene( "osl", "Default", __appleseedShaderBall )
-
-with IECore.IgnoredExceptions( ImportError ) :
-
 	import GafferArnold
-	GafferSceneUI.ShaderView.registerRenderer( "ai", GafferArnold.InteractiveArnoldRender )
+	GafferSceneUI.ShaderView.registerRenderer( "ai", __arnoldRenderer )
 
 	def __arnoldShaderBall() :
 
@@ -75,3 +96,8 @@ with IECore.IgnoredExceptions( ImportError ) :
 		return result
 
 	GafferSceneUI.ShaderView.registerScene( "ai", "Default", __arnoldShaderBall )
+
+	# If Arnold is available, then we assume that the user would prefer
+	# it over Cycles for OSL previews.
+	GafferSceneUI.ShaderView.registerRenderer( "osl", __arnoldRenderer )
+	GafferSceneUI.ShaderView.registerScene( "osl", "Default", __arnoldShaderBall )

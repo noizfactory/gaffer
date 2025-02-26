@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_NAMEVALUEPLUG_H
-#define GAFFER_NAMEVALUEPLUG_H
+#pragma once
 
 #include "Gaffer/TypeIds.h"
 
@@ -112,7 +111,7 @@ class GAFFER_API NameValuePlug : public Gaffer::ValuePlug
 		// Bare constructor required for compatibility with old CompoundDataPlug::MemberPlug constructor.
 		// Deprecated, and dangerous, since if you don't manually construct child plugs in the expected order of
 		// "name", "value", and optionally "enabled" then you will get a crash.
-		NameValuePlug(
+		explicit NameValuePlug(
 			const std::string &name=defaultName<NameValuePlug>(),
 			Direction direction=In,
 			unsigned flags=Default
@@ -134,11 +133,8 @@ class GAFFER_API NameValuePlug : public Gaffer::ValuePlug
 
 };
 
-typedef FilteredChildIterator<PlugPredicate<Plug::Invalid, NameValuePlug> > NameValuePlugIterator;
 IE_CORE_DECLAREPTR( NameValuePlug );
 
 } // namespace Gaffer
 
 #include "Gaffer/NameValuePlug.inl"
-
-#endif // GAFFER_NAMEVALUEPLUG_H

@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFEROSL_OSLCODE_H
-#define GAFFEROSL_OSLCODE_H
+#pragma once
 
 #include "GafferOSL/OSLShader.h"
+
+#include <unordered_map>
 
 namespace GafferOSL
 {
@@ -51,10 +52,10 @@ class GAFFEROSL_API OSLCode : public OSLShader
 
 	public :
 
-		OSLCode( const std::string &name=defaultName<OSLCode>() );
+		explicit OSLCode( const std::string &name=defaultName<OSLCode>() );
 		~OSLCode() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferOSL::OSLCode, OSLCodeTypeId, OSLShader );
+		GAFFER_NODE_DECLARE_TYPE( GafferOSL::OSLCode, OSLCodeTypeId, OSLShader );
 
 		Gaffer::StringPlug *codePlug();
 		const Gaffer::StringPlug *codePlug() const;
@@ -64,7 +65,7 @@ class GAFFEROSL_API OSLCode : public OSLShader
 		/// to give to it.
 		std::string source( const std::string shaderName = "" ) const;
 
-		typedef boost::signal<void ()> ShaderCompiledSignal;
+		using ShaderCompiledSignal = Gaffer::Signals::Signal<void ()>;
 		/// Signal emitted when a shader is compiled successfully.
 		/// \todo This exists only so the UI knows when to clear
 		/// the error indicator. When we compile shaders on demand,
@@ -88,11 +89,10 @@ class GAFFEROSL_API OSLCode : public OSLShader
 		static size_t g_firstPlugIndex;
 
 		ShaderCompiledSignal m_shaderCompiledSignal;
+		std::unordered_map<const Gaffer::GraphComponent *, Gaffer::Signals::ScopedConnection> m_nameChangedConnections;
 
 };
 
 IE_CORE_DECLAREPTR( OSLCode )
 
 } // namespace GafferOSL
-
-#endif // GAFFEROSL_OSLCODE_H

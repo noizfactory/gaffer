@@ -34,14 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_POINTER_H
-#define GAFFERUI_POINTER_H
+#pragma once
+
+#include "Gaffer/Signals.h"
 
 #include "GafferUI/Export.h"
 
 #include "IECoreImage/ImagePrimitive.h"
-
-#include "boost/signals.hpp"
 
 namespace GafferUI
 {
@@ -57,13 +56,11 @@ class GAFFERUI_API Pointer : public IECore::RefCounted
 
 		IE_CORE_DECLAREMEMBERPTR( Pointer )
 
-		/// A copy of the image is taken.
-		Pointer( const IECoreImage::ImagePrimitive *image, const Imath::V2i &hotspot = Imath::V2i( -1 ) );
 		/// Images are loaded from the paths specified by the
 		/// GAFFERUI_IMAGE_PATHS environment variable.
 		Pointer( const std::string &fileName, const Imath::V2i &hotspot = Imath::V2i( -1 ) );
 
-		const IECoreImage::ImagePrimitive *image() const;
+		const std::string &fileName() const;
 		const Imath::V2i &hotspot() const;
 
 		/// Sets the current pointer. Passing null resets the
@@ -79,16 +76,14 @@ class GAFFERUI_API Pointer : public IECore::RefCounted
 		static void registerPointer( const std::string &name, ConstPointerPtr pointer );
 
 		/// A signal emitted whenever the pointer is changed.
-		typedef boost::signal<void ()> ChangedSignal;
+		using ChangedSignal = Gaffer::Signals::Signal<void ()>;
 		static ChangedSignal &changedSignal();
 
 	private :
 
-		IECoreImage::ConstImagePrimitivePtr m_image;
+		std::string m_fileName;
 		Imath::V2i m_hotspot;
 
 };
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_POINTER_H

@@ -43,7 +43,7 @@ using namespace IECore;
 using namespace Gaffer;
 using namespace GafferSceneTest;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CompoundObjectSource )
+GAFFER_NODE_DEFINE_TYPE( CompoundObjectSource )
 
 CompoundObjectSource::CompoundObjectSource( const std::string &name )
 	:	SceneNode( name )
@@ -70,7 +70,7 @@ void CompoundObjectSource::affects( const Plug *input, AffectedPlugsContainer &o
 	SceneNode::affects( input, outputs );
 	if( input == inPlug() )
 	{
-		for( ValuePlugIterator it( outPlug() ); !it.done(); ++it )
+		for( ValuePlug::Iterator it( outPlug() ); !it.done(); ++it )
 		{
 			outputs.push_back( it->get() );
 		}

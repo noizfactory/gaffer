@@ -42,12 +42,23 @@ import collections
 import arnold
 
 import IECore
-import imath
 import IECoreArnold
+import imath
 
 import Gaffer
 import GafferUI
+import GafferImageUI
+import GafferSceneUI
 import GafferArnold
+
+# Arnold shaders to add to the light editor.
+lightEditorShaders = {
+	# "shaderName" : ( "shaderAttributeName", "lightEditorSection" )
+	"light_blocker" : ( "ai:lightFilter:filter", "Blocker" ),
+	"barndoor" : ( "ai:lightFilter:barndoor", "Barndoor" ),
+	"gobo" : ( "ai:lightFilter:gobo", "Gobo" ),
+	"light_decay" : ( "ai:lightFilter:light_decay", "Decay" ),
+}
 
 ##########################################################################
 # Utilities to make it easier to work with the Arnold API, which has a
@@ -56,7 +67,7 @@ import GafferArnold
 
 def __aiMetadataGetStr( nodeEntry, paramName, name, defaultValue = None ) :
 
-	value = arnold.AtStringReturn()
+	value = arnold.AtStringStruct()
 	if arnold.AiMetaDataGetStr( nodeEntry, paramName, name, value ) :
 		return arnold.AtStringToStr( value )
 
@@ -122,6 +133,59 @@ def __aiMetadataGetVec( nodeEntry, paramName, name, defaultValue = None ) :
 
 	return defaultValue
 
+def __enumPresetValues( param ):
+
+	presets = IECore.StringVectorData()
+
+	enum = arnold.AiParamGetEnum( param )
+	while True :
+		preset = arnold.AiEnumGetString( enum, len( presets ) )
+		if not preset :
+			break
+		presets.append( preset )
+
+	return presets
+
+def __plugPresetNames( nodeEntry, paramName ) :
+
+	# options STRING "name:value|..."
+
+	options = __aiMetadataGetStr( nodeEntry, paramName, "options" )
+	if options :
+		return IECore.StringVectorData( [ o.partition( ":" )[0] for o in options.split( "|" ) if o ] )
+
+def __plugPresetValues( nodeEntry, paramName, paramType ) :
+
+	# options STRING "name:value|..."
+
+	options = __aiMetadataGetStr( nodeEntry, paramName, "options" )
+	if not options :
+		return None
+
+	values = [ o.rpartition( ":" )[2] for o in options.split( "|" ) if o ]
+
+	if paramType == arnold.AI_TYPE_STRING :
+		return IECore.StringVectorData( values )
+	elif paramType in ( arnold.AI_TYPE_INT, arnold.AI_TYPE_BYTE ) :
+		return IECore.IntVectorData( [ int( v ) for v in values ] )
+	elif paramType == arnold.AI_TYPE_UINT :
+		return IECore.UIntVectorData( [ int( v ) for v in values ] )
+	elif paramType == arnold.AI_TYPE_FLOAT :
+		return IECore.FloatVectorData( [ float( v ) for v in values ] )
+	elif paramType == arnold.AI_TYPE_BOOLEAN :
+		falseVals = ( "false", "no", "0" )
+		return IECore.BoolVectorData( [ False if v.lower() in falseVals else True for v in values ] )
+	elif paramType == arnold.AI_TYPE_RGB :
+		return IECore.Color3fVectorData( [ imath.Color3f( *[ float( x ) for x in v.split( "," ) ]) for v in values ] )
+	elif paramType == arnold.AI_TYPE_RGBA :
+		return IECore.Color4fVectorData( [ imath.Color4f( *[ float( x ) for x in v.split( "," ) ]) for v in values ] )
+	elif paramType in ( arnold.AI_TYPE_VECTOR, arnold.AI_TYPE_POINT ):
+		return IECore.V3fVectorData( [ imath.V3f( *[ float( x ) for x in v.split( "," ) ]) for v in values ] )
+	elif paramType == arnold.AI_TYPE_POINT2 :
+		return IECore.V2fVectorData( [ imath.V2f( *[ float( x ) for x in v.split( "," ) ]) for v in values ] )
+
+	return None
+
 ##########################################################################
 # Build a registry of information retrieved from Arnold metadata. We fill this
 # once at startup, as we can only get it from within an AiUniverse block,
@@ -150,6 +214,8 @@ def __translateNodeMetadata( nodeEntry ) :
 
 	# Shader description. We support Arnold-style "desc" and
 	# OSL style "help".
+	## \todo It seems that Arnold's standard is now "help", so
+	# we may be able to remove "desc".
 
 	description = __aiMetadataGetStr( nodeEntry, None, "desc",
 		defaultValue = __aiMetadataGetStr( nodeEntry, None, "help" )
@@ -163,6 +229,26 @@ def __translateNodeMetadata( nodeEntry ) :
 	if url is not None :
 		__metadata[nodeName]["documentation:url"] = url
 
+	# Icon. There doesn't appear to be a standard for this, so
+	# we support "gaffer.icon" and "gaffer.iconScale".
+
+	icon = __aiMetadataGetStr( nodeEntry, None, "gaffer.icon" )
+	if icon is not None :
+		__metadata[nodeName]["icon"] = icon
+
+	iconScale = __aiMetadataGetFlt( nodeEntry, None, "gaffer.iconScale" )
+	if iconScale is not None :
+		__metadata[nodeName]["iconScale"] = iconScale
+
+	# Node color.
+
+	color = __aiMetadataGetRGB( nodeEntry, None, "gaffer.nodeGadget.color" )
+	if color is not None :
+		Gaffer.Metadata.registerValue( "ai:surface:{}".format( nodeName ), "nodeGadget:color", color )
+
+	# Parameters
+	# ----------
+
 	paramIt = arnold.AiNodeEntryGetParamIterator( nodeEntry )
 	while not arnold.AiParamIteratorFinished( paramIt ) :
 
@@ -170,30 +256,37 @@ def __translateNodeMetadata( nodeEntry ) :
 		# arnold metadata entries.
 		param = arnold.AiParamIteratorGetNext( paramIt )
 		paramName = arnold.AiParamGetName( param )
+		if paramName == "name" :
+			# Arnold node name, never represented as a plug in Gaffer
+			continue
+
 		paramPath = nodeName + ".parameters." + paramName
+		paramType = arnold.AiParamGetType( param )
 
 		# Parameter description
 
-		description = __aiMetadataGetStr( nodeEntry, paramName, "desc" )
+		description = __aiMetadataGetStr(
+			nodeEntry, paramName, "desc",
+			defaultValue = __aiMetadataGetStr( nodeEntry, paramName, "help" )
+		)
 		if description is not None :
 			__metadata[paramPath]["description"] = description
 
-		# Parameter presets from enum values
+		# Presets
 
-		paramType = arnold.AiParamGetType( param )
 		if paramType == arnold.AI_TYPE_ENUM :
+			# Parameter presets from enum values
+			presetValues = __enumPresetValues( param )
+			presetNames = presetValues
+		else :
+			# Manually specified presets for other types
+			presetValues = __plugPresetValues( nodeEntry, paramName, paramType )
+			presetNames = __plugPresetNames( nodeEntry, paramName )
 
-			enum = arnold.AiParamGetEnum( param )
-			presets = IECore.StringVectorData()
-			while True :
-				preset = arnold.AiEnumGetString( enum, len( presets ) )
-				if not preset :
-					break
-				presets.append( preset )
-
+		if presetValues :
 			__metadata[paramPath]["plugValueWidget:type"] = "GafferUI.PresetsPlugValueWidget"
-			__metadata[paramPath]["presetNames"] = presets
-			__metadata[paramPath]["presetValues"] = presets
+			__metadata[paramPath]["presetValues"] = presetValues
+			__metadata[paramPath]["presetNames"] = presetNames
 
 		# Nodule type from linkable metadata and parameter type
 
@@ -201,7 +294,8 @@ def __translateNodeMetadata( nodeEntry ) :
 			nodeEntry, paramName, "linkable",
 			defaultValue = paramType not in (
 				arnold.AI_TYPE_BYTE, arnold.AI_TYPE_INT, arnold.AI_TYPE_UINT,
-				arnold.AI_TYPE_BOOLEAN, arnold.AI_TYPE_ENUM, arnold.AI_TYPE_STRING
+				arnold.AI_TYPE_BOOLEAN, arnold.AI_TYPE_ENUM, arnold.AI_TYPE_STRING,
+				arnold.AI_TYPE_NODE
 			)
 		)
 		__metadata[paramPath]["nodule:type"] = None if linkable else ""
@@ -217,9 +311,27 @@ def __translateNodeMetadata( nodeEntry ) :
 				"checkBox" : "GafferUI.BoolPlugValueWidget",
 				"popup" : "GafferUI.PresetsPlugValueWidget",
 				"mapper" : "GafferUI.PresetsPlugValueWidget",
-				"filename" : "GafferUI.PathPlugValueWidget",
+				"filename" : "GafferUI.FileSystemPathPlugValueWidget",
+				"camera" : "GafferSceneUI.ScenePathPlugValueWidget",
+				"colorSpace" : "GafferUI.PresetsPlugValueWidget",
 				"null" : "",
-			}[widget]
+			}.get( widget )
+
+			if widget == "camera" :
+				__metadata[paramPath]["scenePathPlugValueWidget:setNames"] = IECore.StringVectorData( [ "__cameras" ] )
+				__metadata[paramPath]["scenePathPlugValueWidget:setsLabel"] = "Show only cameras"
+
+			if widget == "colorSpace" :
+				# Here we're assuming that Arnold is being used with an OCIO
+				# colour manager configured to match Gaffer.
+				__metadata[paramPath]["presetNames"] = GafferImageUI.OpenColorIOTransformUI.colorSpacePresetNames
+				__metadata[paramPath]["presetValues"] = GafferImageUI.OpenColorIOTransformUI.colorSpacePresetValues
+				__metadata[paramPath]["openColorIO:extraPresetNames"] = IECore.StringVectorData( [ "Auto" ] )
+				__metadata[paramPath]["openColorIO:extraPresetValues"] = IECore.StringVectorData( [ "auto" ] )
+				__metadata[paramPath]["openColorIO:includeRoles"] = True
+				# Allow custom values in case Arnold has been configured to use
+				# some other colour manager instead.
+				__metadata[paramPath]["presetsPlugValueWidget:allowCustom"] = True
 
 		# Layout section from OSL "page".
 
@@ -235,15 +347,36 @@ def __translateNodeMetadata( nodeEntry ) :
 				__metadata[parent]["layout:section:%s:collapsed" % page] = collapsed
 
 		# Label from OSL "label"
+		defaultLabel = " ".join( [ i.capitalize() for i in paramName.split( "_" ) ] )
 		label = __aiMetadataGetStr( nodeEntry, paramName, "label" )
 		if label is None :
-			# Label from Arnold naming convention
-			# Arnold uses snake_case rather than camelCase for naming, so translate this into
-			# nice looking names
-			label = " ".join( [ i.capitalize() for i in paramName.split( "_" ) ] )
+			label = defaultLabel
 
 		__metadata[paramPath]["label"] = label
-		__metadata[paramPath]["noduleLayout:label"] = label
+		# Custom labels typically only make sense in the context of `page`, so we
+		# use the default label for the GraphEditor.
+		__metadata[paramPath]["noduleLayout:label"] = defaultLabel
+
+		if (
+			arnold.AiNodeEntryGetType( nodeEntry ) == arnold.AI_NODE_LIGHT and
+			__aiMetadataGetStr( nodeEntry, paramName, "gaffer.plugType" ) != ""
+		) :
+			GafferSceneUI.LightEditor.registerParameter(
+				"ai:light", paramName, page
+			)
+
+		if (
+			nodeName in lightEditorShaders and
+			__aiMetadataGetStr( nodeEntry, paramName, "gaffer.plugType" ) != ""
+		) :
+			attributeName, sectionName = lightEditorShaders[nodeName]
+			GafferSceneUI.LightEditor.registerShaderParameter(
+				"ai:light",
+				paramName,
+				attributeName,
+				sectionName,
+				f"{page} {label}" if page is not None and label is not None else paramName
+			)
 
 		childComponents = {
 			arnold.AI_TYPE_VECTOR2 : "xy",
@@ -254,6 +387,16 @@ def __translateNodeMetadata( nodeEntry ) :
 		if childComponents is not None :
 			for c in childComponents :
 				__metadata["{}.{}".format( paramPath, c )]["noduleLayout:label"] = "{}.{}".format( label, c )
+
+		# NodeEditor layout from other Gaffer-specific metadata
+
+		divider = __aiMetadataGetBool( nodeEntry, paramName, "gaffer.layout.divider" )
+		if divider :
+			__metadata[paramPath]["layout:divider"] = True
+
+		index = __aiMetadataGetInt( nodeEntry, paramName, "gaffer.layout.index" )
+		if index is not None :
+			__metadata[paramPath]["layout:index"] = index
 
 		# GraphEditor visibility from Gaffer-specific metadata
 
@@ -286,13 +429,62 @@ def __translateNodeMetadata( nodeEntry ) :
 			nodeName, _, plugName = paramPath.split( "." )
 			Gaffer.Metadata.registerValue( "ai:surface:%s:%s" % ( nodeName, plugName ), "userDefault", userDefault )
 
+		# Activator from Gaffer-specific metadata
+
+		def addActivator( activator ) :
+			parentActivator = "layout:activator:" + activator
+
+			if parentActivator not in __metadata[nodeName + ".parameters"] :
+				activatorCode = __aiMetadataGetStr( nodeEntry, None, "gaffer.layout.activator." + activator )
+				__metadata[nodeName + ".parameters"][parentActivator] = eval( "lambda parameters : " + activatorCode )
+
+		activator = __aiMetadataGetStr( nodeEntry, paramName, "gaffer.layout.activator" )
+		if activator is not None :
+			addActivator( activator )
+			__metadata[paramPath]["layout:activator"] = activator
+
+		visibilityActivator = __aiMetadataGetStr( nodeEntry, paramName, "gaffer.layout.visibilityActivator" )
+		if visibilityActivator is not None :
+			addActivator( visibilityActivator )
+			__metadata[paramPath]["layout:visibilityActivator"] = visibilityActivator
+
+		# FileSystemPathPlugValueWidget metadata
+
+		for gafferKey, arnoldGetter in [
+			( "path:leaf", __aiMetadataGetBool ),
+			( "path:valid", __aiMetadataGetBool ),
+			( "path:bookmarks", __aiMetadataGetStr ),
+			( "fileSystemPath:extensions", __aiMetadataGetStr ),
+			( "fileSystemPath:extensionsLabel", __aiMetadataGetStr ),
+		] :
+			value = arnoldGetter( nodeEntry, paramName, "gaffer.{}".format( gafferKey.replace( ":", "." ) ) )
+			if value is not None :
+				__metadata[paramPath][gafferKey] = value
+
+if [ int( x ) for x in arnold.AiGetVersion()[:3] ] < [ 7, 3, 1 ] :
+	__AI_NODE_IMAGER = arnold.AI_NODE_DRIVER
+else :
+	__AI_NODE_IMAGER = arnold.AI_NODE_IMAGER
 
 with IECoreArnold.UniverseBlock( writable = False ) :
 
-	nodeIt = arnold.AiUniverseGetNodeEntryIterator( arnold.AI_NODE_SHADER | arnold.AI_NODE_LIGHT )
+	nodeIt = arnold.AiUniverseGetNodeEntryIterator( arnold.AI_NODE_SHADER | arnold.AI_NODE_LIGHT | arnold.AI_NODE_COLOR_MANAGER | __AI_NODE_IMAGER )
 	while not arnold.AiNodeEntryIteratorFinished( nodeIt ) :
 
 		__translateNodeMetadata( arnold.AiNodeEntryIteratorGetNext( nodeIt ) )
+
+# Manually add width and height for `quad_light`
+__metadata["quad_light.parameters.width"]["nodule:type"] = ""
+__metadata["quad_light.parameters.height"]["nodule:type"] = ""
+__metadata["quad_light.parameters.width"]["layout:section"] = "Shape"
+__metadata["quad_light.parameters.height"]["layout:section"] = "Shape"
+__metadata["quad_light.parameters.width"]["layout:index"] = 0
+__metadata["quad_light.parameters.height"]["layout:index"] = 1
+GafferSceneUI.LightEditor.registerParameter( "ai:light", "width", "Shape" )
+GafferSceneUI.LightEditor.registerParameter( "ai:light", "height", "Shape" )
+
+# Manually add the `filteredLights` parameter for `light_blocker`
+GafferSceneUI.LightEditor.registerAttribute( "ai:light", "filteredLights", "Blocker" )
 
 ##########################################################################
 # Gaffer Metadata queries. These are implemented using the preconstructed
@@ -307,7 +499,7 @@ def __nodeDescription( node ) :
 			"""Loads shaders for use in Arnold renders. Use the ShaderAssignment node to assign shaders to objects in the scene.""",
 		)
 	else :
-		return __metadata[node["__shaderName"].getValue()].get(
+		return __metadata[node["__shader"]["name"].getValue()].get(
 			"description",
 			"""Loads an Arnold light shader and uses it to output a scene with a single light."""
 		)
@@ -317,8 +509,8 @@ def __nodeMetadata( node, name ) :
 	if isinstance( node, GafferArnold.ArnoldShader ) :
 		key = node["name"].getValue()
 	else :
-		# Node type is ArnoldLight.
-		key = node["__shaderName"].getValue()
+		# Other nodes hold an internal shader
+		key = node["__shader"]["name"].getValue()
 
 	return __metadata[key].get( name )
 
@@ -335,15 +527,20 @@ def __plugMetadata( plug, name ) :
 		return True
 
 	node = plug.node()
+	relativeName = plug.relativeName( node )
 	if isinstance( node, GafferArnold.ArnoldShader ) :
-		key = plug.node()["name"].getValue() + "." + plug.relativeName( node )
+		key = plug.node()["name"].getValue() + "." + relativeName
 	else :
-		# Node type is ArnoldLight.
-		key = plug.node()["__shaderName"].getValue() + "." + plug.relativeName( node )
+		# Other nodes hold an internal shader
+		key = plug.node()["__shader"]["name"].getValue() + "." + relativeName
 
-	return __metadata[key].get( name )
+	result = __metadata[key].get( name )
+	if callable( result ) :
+		return result( plug )
+	else :
+		return result
 
-for nodeType in ( GafferArnold.ArnoldShader, GafferArnold.ArnoldLight ) :
+for nodeType in ( GafferArnold.ArnoldShader, GafferArnold.ArnoldLight, GafferArnold.ArnoldMeshLight, GafferArnold.ArnoldColorManager, GafferArnold.ArnoldLightFilter ) :
 
 	nodeKeys = set()
 	parametersPlugKeys = set()

@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_GADGET_H
-#define GAFFERUI_GADGET_H
+#pragma once
 
 #include "GafferUI/ButtonEvent.h"
 #include "GafferUI/DragDropEvent.h"
@@ -53,7 +52,7 @@
 #include "IECore/Export.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathBox.h"
+#include "Imath/ImathBox.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 #include <functional>
@@ -71,6 +70,7 @@ namespace GafferUI
 
 IE_CORE_FORWARDDECLARE( Gadget );
 IE_CORE_FORWARDDECLARE( Style );
+IE_CORE_FORWARDDECLARE( ViewportGadget );
 
 /// Gadgets are zoomable UI elements. They draw themselves using OpenGL, and provide an interface for
 /// handling events. To present a Gadget in the user interface, it should be placed in the viewport of
@@ -80,24 +80,21 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 
 	public :
 
-		Gadget( const std::string &name=defaultName<Gadget>() );
+		explicit Gadget( const std::string &name=defaultName<Gadget>() );
 		~Gadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::Gadget, GadgetTypeId, Gaffer::GraphComponent );
 
 		enum class Layer
 		{
-			Back = -2,
-			MidBack = -1,
-			Main = 0,
-			MidFront = 1,
-			Front = 2,
+			None = 0,
+			Back = 1,
+			BackMidBack = 2,
+			MidBack = 4,
+			Main = 8,
+			MidFront = 16,
+			Front = 32,
 		};
-
-		/// Returns the Gadget with the specified name, where name has been retrieved
-		/// from an IECoreGL::HitRecord after rendering some Gadget in GL_SELECT mode.
-		/// \todo Consider better mechanisms.
-		static GadgetPtr select( GLuint id );
 
 		/// @name Parent-child relationships
 		////////////////////////////////////////////////////////////////////
@@ -135,11 +132,11 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		/// unless the same is true for all its ancestors.
 		void setVisible( bool visible );
 		/// Returns the visibility status for this Gadget.
-		bool getVisible() const;
+		bool getVisible() const { return m_visible; }
 		/// Returns true if this Gadget and all its parents up to the specified
 		/// ancestor are visible.
 		bool visible( Gadget *relativeTo = nullptr ) const;
-		typedef boost::signal<void ( Gadget * )> VisibilityChangedSignal;
+		using VisibilityChangedSignal = Gaffer::Signals::Signal<void ( Gadget * ), Gaffer::Signals::CatchingCombiner<void>>;
 		/// Emitted when the result of `Gadget::visible()` changes.
 		VisibilityChangedSignal &visibilityChangedSignal();
 		/// Sets whether or not this Gadget is enabled. Disabled gadgets
@@ -179,13 +176,6 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		/// @name Display
 		////////////////////////////////////////////////////////////////////
 		//@{
-		/// Renders the Gadget into the current OpenGL context. If currentStyle
-		/// is passed then it must already have been bound with Style::bind(),
-		/// and will be used if and only if not overridden by a Style applied
-		/// specifically to this Gadget. Typically users will not pass currentStyle -
-		/// but it must be passed by Gadget implementations when rendering child
-		/// Gadgets in doRenderLayer().
-		void render() const;
 		/// The bounding box of the Gadget before transformation. The default
 		/// implementation returns the union of the transformed bounding boxes
 		/// of all the children.
@@ -194,8 +184,6 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		Imath::Box3f transformedBound() const;
 		/// The bounding box transformed by the result of fullTransform( ancestor ).
 		Imath::Box3f transformedBound( const Gadget *ancestor ) const;
-		typedef boost::signal<void ( Gadget * )> RenderRequestSignal;
-		RenderRequestSignal &renderRequestSignal();
 		//@}
 
 		/// @name Tool tips
@@ -220,7 +208,7 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		////////////////////////////////////////////////////////////////////
 		//@{
 		/// A signal used to represent button related events.
-		typedef boost::signal<bool ( Gadget *, const ButtonEvent &event ), EventSignalCombiner<bool> > ButtonSignal;
+		using ButtonSignal = Gaffer::Signals::Signal<bool ( Gadget *, const ButtonEvent &event ), EventSignalCombiner<bool>>;
 		/// The signal triggered by a button press event.
 		ButtonSignal &buttonPressSignal();
 		/// The signal triggered by a button release event.
@@ -230,7 +218,7 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		/// The signal triggered by the mouse wheel.
 		ButtonSignal &wheelSignal();
 
-		typedef boost::signal<void ( Gadget *, const ButtonEvent &event )> EnterLeaveSignal;
+		using EnterLeaveSignal = Gaffer::Signals::Signal<void ( Gadget *, const ButtonEvent &event ), Gaffer::Signals::CatchingCombiner<void>>;
 		/// The signal triggered when the mouse enters the Gadget.
 		EnterLeaveSignal &enterSignal();
 		/// The signal triggered when the mouse leaves the Gadget.
@@ -238,8 +226,8 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		/// A signal emitted whenever the mouse moves within a Gadget.
 		ButtonSignal &mouseMoveSignal();
 
-		typedef boost::signal<IECore::RunTimeTypedPtr ( Gadget *, const DragDropEvent &event ), EventSignalCombiner<IECore::RunTimeTypedPtr> > DragBeginSignal;
-		typedef boost::signal<bool ( Gadget *, const DragDropEvent &event ), EventSignalCombiner<bool> > DragDropSignal;
+		using DragBeginSignal = Gaffer::Signals::Signal<IECore::RunTimeTypedPtr ( Gadget *, const DragDropEvent &event ), EventSignalCombiner<IECore::RunTimeTypedPtr>>;
+		using DragDropSignal = Gaffer::Signals::Signal<bool ( Gadget *, const DragDropEvent &event ), EventSignalCombiner<bool>>;
 
 		/// This signal is emitted if a previous buttonPressSignal() returned true, and the
 		/// user has subsequently moved the mouse with the button down. To initiate a drag
@@ -262,7 +250,7 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 
 		/// A signal used to represent key related events.
 		/// \todo We need some sort of focus model to say who gets the events.
-		typedef boost::signal<bool ( Gadget *, const KeyEvent &key ), EventSignalCombiner<bool> > KeySignal;
+		using KeySignal = Gaffer::Signals::Signal<bool ( Gadget *, const KeyEvent &key ), EventSignalCombiner<bool>>;
 		/// The signal triggered by a key press event.
 		KeySignal &keyPressSignal();
 		/// The signal triggered by a key release event.
@@ -271,37 +259,74 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		/// A signal emitted when the host event loop is idle. Connections
 		/// to this should be limited in duration because idle events consume
 		/// CPU when the program would otherwise be inactive.
-		typedef boost::signal<void ()> IdleSignal;
+		using IdleSignal = Gaffer::Signals::Signal<void (), Gaffer::Signals::CatchingCombiner<void>>;
 		static IdleSignal &idleSignal();
 		//@}
 
 	protected :
 
-		/// Emits renderRequestSignal() as necessary for this and all ancestors.
-		/// Use this rather than emit the signal manually.
-		void requestRender();
-		/// Implemented to request a render for both the old and the new parent.
-		void parentChanged( GraphComponent *oldParent ) override;
+		enum class DirtyType
+		{
+			/// A re-render is needed, but the bounding box
+			/// and layout remain the same.
+			Render,
+			/// The result of renderBound() has changed, but the layout bounds have not.
+			/// Internal render caches which depend on the render bounds need to be rebuilt,
+			/// but we don't need to re-layout
+			RenderBound,
+			/// The layout bounding box has changed. Implies RenderBound and Render.
+			Bound,
+			/// Parameters used by `updateLayout()` have changed.
+			/// Implies Bound, RenderBound and Render.
+			Layout,
+		};
+
+
+		/// Must be called by derived classes to reflect changes
+		/// affecting `renderLayer()`, `bound()` or `updateLayout().
+		void dirty( DirtyType dirtyType );
+
+		/// May be implemented by derived classes to position child widgets.
+		/// This is called automatically prior to rendering or bound computation.
+		virtual void updateLayout() const;
+
+		enum class RenderReason
+		{
+			Draw,       // A render that will display to the screen
+			Select,     // A render to determine what Gadget the cursor is over
+			DragSelect, // A render to determine what Gadget a drag is over
+		};
+
+		inline static bool isSelectionRender( RenderReason reason )
+		{
+			return reason == RenderReason::Select || reason == RenderReason::DragSelect;
+		}
 
 		/// Should be implemented by subclasses to draw themselves as appropriate
 		/// for the specified layer. Child gadgets will be drawn automatically
-		/// _after_ the parent gadget has been drawn.
-		virtual void doRenderLayer( Layer layer, const Style *style ) const;
-		/// May return false to indicate that neither this gadget nor any
-		/// of its children will render anything for the specified layer.
-		/// The default implementation returns true.
-		virtual bool hasLayer( Layer layer ) const;
+		/// _after_ the parent gadget has been drawn.  Whenever overriding this,
+		/// you must override layerMask and renderBound() as well.
+		virtual void renderLayer( Layer layer, const Style *style, RenderReason reason ) const;
+
+		/// Returns a bitmask built from the flags in the Layer enum.
+		/// Any subclass which implements renderLayer must also implement layerMask
+		/// to indicate which layers renderLayer should be called for.
+		/// layerMask must currently return a constant value.  In the future, we
+		/// may implement a new DirtyType to allow dirtying the layerMask
+		virtual unsigned layerMask() const;
+
+		/// The bound of everything drawn by renderLayer
+		virtual Imath::Box3f renderBound() const;
+
+		/// Implemented to dirty the layout for both the old and the new parent.
+		void parentChanged( GraphComponent *oldParent ) override;
 
 	private :
-
-		// Sets the GL state up with the name attribute and transform for
-		// this Gadget, makes sure the style is bound and then calls doRenderLayer().
-		void renderLayer( Layer layer, const Style *currentStyle = nullptr ) const;
-
 		void styleChanged();
 		void emitDescendantVisibilityChanged();
 
 		ConstStylePtr m_style;
+		Gaffer::Signals::ScopedConnection m_styleChangedConnection;
 
 		bool m_visible;
 		bool m_enabled;
@@ -309,31 +334,14 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 
 		Imath::M44f m_transform;
 
-		VisibilityChangedSignal m_visibilityChangedSignal;
-		RenderRequestSignal m_renderRequestSignal;
+		mutable Imath::Box3f m_bound;
+		mutable bool m_layoutDirty;
 
 		IECore::InternedString m_toolTip;
 
-		ButtonSignal m_buttonPressSignal;
-		ButtonSignal m_buttonReleaseSignal;
-		ButtonSignal m_buttonDoubleClickSignal;
-		ButtonSignal m_wheelSignal;
-
-		EnterLeaveSignal m_enterSignal;
-		EnterLeaveSignal m_leaveSignal;
-		ButtonSignal m_mouseMoveSignal;
-
-		DragBeginSignal m_dragBeginSignal;
-		DragDropSignal m_dragEnterSignal;
-		DragDropSignal m_dragMoveSignal;
-		DragDropSignal m_dragLeaveSignal;
-		DragDropSignal m_dragEndSignal;
-		DragDropSignal m_dropSignal;
-
-		KeySignal m_keyPressSignal;
-		KeySignal m_keyReleaseSignal;
-
-		GLuint m_glName;
+		struct MemberSignals;
+		MemberSignals *signals();
+		std::unique_ptr<MemberSignals> m_signals;
 
 		// used by the bindings to know when the idleSignal()
 		// has been accessed, and only use an idle timer
@@ -341,11 +349,21 @@ class GAFFERUI_API Gadget : public Gaffer::GraphComponent
 		static IdleSignal &idleSignalAccessedSignal();
 		friend void GafferUIModule::bindGadget();
 
+		/// ViewportGadget performs the actual rendering, and needs access to the internals of all the gadgets it renders
+		friend ViewportGadget;
+
 };
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<Gadget> > GadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<Gadget> > RecursiveGadgetIterator;
+
+/// Allow for clients to succinctly write bitmasks as Back | Main | Front
+inline unsigned operator| ( Gadget::Layer a, Gadget::Layer b )
+{
+	return (unsigned)a | (unsigned)b;
+}
+
+inline unsigned operator| ( unsigned a, Gadget::Layer b )
+{
+	return a | (unsigned)b;
+}
 
 } // namespace GafferUI
-
-#endif // GAFFERUI_GADGET_H

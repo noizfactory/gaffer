@@ -40,26 +40,63 @@
 #include "GafferUI/Style.h"
 #include "GafferUI/ViewportGadget.h"
 
-#include "IECoreGL/Selector.h"
-
 #include "IECore/Export.h"
 #include "IECore/NullObject.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathLine.h"
-#include "OpenEXR/ImathPlane.h"
+#include "Imath/ImathLine.h"
+#include "Imath/ImathPlane.h"
+#include "Imath/ImathMatrixAlgo.h"
+#include "Imath/ImathVecAlgo.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
-#include "OpenEXR/ImathMatrixAlgo.h"
-#include "OpenEXR/ImathVecAlgo.h"
-
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
 
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace IECoreScene;
 using namespace GafferUI;
+
+const float g_planarToLinearDragThreshold = 0.15f;  // Approx. 9 degrees from perpendicular
+constexpr float g_planarRotationScaleFactor = 5.f / M_PI;
+
+namespace
+{
+
+struct WorldGadgetDragData
+{
+	V3f worldOrigin;
+	V3f worldAxis0;
+	V3f worldAxis90;
+	Line3f worldLine;
+	V3f worldNormal;
+};
+
+void worldGadgetDragData(
+	const Gadget *gadget,
+	const V3f &origin,
+	const V3f &normal,
+	const V3f &axis0,
+	const V3f &axis90,
+	const DragDropEvent &dragEvent,
+	WorldGadgetDragData &result
+)
+{
+	const M44f transform = gadget->fullTransform();
+	result.worldOrigin = origin * transform;
+	transform.multDirMatrix( axis0, result.worldAxis0 );
+	transform.multDirMatrix( axis90, result.worldAxis90 );
+	transform.multDirMatrix( normal, result.worldNormal );
+
+	result.worldLine = Line3f(
+		dragEvent.line.p0 * transform,
+		dragEvent.line.p1 * transform
+	);
+}
+
+}  // namespace
 
 //////////////////////////////////////////////////////////////////////////
 // Handle
@@ -90,7 +127,7 @@ void Handle::setRasterScale( float rasterScale )
 	}
 
 	m_rasterScale = rasterScale;
-	renderRequestSignal()( this );
+	dirty( DirtyType::Render );
 }
 
 float Handle::getRasterScale() const
@@ -106,7 +143,7 @@ void Handle::setVisibleOnHover( bool visibleOnHover )
 	}
 
 	m_visibleOnHover = visibleOnHover;
-	renderRequestSignal()( this );
+	dirty( DirtyType::Render );
 }
 
 bool Handle::getVisibleOnHover() const
@@ -122,16 +159,11 @@ Imath::Box3f Handle::bound() const
 	return Box3f( V3f( -1 ), V3f( 1 ) );
 }
 
-bool Handle::hasLayer( Layer layer ) const
-{
-	return layer == Layer::MidFront;
-}
-
-void Handle::doRenderLayer( Layer layer, const Style *style ) const
+void Handle::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
 	if( m_visibleOnHover )
 	{
-		if( !enabled() || (!m_hovering && !IECoreGL::Selector::currentSelector() ) )
+		if( !enabled() || (!m_hovering && !isSelectionRender( reason ) ) )
 		{
 			return;
 		}
@@ -147,6 +179,19 @@ void Handle::doRenderLayer( Layer layer, const Style *style ) const
 	renderHandle( style, state );
 
 	glPopMatrix();
+}
+
+unsigned Handle::layerMask() const
+{
+	return (unsigned)Layer::MidFront;
+}
+
+Imath::Box3f Handle::renderBound() const
+{
+	// Having a raster scale makes our bound somewhat meaningless
+	Box3f b;
+	b.makeInfinite();
+	return b;
 }
 
 Imath::V3f Handle::rasterScaleFactor() const
@@ -188,13 +233,13 @@ Imath::V3f Handle::rasterScaleFactor() const
 void Handle::enter()
 {
 	m_hovering = true;
- 	requestRender();
+	dirty( DirtyType::Render );
 }
 
 void Handle::leave()
 {
 	m_hovering = false;
- 	requestRender();
+	dirty( DirtyType::Render );
 }
 
 bool Handle::buttonPress( const ButtonEvent &event )
@@ -217,21 +262,57 @@ bool Handle::dragEnter( const DragDropEvent &event )
 // LinearDrag
 //////////////////////////////////////////////////////////////////////////
 
-Handle::LinearDrag::LinearDrag()
+Handle::LinearDrag::LinearDrag( bool processModifiers )
 	:	m_gadget( nullptr ),
 		m_worldLine( V3f( 0 ), V3f( 1, 0, 0 ) ),
-		m_dragBeginPosition( 0 )
+		m_dragBeginPosition( 0 ),
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false ),
+		m_preciseMotionOrigin( 0 )
 {
 }
 
-Handle::LinearDrag::LinearDrag( const Gadget *gadget, const IECore::LineSegment3f &line, const DragDropEvent &dragBeginEvent )
+Handle::LinearDrag::LinearDrag( const Gadget *gadget, const Imath::V2f &line, const DragDropEvent &dragBeginEvent, bool processModifiers )
+	:   m_gadget( gadget ),
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
+{
+	// We need an axis in world space, derived from the supplied camera space
+	// line, normalized in gadget space...(!)
+	const M44f gadgetTransform = gadget->fullTransform();
+
+	const ViewportGadget *viewport = gadget->ancestor<ViewportGadget>();
+	const M44f cameraToGadget = viewport->getCameraTransform() * gadgetTransform.inverse();
+
+	V3f gadgetAxis;
+	cameraToGadget.multDirMatrix( V3f( line.x, line.y, 0 ), gadgetAxis );
+	gadgetAxis.normalize();
+
+	V3f worldAxis;
+	gadgetTransform.multDirMatrix( gadgetAxis, worldAxis );
+
+	const V3f worldOrigin =  V3f( 0 ) * gadgetTransform;
+	m_worldLine = LineSegment3f( worldOrigin, worldOrigin + worldAxis );
+
+	m_dragBeginPosition = updatedPosition( dragBeginEvent );
+
+	m_preciseMotionEnabled = dragBeginEvent.modifiers & ModifiableEvent::Shift;
+	m_preciseMotionOrigin = m_dragBeginPosition;
+}
+
+Handle::LinearDrag::LinearDrag( const Gadget *gadget, const IECore::LineSegment3f &line, const DragDropEvent &dragBeginEvent, bool processModifiers )
 	:	m_gadget( gadget ),
 		m_worldLine(
 			line.p0 * m_gadget->fullTransform(),
 			line.p1 * m_gadget->fullTransform()
 		),
-		m_dragBeginPosition( position( dragBeginEvent ) )
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
 {
+	m_dragBeginPosition = updatedPosition( dragBeginEvent );
+
+	m_preciseMotionEnabled = dragBeginEvent.modifiers & ModifiableEvent::Shift;
+	m_preciseMotionOrigin = m_dragBeginPosition;
 }
 
 float Handle::LinearDrag::startPosition() const
@@ -239,7 +320,7 @@ float Handle::LinearDrag::startPosition() const
 	return m_dragBeginPosition;
 }
 
-float Handle::LinearDrag::position( const DragDropEvent &event ) const
+float Handle::LinearDrag::updatedPosition( const DragDropEvent &event )
 {
 	const ViewportGadget *viewport = m_gadget->ancestor<ViewportGadget>();
 
@@ -275,19 +356,48 @@ float Handle::LinearDrag::position( const DragDropEvent &event ) const
 			Line3f( worldClosestLine.p0, worldClosestLine.p1 )
 		);
 
-	return m_worldLine.direction().dot( worldClosestPoint - m_worldLine.p0 ) / m_worldLine.length2();
+	float position = m_worldLine.direction().dot( worldClosestPoint - m_worldLine.p0 ) / m_worldLine.length2();
+
+	if( m_processModifiers )
+	{
+		// Factor in precision motion, in which we scale down motion after the
+		// key was held by a factor of 10, which means relative to the position
+		// at that time.
+		//
+		const bool shiftHeld = event.modifiers & ModifiableEvent::Shift;
+
+		// If this is the first time we've seen an event where precise motion is
+		// enabled, then we need to store the position at this time.
+		if( !m_preciseMotionEnabled && shiftHeld )
+		{
+			m_preciseMotionOrigin = position;
+		}
+		m_preciseMotionEnabled = shiftHeld;
+
+		if( m_preciseMotionEnabled )
+		{
+			position = m_preciseMotionOrigin + ( ( position - m_preciseMotionOrigin ) * 0.1f );
+		}
+	}
+
+	return position;
 }
 
 //////////////////////////////////////////////////////////////////////////
 // PlanarDrag
 //////////////////////////////////////////////////////////////////////////
 
-Handle::PlanarDrag::PlanarDrag()
-	:	m_gadget( nullptr )
+Handle::PlanarDrag::PlanarDrag( bool processModifiers )
+	:	m_gadget( nullptr ),
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false ),
+		m_preciseMotionOrigin( 0 )
 {
 }
 
-Handle::PlanarDrag::PlanarDrag( const Gadget *gadget, const DragDropEvent &dragBeginEvent )
+Handle::PlanarDrag::PlanarDrag( const Gadget *gadget, const DragDropEvent &dragBeginEvent, bool processModifiers )
+	:	m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
 {
 	const ViewportGadget *viewport = gadget->ancestor<ViewportGadget>();
 	const M44f cameraTransform = viewport->getCameraTransform();
@@ -310,7 +420,9 @@ Handle::PlanarDrag::PlanarDrag( const Gadget *gadget, const DragDropEvent &dragB
 	);
 }
 
-Handle::PlanarDrag::PlanarDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &axis0, const Imath::V3f &axis1, const DragDropEvent &dragBeginEvent )
+Handle::PlanarDrag::PlanarDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &axis0, const Imath::V3f &axis1, const DragDropEvent &dragBeginEvent, bool processModifiers )
+	:	m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
 {
 	init( gadget, origin, axis0, axis1, dragBeginEvent );
 }
@@ -330,17 +442,21 @@ Imath::V2f Handle::PlanarDrag::startPosition() const
 	return m_dragBeginPosition;
 }
 
-Imath::V2f Handle::PlanarDrag::position( const DragDropEvent &event ) const
+Imath::V2f Handle::PlanarDrag::updatedPosition( const DragDropEvent &event )
 {
 	Line3f worldLine(
 		event.line.p0 * m_gadget->fullTransform(),
 		event.line.p1 * m_gadget->fullTransform()
 	);
-	Plane3f worldPlane(
-		m_worldOrigin,
-		m_worldOrigin + m_worldAxis0,
-		m_worldOrigin + m_worldAxis1
-	);
+
+	if( m_linearDrag )
+	{
+		float linearPosition = m_linearDrag->updatedPosition( event );
+
+		return V2f( linearPosition, linearPosition ) * m_linearDragAxisMask;
+	}
+
+	Plane3f worldPlane( m_worldOrigin, m_worldPlaneNormal );
 	V3f worldIntersection( 0 );
 	worldPlane.intersect( worldLine, worldIntersection );
 
@@ -348,21 +464,196 @@ Imath::V2f Handle::PlanarDrag::position( const DragDropEvent &event ) const
 	// and returning the length of the projection as a proportion
 	// of the axis length.
 
-	return V2f(
+	V2f position = V2f(
 		m_worldAxis0.dot( worldIntersection - m_worldOrigin ) / m_worldAxis0.length2(),
 		m_worldAxis1.dot( worldIntersection - m_worldOrigin ) / m_worldAxis1.length2()
 	);
+
+	if( m_processModifiers )
+	{
+		const bool shiftHeld = event.modifiers & ModifiableEvent::Shift;
+		// If this is the first time we've seen an event where precise motion is
+		// enabled, then we need to store the position at this time.
+		if( !m_preciseMotionEnabled && shiftHeld )
+		{
+			m_preciseMotionOrigin = position;
+		}
+		m_preciseMotionEnabled = shiftHeld;
+
+		if( m_preciseMotionEnabled )
+		{
+			position = m_preciseMotionOrigin + ( ( position - m_preciseMotionOrigin ) * 0.1f );
+		}
+	}
+
+	return position;
 }
 
 void Handle::PlanarDrag::init( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &axis0, const Imath::V3f &axis1, const DragDropEvent &dragBeginEvent )
 {
 	m_axis0 = axis0;
 	m_axis1 = axis1;
+
 	m_gadget = gadget;
-	const M44f transform = gadget->fullTransform();
-	m_worldOrigin = origin * transform;
-	transform.multDirMatrix( axis0, m_worldAxis0 );
-	transform.multDirMatrix( axis1, m_worldAxis1 );
-	m_dragBeginPosition = position( dragBeginEvent );
+
+	WorldGadgetDragData dragData;
+	worldGadgetDragData( gadget, origin, axis0.cross( axis1 ), axis0, axis1, dragBeginEvent, dragData );
+	m_worldOrigin = dragData.worldOrigin;
+	m_worldAxis0 = dragData.worldAxis0;
+	m_worldAxis1 = dragData.worldAxis90;
+	m_worldPlaneNormal = dragData.worldNormal;
+
+	if( abs( dragData.worldNormal.dot( dragData.worldLine.dir ) ) < g_planarToLinearDragThreshold )
+	{
+		bool useAxis0 = abs( m_worldAxis0.dot( dragData.worldLine.dir ) ) < abs( m_worldAxis1.dot( dragData.worldLine.dir ) );
+
+		m_linearDragAxisMask = V2f( (float)useAxis0, (float)!useAxis0);
+
+		m_linearDrag = LinearDrag(
+			m_gadget,
+			LineSegment3f( V3f( 0 ), useAxis0 ? m_axis0 : m_axis1 ),
+			dragBeginEvent,
+			m_processModifiers
+		);
+	}
+
+	m_dragBeginPosition = updatedPosition( dragBeginEvent );
+
+	m_preciseMotionEnabled = dragBeginEvent.modifiers & ModifiableEvent::Shift;
+	m_preciseMotionOrigin = m_dragBeginPosition;
 }
 
+
+//////////////////////////////////////////////////////////////////////////
+// AngularDrag
+//////////////////////////////////////////////////////////////////////////
+
+Handle::AngularDrag::AngularDrag( bool processModifiers )
+	:	m_gadget( nullptr ),
+		m_rotation( 0.0f ),
+		m_dragBeginRotation( 0.0f ),
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
+{
+	m_drag = PlanarDrag( false );
+}
+
+Handle::AngularDrag::AngularDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &normal, const Imath::V3f &axis0, const DragDropEvent &dragBeginEvent, bool processModifiers )
+	:	m_gadget( gadget ),
+		m_rotation( 0.0f ),
+		m_normal( normal ),
+		m_axis0( axis0 ),
+		m_processModifiers( processModifiers ),
+		m_preciseMotionEnabled( false )
+{
+	V3f axis90 = normal.cross( axis0 );
+
+	WorldGadgetDragData dragData;
+	worldGadgetDragData( gadget, origin, normal, axis0, axis90, dragBeginEvent, dragData );
+
+	if( abs( dragData.worldNormal.dot( dragData.worldLine.dir ) ) < g_planarToLinearDragThreshold )
+	{
+		// Do a LinearDrag in raster space instead of world space
+
+		// We're going to find a direction in raster space where all movement along this axis will
+		// be treated as rotation. We want a direction in the 2d plane that is perpendicular to the
+		// normal, which we can get via cross product between the normal and the view direction.
+		V3f worldRotationDirection = dragData.worldLine.dir.cross( dragData.worldNormal );
+
+		// Convert to raster space
+		const ViewportGadget *viewport = gadget->ancestor<ViewportGadget>();
+		V2f rasterRotationDirection =
+			( viewport->worldToRasterSpace( worldRotationDirection + dragData.worldOrigin )
+			- viewport->worldToRasterSpace( dragData.worldOrigin ) ).normalized()
+			* V2f( 1.f, -1.f ) // Y is positive down in raster space, flip the Y direction
+		;
+
+		m_drag = LinearDrag(
+			gadget,
+			rasterRotationDirection,
+			dragBeginEvent,
+			m_processModifiers
+		);
+		m_dragBeginRotation = std::get<LinearDrag>( m_drag ).startPosition();
+	}
+	else
+	{
+		// Disable modifier processing as we'll do our own precision mode in angle space
+		m_drag = PlanarDrag( gadget, origin, axis0, axis90, dragBeginEvent, false );
+		m_dragBeginRotation = closestRotation( std::get<PlanarDrag>( m_drag ).startPosition(), m_rotation );
+	}
+
+	m_preciseMotionEnabled = dragBeginEvent.modifiers & ModifiableEvent::Shift;
+	m_preciseMotionOrigin = m_dragBeginRotation;
+}
+
+
+const Imath::V3f &Handle::AngularDrag::normal() const
+{
+	return m_normal;
+}
+
+const Imath::V3f &Handle::AngularDrag::axis0() const
+{
+	return m_axis0;
+}
+
+float Handle::AngularDrag::startRotation() const
+{
+	return m_dragBeginRotation;
+}
+
+float Handle::AngularDrag::updatedRotation( const DragDropEvent &event )
+{
+	float rotation;
+	if( LinearDrag *linearDrag = std::get_if<LinearDrag>( &m_drag ) )
+	{
+		auto handle = runTimeCast<const Handle>( m_gadget );
+
+		float rasterScaleFactor = handle->rasterScaleFactor().x;
+
+		float rotationFactor = linearDrag->updatedPosition( event ) - linearDrag->startPosition();
+		rotation = m_dragBeginRotation + ( rotationFactor / rasterScaleFactor ) * g_planarRotationScaleFactor;
+	}
+	else
+	{
+		PlanarDrag planarDrag = std::get<PlanarDrag>( m_drag );
+
+		// We can only recover an angle in the range -PI, PI from the 2d position
+		// that our drag gives us, but we want to be able to support continuous
+		// values and multiple revolutions. We need to store the un-modified rotation
+		// such that we pick the closest rotation to the mouse itself.
+		rotation = closestRotation( planarDrag.updatedPosition( event ), m_rotation );
+	}
+	m_rotation = rotation;
+
+	if( m_processModifiers )
+	{
+		const bool shiftHeld = event.modifiers & ModifiableEvent::Shift;
+		// If this is the first time we've seen an event where precise motion is
+		// enabled, then we need to store the position at this time.
+		if( !m_preciseMotionEnabled && shiftHeld )
+		{
+			m_preciseMotionOrigin = rotation;
+		}
+		m_preciseMotionEnabled = shiftHeld;
+
+		if( m_preciseMotionEnabled )
+		{
+			rotation = m_preciseMotionOrigin + ( ( rotation - m_preciseMotionOrigin ) * 0.1f );
+		}
+	}
+
+	return rotation;
+}
+
+bool Handle::AngularDrag::isLinearDrag() const
+{
+	return std::holds_alternative<LinearDrag>( m_drag );
+}
+
+float Handle::AngularDrag::closestRotation( const V2f &p, float targetRotation )
+{
+	const float r = atan2( p.y, p.x );
+	return Eulerf::angleMod( r - targetRotation ) + targetRotation;
+}

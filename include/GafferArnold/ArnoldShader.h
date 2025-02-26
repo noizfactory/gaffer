@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDSHADER_H
-#define GAFFERARNOLD_ARNOLDSHADER_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -51,10 +50,10 @@ class GAFFERARNOLD_API ArnoldShader : public GafferScene::Shader
 
 	public :
 
-		ArnoldShader( const std::string &name=defaultName<ArnoldShader>() );
+		explicit ArnoldShader( const std::string &name=defaultName<ArnoldShader>() );
 		~ArnoldShader() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldShader, ArnoldShaderTypeId, GafferScene::Shader );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldShader, ArnoldShaderTypeId, GafferScene::Shader );
 
 		/// Implemented for outPlug(), returning the parameter named in the "primaryInput"
 		/// shader annotation if it has been specified.
@@ -62,6 +61,10 @@ class GAFFERARNOLD_API ArnoldShader : public GafferScene::Shader
 		const Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) const override;
 
 		void loadShader( const std::string &shaderName, bool keepExistingValues=false ) override;
+
+	protected :
+
+		bool acceptsInput( const Gaffer::Plug *plug, const Gaffer::Plug *inputPlug ) const override;
 
 	private :
 
@@ -76,5 +79,3 @@ class GAFFERARNOLD_API ArnoldShader : public GafferScene::Shader
 IE_CORE_DECLAREPTR( ArnoldShader )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDSHADER_H

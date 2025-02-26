@@ -35,35 +35,38 @@
 ##########################################################################
 
 import os
-import subprocess32 as subprocess
+import pathlib
+import subprocess
 import unittest
 
+import Gaffer
 import GafferTest
 
 class PythonApplicationTest( GafferTest.TestCase ) :
 
 	def testVariableScope( self ) :
 
-		subprocess.check_call( [ "gaffer", "python", os.path.dirname( __file__ ) + "/pythonScripts/variableScope.py" ] )
+		subprocess.check_call( [ str( Gaffer.executablePath() ), "python", str( pathlib.Path( __file__ ).parent / "pythonScripts" / "variableScope.py" ) ] )
 
 	def testErrorReturnStatus( self ) :
 
 		p = subprocess.Popen(
-			[ "gaffer", "python", os.path.dirname( __file__ ) + "/pythonScripts/exception.py" ],
+			[ str( Gaffer.executablePath() ), "python", str( pathlib.Path( __file__ ).parent / "pythonScripts" / "exception.py" ) ],
 			stderr = subprocess.PIPE,
+			universal_newlines = True,
 		)
 		p.wait()
 
-		self.failUnless( "RuntimeError" in "".join( p.stderr.readlines() ) )
-		self.failUnless( p.returncode )
+		self.assertIn( "RuntimeError", "".join( p.stderr.readlines() ) )
+		self.assertTrue( p.returncode )
 
 	def testFlagArguments( self ) :
 
-		subprocess.check_call( [ "gaffer", "python", os.path.dirname( __file__ ) + "/pythonScripts/flagArguments.py", "-arguments", "-flag1", "-flag2" ] )
+		subprocess.check_call( [ str( Gaffer.executablePath() ), "python", str( pathlib.Path( __file__ ).parent / "pythonScripts" / "flagArguments.py" ), "-arguments", "-flag1", "-flag2" ] )
 
 	def testName( self ) :
 
-		subprocess.check_call( [ "gaffer", "python", os.path.dirname( __file__ ) + "/pythonScripts/name.py" ] )
+		subprocess.check_call( [ str( Gaffer.executablePath() ), "python", str( pathlib.Path( __file__ ).parent / "pythonScripts" / "name.py" ) ] )
 
 if __name__ == "__main__":
 	unittest.main()

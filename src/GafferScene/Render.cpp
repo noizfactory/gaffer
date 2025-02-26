@@ -36,19 +36,22 @@
 
 #include "GafferScene/Render.h"
 
+#include "GafferScene/OptionQuery.h"
 #include "GafferScene/Private/IECoreScenePreview/Renderer.h"
-#include "GafferScene/RendererAlgo.h"
+#include "GafferScene/Private/RendererAlgo.h"
+#include "GafferScene/SceneAlgo.h"
 #include "GafferScene/SceneNode.h"
 #include "GafferScene/ScenePlug.h"
 #include "GafferScene/SceneProcessor.h"
 
+#include "Gaffer/ApplicationRoot.h"
 #include "Gaffer/MonitorAlgo.h"
 #include "Gaffer/PerformanceMonitor.h"
+#include "Gaffer/Switch.h"
 
 #include "IECore/ObjectPool.h"
 
-#include "boost/filesystem.hpp"
-
+#include <filesystem>
 #include <memory>
 
 using namespace IECore;
@@ -69,9 +72,9 @@ struct RenderScope : public Context::EditableScope
 	RenderScope( const Context *context )
 		:	EditableScope( context ), m_sceneTranslationOnly( false )
 	{
-		if( auto d = context->get<BoolData>( g_sceneTranslationOnlyContextName, nullptr ) )
+		if( const bool *d = context->getIfExists<bool>( g_sceneTranslationOnlyContextName ) )
 		{
-			m_sceneTranslationOnly = d->readable();
+			m_sceneTranslationOnly = *d;
 			// Don't leak variable upstream.
 			remove( g_sceneTranslationOnlyContextName );
 		}
@@ -94,30 +97,48 @@ size_t Render::g_firstPlugIndex = 0;
 
 static IECore::InternedString g_rendererContextName( "scene:renderer" );
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Render );
+GAFFER_NODE_DEFINE_TYPE( Render );
 
 Render::Render( const std::string &name )
-	:	Render( /* rendererType = */ InternedString(), name )
-{
-}
-
-Render::Render( const IECore::InternedString &rendererType, const std::string &name )
 	:	TaskNode( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new ScenePlug( "in" ) );
-	addChild( new StringPlug( rendererType.string().empty() ? "renderer" : "__renderer", Plug::In, rendererType.string() ) );
+	addChild( new StringPlug( "renderer" ) );
 	addChild( new IntPlug( "mode", Plug::In, RenderMode, RenderMode, SceneDescriptionMode ) );
 	addChild( new StringPlug( "fileName" ) );
 	addChild( new ScenePlug( "out", Plug::Out, Plug::Default & ~Plug::Serialisable ) );
+	addChild( new StringPlug( "resolvedRenderer", Plug::Out, "", Plug::Default & ~Plug::Serialisable ) );
 	addChild( new ScenePlug( "__adaptedIn", Plug::In, Plug::Default & ~Plug::Serialisable ) );
 
-	SceneProcessorPtr adaptors = GafferScene::RendererAlgo::createAdaptors();
+	SceneProcessorPtr adaptors = GafferScene::SceneAlgo::createRenderAdaptors();
 	setChild( "__adaptors", adaptors );
 	adaptors->inPlug()->setInput( inPlug() );
+	adaptors->getChild<StringPlug>( "client" )->setValue( "Render" );
+	adaptors->getChild<StringPlug>( "renderer" )->setInput( resolvedRendererPlug() );
 	adaptedInPlug()->setInput( adaptors->outPlug() );
 
 	outPlug()->setInput( inPlug() );
+
+	// Internal network for `resolvedRenderer`. We use a Switch so that we don't
+	// even evaluate the scene globals if the renderer is overridden by `rendererPlug()`.
+
+	OptionQueryPtr optionQuery = new OptionQuery();
+	setChild( "__optionQuery", optionQuery );
+	optionQuery->scenePlug()->setInput( inPlug() );
+	NameValuePlug *rendererQuery = optionQuery->addQuery( rendererPlug() );
+	rendererQuery->namePlug()->setValue( "render:defaultRenderer" );
+
+	SwitchPtr querySwitch = new Switch();
+	setChild( "__querySwitch", querySwitch );
+	querySwitch->setup( rendererPlug() );
+	/// \todo Cast shouldn't be necessary - OptionQuery should provide a non-const accessor.
+	querySwitch->inPlugs()->getChild<Plug>( 0 )->setInput( const_cast<ValuePlug *>( optionQuery->valuePlugFromQuery( rendererQuery ) ) );
+	querySwitch->inPlugs()->getChild<Plug>( 1 )->setInput( rendererPlug() );
+	querySwitch->indexPlug()->setValue( 1 );
+	querySwitch->enabledPlug()->setInput( rendererPlug() );
+
+	resolvedRendererPlug()->setInput( querySwitch->outPlug() );
 }
 
 Render::~Render()
@@ -174,14 +195,24 @@ const ScenePlug *Render::outPlug() const
 	return getChild<ScenePlug>( g_firstPlugIndex + 4 );
 }
 
+Gaffer::StringPlug *Render::resolvedRendererPlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 5 );
+}
+
+const Gaffer::StringPlug *Render::resolvedRendererPlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 5 );
+}
+
 ScenePlug *Render::adaptedInPlug()
 {
-	return getChild<ScenePlug>( g_firstPlugIndex + 5 );
+	return getChild<ScenePlug>( g_firstPlugIndex + 6 );
 }
 
 const ScenePlug *Render::adaptedInPlug() const
 {
-	return getChild<ScenePlug>( g_firstPlugIndex + 5 );
+	return getChild<ScenePlug>( g_firstPlugIndex + 6 );
 }
 
 void Render::preTasks( const Gaffer::Context *context, Tasks &tasks ) const
@@ -205,18 +236,19 @@ IECore::MurmurHash Render::hash( const Gaffer::Context *context ) const
 
 	RenderScope renderScope( context );
 
-	const std::string rendererType = rendererPlug()->getValue();
-	if( rendererType.empty() )
+	const std::string rendererType = resolvedRendererPlug()->getValue();
+	const Mode mode = static_cast<Mode>( modePlug()->getValue() );
+	const std::string fileName = fileNamePlug()->getValue();
+	if( rendererType.empty() || ( mode == SceneDescriptionMode && fileName.empty() ) )
 	{
 		return IECore::MurmurHash();
 	}
 
-	const Mode mode = static_cast<Mode>( modePlug()->getValue() );
-	const std::string fileName = fileNamePlug()->getValue();
-	if( mode == SceneDescriptionMode && fileName.empty() )
-	{
-		return IECore::MurmurHash();
-	}
+	/// \todo Since we're computing the globals now (via `resolvedRenderer`),
+	/// maybe our hash should be the hash of the output definitions?
+	/// Then we'd know which parts of the context we were sensitive to
+	/// and wouldn't have such a pessimistic hash that includes all
+	/// context variables.
 
 	IECore::MurmurHash h = TaskNode::hash( context );
 	h.append( (uint64_t)inPlug()->source<Plug>() );
@@ -231,20 +263,39 @@ IECore::MurmurHash Render::hash( const Gaffer::Context *context ) const
 
 void Render::execute() const
 {
+	executeInternal( /* flushCaches = */ true );
+}
+
+void Render::executeSequence( const std::vector<float> &frames ) const
+{
+	Context::EditableScope frameScope( Context::current() );
+
+	for( auto frame : frames )
+	{
+		frameScope.setFrame( frame );
+		// We don't flush Gaffer's caches when rendering batches of frames,
+		// because that would mean starting scene generation from scratch
+		// each time. We assume that if renders have been batched, they are
+		// lightweight in the first place (otherwise there is little benefit
+		// in sharing the startup cost between several of them).
+		executeInternal( /* flushCaches = */ frames.size() == 1 );
+	}
+}
+
+void Render::executeInternal( bool flushCaches ) const
+{
 	if( inPlug()->source()->direction() != Plug::Out )
 	{
 		return;
 	}
 
 	RenderScope renderScope( Context::current() );
-
-	const std::string rendererType = rendererPlug()->getValue();
+	const std::string rendererType = resolvedRendererPlug()->getValue();
 	if( rendererType.empty() )
 	{
 		return;
 	}
-
-	renderScope.set( g_rendererContextName, rendererType );
+	renderScope.set( g_rendererContextName, &rendererType );
 
 	const Mode mode = static_cast<Mode>( modePlug()->getValue() );
 	const std::string fileName = fileNamePlug()->getValue();
@@ -256,11 +307,11 @@ void Render::execute() const
 		}
 		else
 		{
-			boost::filesystem::path fileNamePath( fileName );
-			boost::filesystem::path directoryPath = fileNamePath.parent_path();
+			const std::filesystem::path fileNamePath( fileName );
+			const std::filesystem::path directoryPath = fileNamePath.parent_path();
 			if( !directoryPath.empty() && !renderScope.sceneTranslationOnly() )
 			{
-				boost::filesystem::create_directories( directoryPath );
+				std::filesystem::create_directories( directoryPath );
 			}
 		}
 	}
@@ -275,14 +326,14 @@ void Render::execute() const
 		return;
 	}
 
-	ConstCompoundObjectPtr globals = adaptedInPlug()->globalsPlug()->getValue();
+	GafferScene::Private::RendererAlgo::RenderOptions renderOptions( adaptedInPlug() );
 	if( !renderScope.sceneTranslationOnly() )
 	{
-		GafferScene::RendererAlgo::createOutputDirectories( globals.get() );
+		GafferScene::Private::RendererAlgo::createOutputDirectories( renderOptions.globals.get() );
 	}
 
 	PerformanceMonitorPtr performanceMonitor;
-	if( const BoolData *d = globals->member<const BoolData>( g_performanceMonitorOptionName ) )
+	if( const BoolData *d = renderOptions.globals->member<const BoolData>( g_performanceMonitorOptionName ) )
 	{
 		if( d->readable() )
 		{
@@ -291,20 +342,20 @@ void Render::execute() const
 	}
 	Monitor::Scope performanceMonitorScope( performanceMonitor );
 
-	RendererAlgo::outputOptions( globals.get(), renderer.get() );
-	RendererAlgo::outputOutputs( globals.get(), renderer.get() );
+	GafferScene::Private::RendererAlgo::outputOptions( renderOptions.globals.get(), renderer.get() );
+	GafferScene::Private::RendererAlgo::outputOutputs( inPlug(), renderOptions.globals.get(), renderer.get() );
 
 	{
 		// Using nested scope so that we free the memory used by `renderSets`
 		// and `lightLinks` before we call `render()`.
-		RendererAlgo::RenderSets renderSets( adaptedInPlug() );
-		RendererAlgo::LightLinks lightLinks;
+		GafferScene::Private::RendererAlgo::RenderSets renderSets( adaptedInPlug() );
+		GafferScene::Private::RendererAlgo::LightLinks lightLinks;
 
-		RendererAlgo::outputCameras( adaptedInPlug(), globals.get(), renderSets, renderer.get() );
-		RendererAlgo::outputLights( adaptedInPlug(), globals.get(), renderSets, &lightLinks, renderer.get() );
-		RendererAlgo::outputLightFilters( adaptedInPlug(), globals.get(), renderSets, &lightLinks, renderer.get() );
+		GafferScene::Private::RendererAlgo::outputCameras( adaptedInPlug(), renderOptions, renderSets, renderer.get() );
+		GafferScene::Private::RendererAlgo::outputLights( adaptedInPlug(), renderOptions, renderSets, &lightLinks, renderer.get() );
+		GafferScene::Private::RendererAlgo::outputLightFilters( adaptedInPlug(), renderOptions, renderSets, &lightLinks, renderer.get() );
 		lightLinks.outputLightFilterLinks( adaptedInPlug() );
-		RendererAlgo::outputObjects( adaptedInPlug(), globals.get(), renderSets, &lightLinks, renderer.get() );
+		GafferScene::Private::RendererAlgo::outputObjects( adaptedInPlug(), renderOptions, renderSets, &lightLinks, renderer.get() );
 	}
 
 	if( renderScope.sceneTranslationOnly() )
@@ -312,17 +363,25 @@ void Render::execute() const
 		return;
 	}
 
-	// Now we have generated the scene, flush Cortex and Gaffer caches to
-	// provide more memory to the renderer.
-	/// \todo This is not ideal. If dispatch is batched then multiple
-	/// renders in the same process might actually benefit from sharing
-	/// the cache. And if executing directly within the gui app
-	/// flushing the caches is definitely not wanted. Since these
-	/// scenarios are currently uncommon, we prioritise the common
-	/// case of performing a single render from within `gaffer execute`,
-	/// but it would be good to do better.
-	ObjectPool::defaultObjectPool()->clear();
-	ValuePlug::clearCache();
+	if( flushCaches )
+	{
+		// Now we have generated the scene, flush Cortex and Gaffer caches to
+		// provide more memory to the renderer. We limit this to the `execute`
+		// and `dispatch` applications for two reasons :
+		//
+		// - In a GUI application, we don't want to clear the caches because
+		//   we'll probably benefit from using them again later.
+		// - In `execute` and `dispatch` we know we're not executing concurrently
+		//   with anything else, and can therefore pass `now = true` to
+		//   `clearHashCache()` safely.
+		auto *application = ancestor<ApplicationRoot>();
+		if( application && ( application->getName() == "execute" || application->getName() == "dispatch" ) )
+		{
+			ObjectPool::defaultObjectPool()->clear();
+			ValuePlug::clearCache();
+			ValuePlug::clearHashCache( /* now = */ true );
+		}
+	}
 
 	renderer->render();
 	renderer.reset();

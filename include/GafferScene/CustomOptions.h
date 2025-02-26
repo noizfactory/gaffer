@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_CUSTOMOPTIONS_H
-#define GAFFERSCENE_CUSTOMOPTIONS_H
+#pragma once
 
 #include "GafferScene/Options.h"
 
@@ -49,10 +48,10 @@ class GAFFERSCENE_API CustomOptions : public GafferScene::Options
 
 	public :
 
-		CustomOptions( const std::string &name=defaultName<CustomOptions>() );
+		explicit CustomOptions( const std::string &name=defaultName<CustomOptions>() );
 		~CustomOptions() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::CustomOptions, CustomOptionsTypeId, Options );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::CustomOptions, CustomOptionsTypeId, Options );
 
 		Gaffer::StringPlug *prefixPlug();
 		const Gaffer::StringPlug *prefixPlug() const;
@@ -73,5 +72,3 @@ class GAFFERSCENE_API CustomOptions : public GafferScene::Options
 IE_CORE_DECLAREPTR( CustomOptions )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_CUSTOMOPTIONS_H

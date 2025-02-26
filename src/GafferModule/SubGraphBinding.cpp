@@ -44,6 +44,7 @@
 #include "Gaffer/Box.h"
 #include "Gaffer/BoxIn.h"
 #include "Gaffer/BoxOut.h"
+#include "Gaffer/EditScope.h"
 #include "Gaffer/Plug.h"
 #include "Gaffer/Reference.h"
 
@@ -103,7 +104,7 @@ class BoxIOSerialiser : public NodeSerialiser
 		return NodeSerialiser::childNeedsConstruction( child, serialisation );
 	}
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		std::string result = NodeSerialiser::postConstructor( graphComponent, identifier, serialisation );
 
@@ -128,6 +129,7 @@ class BoxIOSerialiser : public NodeSerialiser
 
 		// Add a call to `setup()` to recreate the plugs.
 
+		/// \todo Avoid creating a temporary plug.
 		PlugPtr plug = boxIO->plug()->createCounterpart( boxIO->plug()->getName(), Plug::In );
 		plug->setFlags( Plug::Dynamic, false );
 
@@ -137,7 +139,7 @@ class BoxIOSerialiser : public NodeSerialiser
 		return result;
 	}
 
-	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postScript( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		std::string result = NodeSerialiser::postScript( graphComponent, identifier, serialisation );
 
@@ -176,10 +178,11 @@ class BoxIOSerialiser : public NodeSerialiser
 namespace
 {
 
-void setup( BoxIO &b, const Plug &plug )
+template<typename T>
+void setup( T &n, const Plug &plug )
 {
 	IECorePython::ScopedGILRelease gilRelease;
-	b.setup( &plug );
+	n.setup( &plug );
 }
 
 void setupPromotedPlug( BoxIO &b )
@@ -198,6 +201,56 @@ PlugPtr promotedPlug( BoxIO &b )
 	return b.promotedPlug();
 }
 
+PlugPtr promote( Plug &plug )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return BoxIO::promote( &plug );
+}
+
+void insert( Box &box )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	BoxIO::insert( &box );
+}
+
+DependencyNodePtr acquireProcessor( EditScope &e, const std::string &type, bool createIfNecessary )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return e.acquireProcessor( type, createIfNecessary );
+}
+
+list processors( EditScope &e )
+{
+	list result;
+	for( const auto &n : e.processors() )
+	{
+		result.append( DependencyNodePtr( n ) );
+	}
+	return result;
+}
+
+list registeredProcessors()
+{
+	list result;
+	for( const auto &n : EditScope::registeredProcessors() )
+	{
+		result.append( n );
+	}
+	return result;
+}
+
+void registerProcessor( const std::string &name, object creator )
+{
+	EditScope::registerProcessor(
+		name,
+		[creator]() {
+			IECorePython::ScopedGILLock gilLock;
+			object n = creator();
+			return extract<DependencyNodePtr>( n )();
+		}
+	);
+}
+
 } // namespace
 
 // Reference
@@ -208,39 +261,38 @@ namespace
 
 struct ReferenceLoadedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, ReferencePtr r )
+	void operator()( boost::python::object slot, ReferencePtr r )
 	{
 		try
 		{
 			slot( r );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
 class ReferenceSerialiser : public NodeSerialiser
 {
 
-	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const override
+	std::string postConstructor( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const override
 	{
 		const Reference *r = static_cast<const Reference *>( graphComponent );
 
-		const std::string &fileName = r->fileName();
+		const std::filesystem::path &fileName = r->fileName();
 		if( fileName.empty() )
 		{
 			return "";
 		};
 
-		return identifier + ".load( \"" + fileName + "\" )\n";
+		return identifier + ".load( \"" + fileName.generic_string() + "\" )\n";
 	}
 
 };
 
-void load( Reference &r, const std::string &f )
+void load( Reference &r, const std::filesystem::path &f )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	r.load( f );
@@ -250,10 +302,10 @@ void load( Reference &r, const std::string &f )
 
 void GafferModule::bindSubGraph()
 {
-	typedef DependencyNodeWrapper<SubGraph> SubGraphWrapper;
+	using SubGraphWrapper = DependencyNodeWrapper<SubGraph>;
 	DependencyNodeClass<SubGraph, SubGraphWrapper>();
 
-	typedef DependencyNodeWrapper<Box> BoxWrapper;
+	using BoxWrapper = DependencyNodeWrapper<Box>;
 
 	DependencyNodeClass<Box, BoxWrapper>()
 		.def( "canPromotePlug", &Box::canPromotePlug, ( arg( "descendantPlug" ) ) )
@@ -268,13 +320,13 @@ void GafferModule::bindSubGraph()
 	Serialisation::registerSerialiser( Box::staticTypeId(), new BoxSerialiser );
 
 	NodeClass<BoxIO>( nullptr, no_init )
-		.def( "setup", &setup, ( arg( "plug" ) = object() ) )
+		.def( "setup", &setup<BoxIO>, ( arg( "plug" ) = object() ) )
 		.def( "setupPromotedPlug", &setupPromotedPlug )
 		.def( "plug", &plug )
 		.def( "promotedPlug", &promotedPlug )
-		.def( "promote", &BoxIO::promote, return_value_policy<CastToIntrusivePtr>() )
+		.def( "promote", &promote )
 		.staticmethod( "promote" )
-		.def( "insert", &BoxIO::insert )
+		.def( "insert", &insert )
 		.staticmethod( "insert" )
 		.def( "canInsert", &BoxIO::canInsert )
 		.staticmethod( "canInsert" )
@@ -290,10 +342,23 @@ void GafferModule::bindSubGraph()
 		.def( "fileName", &Reference::fileName, return_value_policy<copy_const_reference>() )
 		.def( "referenceLoadedSignal", &Reference::referenceLoadedSignal, return_internal_reference<1>() )
 		.def( "hasMetadataEdit", &Reference::hasMetadataEdit )
+		.def( "isChildEdit", &Reference::isChildEdit )
 	;
 
 	SignalClass<Reference::ReferenceLoadedSignal, DefaultSignalCaller<Reference::ReferenceLoadedSignal>, ReferenceLoadedSlotCaller >( "ReferenceLoadedSignal" );
 
 	Serialisation::registerSerialiser( Reference::staticTypeId(), new ReferenceSerialiser );
+
+	NodeClass<EditScope>()
+		.def( "setup", &setup<EditScope>, ( arg( "plug" ) ) )
+		.def( "acquireProcessor", &acquireProcessor, ( arg( "type" ), arg( "createIfNecessary" ) = true ) )
+		.def( "processors", &processors )
+		.def( "registerProcessor", &registerProcessor )
+		.staticmethod( "registerProcessor" )
+		.def( "deregisterProcessor", &EditScope::deregisterProcessor )
+		.staticmethod( "deregisterProcessor" )
+		.def( "registeredProcessors", &registeredProcessors )
+		.staticmethod( "registeredProcessors" )
+	;
 
 }

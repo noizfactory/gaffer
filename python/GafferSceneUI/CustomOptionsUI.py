@@ -67,6 +67,12 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"options.*" : [
+
+			"nameValuePlugPlugValueWidget:ignoreNamePlug", False,
+
+		],
+
 		"prefix" : [
 
 			"description",
@@ -78,7 +84,13 @@ Gaffer.Metadata.registerNode(
 
 			"layout:section", "Advanced",
 
-		]
+		],
+
+		"extraOptions" : [
+
+			"plugValueWidget:type", None,
+
+		],
 
 	}
 

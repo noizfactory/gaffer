@@ -37,6 +37,7 @@
 
 #include "GafferUI/NodeGadget.h"
 
+#include "GafferUI/ContextTracker.h"
 #include "GafferUI/LinearContainer.h"
 #include "GafferUI/NameGadget.h"
 #include "GafferUI/Nodule.h"
@@ -48,6 +49,8 @@
 #include "IECore/SimpleTypedData.h"
 
 #include "boost/algorithm/string/find.hpp"
+
+#include "fmt/format.h"
 
 using namespace GafferUI;
 using namespace Imath;
@@ -62,18 +65,23 @@ using namespace boost;
 namespace
 {
 
-typedef std::map<std::string, NodeGadget::NodeGadgetCreator> TypeCreatorMap;
+using TypeCreatorMap = std::map<std::string, NodeGadget::NodeGadgetCreator>;
 TypeCreatorMap &typeCreators()
 {
-	static TypeCreatorMap c;
-	return c;
+	// We tactically "leak" this map. NodeGadgetCreators are
+	// registered from Python, meaning we hold python objects in the TypeCreatorMap.
+	// Python completes shutdown before static destructors are run, and trying
+	// to destroy a Python object after Python shutdown can lead to crashes.
+	static auto c = new TypeCreatorMap;
+	return *c;
 }
 
-typedef std::map<IECore::TypeId, NodeGadget::NodeGadgetCreator> NodeCreatorMap;
+using NodeCreatorMap = std::map<IECore::TypeId, NodeGadget::NodeGadgetCreator>;
 NodeCreatorMap &nodeCreators()
 {
-	static NodeCreatorMap c;
-	return c;
+	// See `typeCreators()` for note on "leak".
+	static auto c = new NodeCreatorMap;
+	return *c;
 }
 
 } // namespace
@@ -85,7 +93,7 @@ NodeCreatorMap &nodeCreators()
 GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( NodeGadget );
 
 NodeGadget::NodeGadget( Gaffer::NodePtr node )
-	:	m_node( node.get() )
+	:	m_active( false ), m_node( node.get() )
 {
 }
 
@@ -110,7 +118,7 @@ NodeGadgetPtr NodeGadget::create( Gaffer::NodePtr node )
 		}
 		else
 		{
-			IECore::msg( IECore::Msg::Warning, "NodeGadget::create", boost::format( "Nonexistent type \"%s\" requested for node \"%s\"" ) % nodeGadgetType->readable() % node->fullName() );
+			IECore::msg( IECore::Msg::Warning, "NodeGadget::create", fmt::format( "Nonexistent type \"{}\" requested for node \"{}\"", nodeGadgetType->readable(), node->fullName() ) );
 		}
 	}
 
@@ -207,4 +215,14 @@ std::string NodeGadget::getToolTip( const IECore::LineSegment3f &line ) const
 	}
 
 	return result;
+}
+
+void NodeGadget::updateFromContextTracker( const ContextTracker *contextTracker )
+{
+	const bool active = contextTracker->targetNode() ? contextTracker->isTracked( m_node ) : true;
+	if( m_active != active )
+	{
+		m_active = active;
+		dirty( DirtyType::Render );
+	}
 }

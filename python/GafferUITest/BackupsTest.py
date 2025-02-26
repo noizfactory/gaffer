@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 ##########################################################################
 #
 #  Copyright (c) 2018, Image Engine Design Inc. All rights reserved.
@@ -68,19 +70,19 @@ class BackupsTest( GafferUITest.TestCase ) :
 		a = Gaffer.ApplicationRoot()
 
 		b = GafferUI.Backups.acquire( a )
-		b.settings()["fileName"].setValue( self.temporaryDirectory() + "/backups/${script:name}.gfr" )
+		b.settings()["fileName"].setValue( self.temporaryDirectory() / "backups" / "${script:name}.gfr" )
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( self.temporaryDirectory() + "/test.gfr" )
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
 		a["scripts"].addChild( s )
 		s.save()
 
-		backupFileName = self.temporaryDirectory() + "/backups/test.gfr"
-		self.assertFalse( os.path.exists( backupFileName ) )
+		backupFileName = self.temporaryDirectory() / "backups" / "test.gfr"
+		self.assertFalse( backupFileName.exists() )
 		self.assertEqual( b.backups( s ), [] )
 
 		self.assertEqual( b.backup( s ), backupFileName )
-		self.assertTrue( os.path.exists( backupFileName ) )
+		self.assertTrue( backupFileName.exists() )
 		self.assertEqual( b.backups( s ), [ backupFileName ] )
 		self.__assertFilesEqual( s["fileName"].getValue(), backupFileName )
 
@@ -100,7 +102,7 @@ class BackupsTest( GafferUITest.TestCase ) :
 		b.settings()["files"].setValue( 3 )
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( self.temporaryDirectory() + "/test.gfr" )
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
 		s["add"] = GafferTest.AddNode()
 		a["scripts"].addChild( s )
 
@@ -123,12 +125,12 @@ class BackupsTest( GafferUITest.TestCase ) :
 			s["add"]["op1"].setValue( i )
 			s.save()
 
-			backupFileName = "{0}/test-backup{1}.gfr".format( self.temporaryDirectory(), i % 3 )
+			backupFileName = self.temporaryDirectory() / f"test-backup{i%3}.gfr"
 			if i < 3 :
-				self.assertFalse( os.path.exists( backupFileName ) )
+				self.assertFalse( backupFileName.exists() )
 
 			self.assertEqual( b.backup( s ), backupFileName )
-			self.assertTrue( os.path.exists( backupFileName ) )
+			self.assertTrue( backupFileName.exists() )
 			self.__assertFilesEqual( s["fileName"].getValue(), backupFileName )
 
 			expectedBackups.append( backupFileName )
@@ -147,7 +149,7 @@ class BackupsTest( GafferUITest.TestCase ) :
 		b.settings()["files"].setValue( 3 )
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( self.temporaryDirectory() + "/test.gfr" )
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
 		self.assertEqual( b.recoveryFile( s ), None )
 
 		timeBetweenBackups = 0.01 if sys.platform != "darwin" else 1.1
@@ -155,11 +157,11 @@ class BackupsTest( GafferUITest.TestCase ) :
 		# Script hasn't even been saved - always choose the recovery file
 
 		b.backup( s )
-		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() + "/test-backup0.gfr" )
+		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() / "test-backup0.gfr" )
 
 		time.sleep( timeBetweenBackups )
 		b.backup( s )
-		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() + "/test-backup1.gfr" )
+		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() / "test-backup1.gfr" )
 
 		# Script has been saved, and backups are identical. No need for recovery.
 
@@ -175,7 +177,7 @@ class BackupsTest( GafferUITest.TestCase ) :
 		time.sleep( timeBetweenBackups )
 		s.addChild( Gaffer.Node() )
 		b.backup( s )
-		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() + "/test-backup0.gfr" )
+		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() / "test-backup0.gfr" )
 
 		# Script saved again, no need for recovery.
 
@@ -186,16 +188,16 @@ class BackupsTest( GafferUITest.TestCase ) :
 
 		del s["Node"]
 		b.backup( s )
-		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() + "/test-backup1.gfr" )
+		self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() / "test-backup1.gfr" )
 
 	def testReadOnly( self ) :
 
 		a = Gaffer.ApplicationRoot()
 		b = GafferUI.Backups.acquire( a )
-		b.settings()["fileName"].setValue( self.temporaryDirectory() + "/backups/${script:name}.gfr" )
+		b.settings()["fileName"].setValue( self.temporaryDirectory() / "backups/${script:name}.gfr" )
 
 		s = Gaffer.ScriptNode()
-		s["fileName"].setValue( self.temporaryDirectory() + "/test.gfr" )
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
 
 		def assertBackupsReadOnly() :
 
@@ -205,12 +207,32 @@ class BackupsTest( GafferUITest.TestCase ) :
 		b.backup( s )
 		assertBackupsReadOnly()
 
+	def testNonASCIIRecoveryFile( self ) :
+
+		a = Gaffer.ApplicationRoot()
+
+		b = GafferUI.Backups.acquire( a )
+		b.settings()["fileName"].setValue( "${script:directory}/${script:name}-backup${backup:number}.gfr" )
+		b.settings()["files"].setValue( 3 )
+
+		s = Gaffer.ScriptNode()
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
+		s.save()
+
+		s["node"] = GafferTest.StringInOutNode()
+		s["node"]["in"].setValue( "Ä, Ö, and Ü." )
+
+		b.backup( s )
+
+		with self.scopedLocale( "C" ) :
+			self.assertEqual( b.recoveryFile( s ), self.temporaryDirectory() / "test-backup0.gfr" )
+
 	def __assertFilesEqual( self, f1, f2 ) :
 
-		with open( f1 ) as f1 :
+		with open( f1, encoding = "utf-8" ) as f1 :
 			l1 = f1.readlines()
 
-		with open( f2 ) as f2 :
+		with open( f2, encoding = "utf-8" ) as f2 :
 			l2 = f2.readlines()
 
 		self.assertEqual( l1, l2 )

@@ -44,11 +44,12 @@
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/UndoScope.h"
 
-#include "OpenEXR/ImathMatrixAlgo.h"
+#include "Imath/ImathMatrixAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
@@ -57,38 +58,10 @@ using namespace GafferScene;
 using namespace GafferSceneUI;
 
 //////////////////////////////////////////////////////////////////////////
-// Internal utilities
-//////////////////////////////////////////////////////////////////////////
-
-namespace
-{
-
-M44f signOnlyScaling( const M44f &m )
-{
-	V3f scale;
-	V3f shear;
-	V3f rotate;
-	V3f translate;
-
-	extractSHRT( m, scale, shear, rotate, translate );
-
-	M44f result;
-
-	result.translate( translate );
-	result.rotate( rotate );
-	result.shear( shear );
-	result.scale( V3f( sign( scale.x ), sign( scale.y ), sign( scale.z ) ) );
-
-	return result;
-}
-
-} // namespace
-
-//////////////////////////////////////////////////////////////////////////
 // ScaleTool
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ScaleTool );
+GAFFER_NODE_DEFINE_TYPE( ScaleTool );
 
 ScaleTool::ToolDescription<ScaleTool, SceneView> ScaleTool::g_toolDescription;
 
@@ -103,8 +76,8 @@ ScaleTool::ScaleTool( SceneView *view, const std::string &name )
 		ScaleHandlePtr handle = new ScaleHandle( axes[i] );
 		handle->setRasterScale( 75 );
 		handles()->setChild( handleNames[i], handle );
-		// connect with group 0, so we get called before the Handle's slot does.
-		handle->dragBeginSignal().connect( 0, boost::bind( &ScaleTool::dragBegin, this, axes[i] ) );
+		// Connect at front, so we get called before the Handle's slot does.
+		handle->dragBeginSignal().connectFront( boost::bind( &ScaleTool::dragBegin, this, axes[i] ) );
 		handle->dragMoveSignal().connect( boost::bind( &ScaleTool::dragMove, this, ::_1, ::_2 ) );
 		handle->dragEndSignal().connect( boost::bind( &ScaleTool::dragEnd, this ) );
 	}
@@ -126,27 +99,11 @@ bool ScaleTool::affectsHandles( const Gaffer::Plug *input ) const
 
 void ScaleTool::updateHandles( float rasterScale )
 {
-	const Selection &primarySelection = this->selection().back();
-
-	M44f pivotMatrix;
-	{
-		Context::Scope upstreamScope( primarySelection.upstreamContext.get() );
-		const V3f pivot = primarySelection.transformPlug->pivotPlug()->getValue();
-		pivotMatrix.translate( pivot );
-	}
-
-	M44f handlesMatrix = pivotMatrix * primarySelection.transformPlug->matrix() * primarySelection.sceneToTransformSpace().inverse();
-	// We want to take the sign of the scaling into account so that
-	// our handles point in the right direction. But we don't want
-	// the magnitude because a non-uniform handle scale breaks the
-	// operation of the xy/xz/yz handles.
-	handlesMatrix = signOnlyScaling( handlesMatrix );
-
 	handles()->setTransform(
-		handlesMatrix
+		this->selection().back().orientedTransform( Local )
 	);
 
-	for( ScaleHandleIterator it( handles() ); !it.done(); ++it )
+	for( ScaleHandle::Iterator it( handles() ); !it.done(); ++it )
 	{
 		bool enabled = true;
 		for( const auto &s : selection() )
@@ -166,7 +123,7 @@ void ScaleTool::scale( const Imath::V3f &scale )
 {
 	for( const auto &s : selection() )
 	{
-		Scale( s ).apply( scale );
+		Scale( s ).apply( V3i( 1 ), scale );
 	}
 }
 
@@ -181,13 +138,14 @@ IECore::RunTimeTypedPtr ScaleTool::dragBegin( GafferUI::Style::Axes axes )
 	return nullptr; // Let the handle start the drag.
 }
 
-bool ScaleTool::dragMove( const GafferUI::Gadget *gadget, const GafferUI::DragDropEvent &event )
+bool ScaleTool::dragMove( GafferUI::Gadget *gadget, const GafferUI::DragDropEvent &event )
 {
-	UndoScope undoScope( selection().back().transformPlug->ancestor<ScriptNode>(), UndoScope::Enabled, undoMergeGroup() );
-	const V3f &scaling = static_cast<const ScaleHandle *>( gadget )->scaling( event );
-	for( const auto &s : m_drag )
+	UndoScope undoScope( view()->scriptNode(), UndoScope::Enabled, undoMergeGroup() );
+	ScaleHandle *scaleHandle = static_cast<ScaleHandle *>( gadget );
+	const V3f &scaling = scaleHandle->scaling( event );
+	for( auto &s : m_drag )
 	{
-		s.apply( scaling );
+		s.apply( scaleHandle->axisMask(), scaling );
 	}
 	return true;
 }
@@ -203,18 +161,22 @@ bool ScaleTool::dragEnd()
 //////////////////////////////////////////////////////////////////////////
 
 ScaleTool::Scale::Scale( const Selection &selection )
+	:	m_selection( selection )
 {
-	Context::Scope scopedContext( selection.context.get() );
-	m_plug = selection.transformPlug->scalePlug();
-	m_originalScale = m_plug->getValue();
-	m_time = selection.context->getTime();
 }
 
 bool ScaleTool::Scale::canApply( const Imath::V3i &axisMask ) const
 {
+	auto edit = m_selection.acquireTransformEdit( /* createIfNecessary = */ false );
+	if( !edit )
+	{
+		// Edit will be created on demand in `apply()`.
+		return !MetadataAlgo::readOnly( m_selection.editTarget() );
+	}
+
 	for( int i = 0; i < 3; ++i )
 	{
-		if( axisMask[i] && !canSetValueOrAddKey( m_plug->getChild( i ) ) )
+		if( axisMask[i] && !canSetValueOrAddKey( edit->scale->getChild( i ) ) )
 		{
 			return false;
 		}
@@ -223,14 +185,22 @@ bool ScaleTool::Scale::canApply( const Imath::V3i &axisMask ) const
 	return true;
 }
 
-void ScaleTool::Scale::apply( const Imath::V3f &scale ) const
+void ScaleTool::Scale::apply( const Imath::V3i &axisMask, const Imath::V3f &scale )
 {
+	V3fPlug *scalePlug = m_selection.acquireTransformEdit()->scale.get();
+	if( !m_originalScale )
+	{
+		// First call to `apply()`.
+		Context::Scope scopedContext( m_selection.context() );
+		m_originalScale = scalePlug->getValue();
+	}
+
 	for( int i = 0; i < 3; ++i )
 	{
-		FloatPlug *plug = m_plug->getChild( i );
-		if( canSetValueOrAddKey( plug ) )
+		FloatPlug *plug = scalePlug->getChild( i );
+		if( axisMask[i] && canSetValueOrAddKey( plug ) )
 		{
-			setValueOrAddKey( plug, m_time, m_originalScale[i] * scale[i] );
+			setValueOrAddKey( plug, m_selection.context()->getTime(), (*m_originalScale)[i] * scale[i] );
 		}
 	}
 }

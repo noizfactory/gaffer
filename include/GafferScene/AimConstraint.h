@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_AIMCONSTRAINT_H
-#define GAFFERSCENE_AIMCONSTRAINT_H
+#pragma once
 
 #include "GafferScene/Constraint.h"
 
@@ -47,10 +46,10 @@ class GAFFERSCENE_API AimConstraint : public Constraint
 
 	public :
 
-		AimConstraint( const std::string &name=defaultName<AimConstraint>() );
+		explicit AimConstraint( const std::string &name=defaultName<AimConstraint>() );
 		~AimConstraint() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::AimConstraint, AimConstraintTypeId, Constraint );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::AimConstraint, AimConstraintTypeId, Constraint );
 
 		Gaffer::V3fPlug *aimPlug();
 		const Gaffer::V3fPlug *aimPlug() const;
@@ -73,5 +72,3 @@ class GAFFERSCENE_API AimConstraint : public Constraint
 IE_CORE_DECLAREPTR( AimConstraint )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_AIMCONSTRAINT_H

@@ -150,7 +150,7 @@ void convert(Imath::Quatd& dest, const openvdb::math::Quatd& src)
 	dest = Imath::Quatd( src[3], src[0], src[1], src[2]);
 }
 
-typedef openvdb::points::PointDataGrid::TreeType::LeafCIter LeafIter;
+using LeafIter = openvdb::points::PointDataGrid::TreeType::LeafCIter;
 
 template<typename CortexType, typename VDBType, template <typename P> class StorageType = IECore::TypedData>
 void appendData(IECore::Data *destArray, const openvdb::points::AttributeArray& array, LeafIter leafIter)
@@ -179,14 +179,8 @@ IECore::DataPtr createArray( size_t size )
 
 struct Functions
 {
-	typedef std::function<IECore::DataPtr(size_t size)> CreateFn;
-	typedef std::function<
-		void (
-			IECore::Data *,
-			const openvdb::points::AttributeArray&,
-			LeafIter
-		)
-	> AppendFn;
+	using CreateFn = std::function<IECore::DataPtr ( size_t )>;
+	using AppendFn = std::function<void ( IECore::Data *, const openvdb::points::AttributeArray &, LeafIter )>;
 
 	Functions( CreateFn create , AppendFn append ) : m_create(create), m_append(append) {}
 
@@ -447,11 +441,12 @@ IECoreScene::PointsPrimitivePtr createPointsPrimitive( openvdb::GridBase::ConstP
 
 } //namespace
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( PointsGridToPoints );
+GAFFER_NODE_DEFINE_TYPE( PointsGridToPoints );
 
 size_t PointsGridToPoints::g_firstPlugIndex = 0;
 
-PointsGridToPoints::PointsGridToPoints( const std::string &name ) : SceneElementProcessor( name )
+PointsGridToPoints::PointsGridToPoints( const std::string &name )
+	:	ObjectProcessor( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
@@ -496,33 +491,26 @@ const Gaffer::BoolPlug *PointsGridToPoints::invertNamesPlug() const
 	return getChild<BoolPlug>( g_firstPlugIndex + 2 );
 }
 
-void PointsGridToPoints::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+bool PointsGridToPoints::affectsProcessedObject( const Gaffer::Plug *input ) const
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if( input == gridPlug() || input == namesPlug() || input == invertNamesPlug() )
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
-}
-
-bool PointsGridToPoints::processesObject() const
-{
-	return true;
+	return
+		ObjectProcessor::affectsProcessedObject( input ) ||
+		input == gridPlug() || input == namesPlug() || input == invertNamesPlug()
+	;
 }
 
 void PointsGridToPoints::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	SceneElementProcessor::hashProcessedObject( path, context, h );
+	ObjectProcessor::hashProcessedObject( path, context, h );
 
 	gridPlug()->hash( h );
 	namesPlug()->hash( h );
 	invertNamesPlug()->hash ( h );
 }
 
-IECore::ConstObjectPtr PointsGridToPoints::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr PointsGridToPoints::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
-	const VDBObject *vdbObject = runTimeCast<const VDBObject>( inputObject.get() );
+	const VDBObject *vdbObject = runTimeCast<const VDBObject>( inputObject );
 	if( !vdbObject )
 	{
 		return inputObject;
@@ -555,6 +543,3 @@ IECore::ConstObjectPtr PointsGridToPoints::computeProcessedObject( const ScenePa
 
 	return points;
 }
-
-
-

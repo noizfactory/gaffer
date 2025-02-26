@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_CLAMP_H
-#define GAFFERIMAGE_CLAMP_H
+#pragma once
 
 #include "GafferImage/ChannelDataProcessor.h"
 
@@ -56,10 +55,10 @@ class GAFFERIMAGE_API Clamp : public ChannelDataProcessor
 
 	public :
 
-		Clamp( const std::string &name=defaultName<Clamp>() );
+		explicit Clamp( const std::string &name=defaultName<Clamp>() );
 		~Clamp() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Clamp, ClampTypeId, ChannelDataProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Clamp, ClampTypeId, ChannelDataProcessor );
 
 		//! @name Plug Accessors
 		/// Returns a pointer to the node's plugs.
@@ -102,5 +101,3 @@ class GAFFERIMAGE_API Clamp : public ChannelDataProcessor
 IE_CORE_DECLAREPTR( Clamp )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_CLAMP_H

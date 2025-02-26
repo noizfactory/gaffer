@@ -64,34 +64,38 @@ class ContextTest( GafferTest.TestCase ) :
 		changes = []
 		def f( context, name ) :
 
-			self.failUnless( context.isSame( c ) )
-			changes.append( ( name, context.get( name, None ) ) )
+			self.assertTrue( context.isSame( c ) )
+			changes.append( ( name, context.get( name, None ), context.hash() ) )
 
-		cn = c.changedSignal().connect( f )
+		c.changedSignal().connect( f )
 
 		c["a"] = 2
-		self.assertEqual( changes, [ ( "a", 2 ) ] )
+		hash1 = c.hash()
+		self.assertEqual( changes, [ ( "a", 2, hash1 ) ] )
 
 		c["a"] = 3
-		self.assertEqual( changes, [ ( "a", 2 ), ( "a", 3 ) ] )
+		hash2 = c.hash()
+		self.assertEqual( changes, [ ( "a", 2, hash1 ), ( "a", 3, hash2 ) ] )
 
 		c["b"] = 1
-		self.assertEqual( changes, [ ( "a", 2 ), ( "a", 3 ), ( "b", 1 ) ] )
+		hash3 = c.hash()
+		self.assertEqual( changes, [ ( "a", 2, hash1 ), ( "a", 3, hash2 ), ( "b", 1, hash3 ) ] )
 
-		# when an assignment makes no actual change, the signal should not
-		# be triggered again.
+		# Assigning the same value again should not trigger the change signal
 		c["b"] = 1
-		self.assertEqual( changes, [ ( "a", 2 ), ( "a", 3 ), ( "b", 1 ) ] )
+		self.assertEqual( changes, [ ( "a", 2, hash1 ), ( "a", 3, hash2 ), ( "b", 1, hash3 ) ] )
 
 		# Removing variables should also trigger the changed signal.
 
 		del changes[:]
 
 		c.remove( "a" )
-		self.assertEqual( changes, [ ( "a", None ) ] )
+		hash4 = c.hash()
+		self.assertEqual( changes, [ ( "a", None, hash4 ) ] )
 
 		del c["b"]
-		self.assertEqual( changes, [ ( "a", None ), ( "b", None ) ] )
+		hash5 = c.hash()
+		self.assertEqual( changes, [ ( "a", None, hash4 ), ( "b", None, hash5 ) ] )
 
 	def testTypes( self ) :
 
@@ -100,63 +104,171 @@ class ContextTest( GafferTest.TestCase ) :
 		c["int"] = 1
 		self.assertEqual( c["int"], 1 )
 		self.assertEqual( c.get( "int" ), 1 )
+		compare = c.hash()
 		c.set( "int", 2 )
 		self.assertEqual( c["int"], 2 )
-		self.failUnless( isinstance( c["int"], int ) )
+		self.assertIsInstance( c["int"], int )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["float"] = 1.0
 		self.assertEqual( c["float"], 1.0 )
 		self.assertEqual( c.get( "float" ), 1.0 )
+		compare = c.hash()
 		c.set( "float", 2.0 )
 		self.assertEqual( c["float"], 2.0 )
-		self.failUnless( isinstance( c["float"], float ) )
+		self.assertIsInstance( c["float"], float )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["string"] = "hi"
 		self.assertEqual( c["string"], "hi" )
 		self.assertEqual( c.get( "string" ), "hi" )
+		compare = c.hash()
 		c.set( "string", "bye" )
 		self.assertEqual( c["string"], "bye" )
-		self.failUnless( isinstance( c["string"], basestring ) )
+		self.assertIsInstance( c["string"], str )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["v2i"] = imath.V2i( 1, 2 )
 		self.assertEqual( c["v2i"], imath.V2i( 1, 2 ) )
 		self.assertEqual( c.get( "v2i" ), imath.V2i( 1, 2 ) )
-		c.set( "v2i", imath.V2i( 1, 2 ) )
-		self.assertEqual( c["v2i"], imath.V2i( 1, 2 ) )
-		self.failUnless( isinstance( c["v2i"], imath.V2i ) )
+		compare = c.hash()
+		c.set( "v2i", imath.V2i( 3, 4 ) )
+		self.assertEqual( c["v2i"], imath.V2i( 3, 4 ) )
+		self.assertIsInstance( c["v2i"], imath.V2i )
+		self.assertNotEqual( compare, c.hash() )
+
+		c["v2iv"] = IECore.V2iVectorData( [ imath.V2i( 1, 2 ), imath.V2i( 3, 4 ) ] )
+		self.assertEqual( c["v2iv"], IECore.V2iVectorData( [ imath.V2i( 1, 2 ), imath.V2i( 3, 4 ) ] ) )
+		self.assertEqual( c.get( "v2iv" ), IECore.V2iVectorData( [ imath.V2i( 1, 2 ), imath.V2i( 3, 4 ) ] ) )
+		compare = c.hash()
+		c.set( "v2iv", IECore.V2iVectorData( [ imath.V2i( 5, 6 ), imath.V2i( 7, 8 ) ] ) )
+		self.assertEqual( c["v2iv"], IECore.V2iVectorData( [ imath.V2i( 5, 6 ), imath.V2i( 7, 8 ) ] ) )
+		self.assertIsInstance( c["v2iv"], IECore.V2iVectorData )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["v3i"] = imath.V3i( 1, 2, 3 )
 		self.assertEqual( c["v3i"], imath.V3i( 1, 2, 3 ) )
 		self.assertEqual( c.get( "v3i" ), imath.V3i( 1, 2, 3 ) )
-		c.set( "v3i", imath.V3i( 1, 2, 3 ) )
-		self.assertEqual( c["v3i"], imath.V3i( 1, 2, 3 ) )
-		self.failUnless( isinstance( c["v3i"], imath.V3i ) )
+		compare = c.hash()
+		c.set( "v3i", imath.V3i( 4, 5, 6 ) )
+		self.assertEqual( c["v3i"], imath.V3i( 4, 5, 6 ) )
+		self.assertIsInstance( c["v3i"], imath.V3i )
+		self.assertNotEqual( compare, c.hash() )
+
+		c["v3iv"] = IECore.V3iVectorData( [ imath.V3i( 1, 2, 3 ), imath.V3i( 4, 5, 6 ) ] )
+		self.assertEqual( c["v3iv"], IECore.V3iVectorData( [ imath.V3i( 1, 2, 3 ), imath.V3i( 4, 5, 6 ) ] ) )
+		self.assertEqual( c.get( "v3iv" ), IECore.V3iVectorData( [ imath.V3i( 1, 2, 3 ), imath.V3i( 4, 5, 6 ) ] ) )
+		compare = c.hash()
+		c.set( "v3iv", IECore.V3iVectorData( [ imath.V3i( 7, 8, 9 ), imath.V3i( 10, 11, 12 ) ] ) )
+		self.assertEqual( c["v3iv"], IECore.V3iVectorData( [ imath.V3i( 7, 8, 9 ), imath.V3i( 10, 11, 12 ) ] ) )
+		self.assertIsInstance( c["v3iv"], IECore.V3iVectorData )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["v2f"] = imath.V2f( 1, 2 )
 		self.assertEqual( c["v2f"], imath.V2f( 1, 2 ) )
 		self.assertEqual( c.get( "v2f" ), imath.V2f( 1, 2 ) )
-		c.set( "v2f", imath.V2f( 1, 2 ) )
-		self.assertEqual( c["v2f"], imath.V2f( 1, 2 ) )
-		self.failUnless( isinstance( c["v2f"], imath.V2f ) )
+		compare = c.hash()
+		c.set( "v2f", imath.V2f( 3, 4 ) )
+		self.assertEqual( c["v2f"], imath.V2f( 3, 4 ) )
+		self.assertIsInstance( c["v2f"], imath.V2f )
+		self.assertNotEqual( compare, c.hash() )
+
+		c["v2fv"] = IECore.V2fVectorData( [ imath.V2f( 1, 2 ), imath.V2f( 3, 4 ) ] )
+		self.assertEqual( c["v2fv"], IECore.V2fVectorData( [ imath.V2f( 1, 2 ), imath.V2f( 3, 4 ) ] ) )
+		self.assertEqual( c.get( "v2fv" ), IECore.V2fVectorData( [ imath.V2f( 1, 2 ), imath.V2f( 3, 4 ) ] ) )
+		compare = c.hash()
+		c.set( "v2fv", IECore.V2fVectorData( [ imath.V2f( 5, 6 ), imath.V2f( 7, 8 ) ] ) )
+		self.assertEqual( c["v2fv"], IECore.V2fVectorData( [ imath.V2f( 5, 6 ), imath.V2f( 7, 8 ) ] ) )
+		self.assertIsInstance( c["v2fv"], IECore.V2fVectorData )
+		self.assertNotEqual( compare, c.hash() )
 
 		c["v3f"] = imath.V3f( 1, 2, 3 )
 		self.assertEqual( c["v3f"], imath.V3f( 1, 2, 3 ) )
 		self.assertEqual( c.get( "v3f" ), imath.V3f( 1, 2, 3 ) )
-		c.set( "v3f", imath.V3f( 1, 2, 3 ) )
-		self.assertEqual( c["v3f"], imath.V3f( 1, 2, 3 ) )
-		self.failUnless( isinstance( c["v3f"], imath.V3f ) )
+		compare = c.hash()
+		c.set( "v3f", imath.V3f( 4, 5, 6 ) )
+		self.assertEqual( c["v3f"], imath.V3f( 4, 5, 6 ) )
+		self.assertIsInstance( c["v3f"], imath.V3f )
+		self.assertNotEqual( compare, c.hash() )
+
+		c["v3fv"] = IECore.V3fVectorData( [ imath.V3f( 1, 2, 3 ), imath.V3f( 4, 5, 6 ) ] )
+		self.assertEqual( c["v3fv"], IECore.V3fVectorData( [ imath.V3f( 1, 2, 3 ), imath.V3f( 4, 5, 6 ) ] ) )
+		self.assertEqual( c.get( "v3fv" ), IECore.V3fVectorData( [ imath.V3f( 1, 2, 3 ), imath.V3f( 4, 5, 6 ) ] ) )
+		compare = c.hash()
+		c.set( "v3fv", IECore.V3fVectorData( [ imath.V3f( 7, 8, 9 ), imath.V3f( 10, 11, 12 ) ] ) )
+		self.assertEqual( c["v3fv"], IECore.V3fVectorData( [ imath.V3f( 7, 8, 9 ), imath.V3f( 10, 11, 12 ) ] ) )
+		self.assertIsInstance( c["v3fv"], IECore.V3fVectorData )
+		self.assertNotEqual( compare, c.hash() )
+
+	def testSwitchTypes( self ) :
+
+		c = Gaffer.Context()
+
+		c["x"] = 1
+		self.assertEqual( c["x"], 1 )
+		self.assertEqual( c.get( "x" ), 1 )
+		c.set( "x", 2 )
+		self.assertEqual( c["x"], 2 )
+		self.assertIsInstance( c["x"], int )
+
+		c["x"] = 1.0
+		self.assertEqual( c["x"], 1.0 )
+		self.assertEqual( c.get( "x" ), 1.0 )
+		c.set( "x", 2.0 )
+		self.assertEqual( c["x"], 2.0 )
+		self.assertIsInstance( c["x"], float )
+
+		c["x"] = "hi"
+		self.assertEqual( c["x"], "hi" )
+		self.assertEqual( c.get( "x" ), "hi" )
+		c.set( "x", "bye" )
+		self.assertEqual( c["x"], "bye" )
+		self.assertIsInstance( c["x"], str )
+
+		c["x"] = imath.V2i( 1, 2 )
+		self.assertEqual( c["x"], imath.V2i( 1, 2 ) )
+		self.assertEqual( c.get( "x" ), imath.V2i( 1, 2 ) )
+		c.set( "x", imath.V2i( 1, 2 ) )
+		self.assertEqual( c["x"], imath.V2i( 1, 2 ) )
+		self.assertIsInstance( c["x"], imath.V2i )
+
+		c["x"] = imath.V3i( 1, 2, 3 )
+		self.assertEqual( c["x"], imath.V3i( 1, 2, 3 ) )
+		self.assertEqual( c.get( "x" ), imath.V3i( 1, 2, 3 ) )
+		c.set( "x", imath.V3i( 1, 2, 3 ) )
+		self.assertEqual( c["x"], imath.V3i( 1, 2, 3 ) )
+		self.assertIsInstance( c["x"], imath.V3i )
+
+		c["x"] = imath.V2f( 1, 2 )
+		self.assertEqual( c["x"], imath.V2f( 1, 2 ) )
+		self.assertEqual( c.get( "x" ), imath.V2f( 1, 2 ) )
+		c.set( "x", imath.V2f( 1, 2 ) )
+		self.assertEqual( c["x"], imath.V2f( 1, 2 ) )
+		self.assertIsInstance( c["x"], imath.V2f )
+
+		c["x"] = imath.V3f( 1, 2, 3 )
+		self.assertEqual( c["x"], imath.V3f( 1, 2, 3 ) )
+		self.assertEqual( c.get( "x" ), imath.V3f( 1, 2, 3 ) )
+		c.set( "x", imath.V3f( 1, 2, 3 ) )
+		self.assertEqual( c["x"], imath.V3f( 1, 2, 3 ) )
+		self.assertIsInstance( c["x"], imath.V3f )
 
 	def testCopying( self ) :
 
 		c = Gaffer.Context()
 		c["i"] = 10
+		c["testIntVector"] = IECore.IntVectorData( [ 10 ] )
 
 		c2 = Gaffer.Context( c )
 		self.assertEqual( c2["i"], 10 )
+		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
 
 		c["i"] = 1
+		c2["testIntVector"] = IECore.IntVectorData( [ 20 ] )
 		self.assertEqual( c["i"], 1 )
 		self.assertEqual( c2["i"], 10 )
+		self.assertEqual( c["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
+		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 20 ] ) )
 
 	def testEquality( self ) :
 
@@ -164,12 +276,12 @@ class ContextTest( GafferTest.TestCase ) :
 		c2 = Gaffer.Context()
 
 		self.assertEqual( c, c2 )
-		self.failIf( c != c2 )
+		self.assertFalse( c != c2 )
 
 		c["somethingElse"] = 1
 
 		self.assertNotEqual( c, c2 )
-		self.failIf( c == c2 )
+		self.assertFalse( c == c2 )
 
 	def testCurrent( self ) :
 
@@ -183,32 +295,32 @@ class ContextTest( GafferTest.TestCase ) :
 		c2["something"] = 1
 		with c2 :
 
-			self.failUnless( Gaffer.Context.current().isSame( c2 ) )
+			self.assertTrue( Gaffer.Context.current().isSame( c2 ) )
 			self.assertEqual( Gaffer.Context.current()["something"], 1 )
 
 		# and bounce back to the original
-		self.failUnless( Gaffer.Context.current().isSame( c ) )
+		self.assertTrue( Gaffer.Context.current().isSame( c ) )
 
 	def testCurrentIsThreadSpecific( self ) :
 
 		c = Gaffer.Context()
-		self.failIf( c.isSame( Gaffer.Context.current() ) )
+		self.assertFalse( c.isSame( Gaffer.Context.current() ) )
 
 		def f() :
 
-			self.failIf( c.isSame( Gaffer.Context.current() ) )
+			self.assertFalse( c.isSame( Gaffer.Context.current() ) )
 			with Gaffer.Context() :
 				pass
 
 		with c :
 
-			self.failUnless( c.isSame( Gaffer.Context.current() ) )
+			self.assertTrue( c.isSame( Gaffer.Context.current() ) )
 			t = threading.Thread( target = f )
 			t.start()
 			t.join()
-			self.failUnless( c.isSame( Gaffer.Context.current() ) )
+			self.assertTrue( c.isSame( Gaffer.Context.current() ) )
 
-		self.failIf( c.isSame( Gaffer.Context.current() ) )
+		self.assertFalse( c.isSame( Gaffer.Context.current() ) )
 
 	def testThreading( self ) :
 
@@ -232,10 +344,10 @@ class ContextTest( GafferTest.TestCase ) :
 		c.set( "v", v )
 
 		self.assertEqual( c.get( "v" ), v )
-		self.failIf( c.get( "v" ).isSame( v ) )
+		self.assertFalse( c.get( "v" ).isSame( v ) )
 
 		self.assertEqual( c["v"], v )
-		self.failIf( c["v"].isSame( v ) )
+		self.assertFalse( c["v"].isSame( v ) )
 
 	def testGetFallbackValue( self ) :
 
@@ -249,29 +361,29 @@ class ContextTest( GafferTest.TestCase ) :
 
 		c = Gaffer.Context()
 		with c :
-			self.failUnless( c.isSame( Gaffer.Context.current() ) )
+			self.assertTrue( c.isSame( Gaffer.Context.current() ) )
 			with c :
-				self.failUnless( c.isSame( Gaffer.Context.current() ) )
+				self.assertTrue( c.isSame( Gaffer.Context.current() ) )
 
 	def testLifeTime( self ) :
 
 		c = Gaffer.Context()
 		w = weakref.ref( c )
 
-		self.failUnless( w() is c )
+		self.assertTrue( w() is c )
 
 		with c :
 			pass
 
 		del c
 
-		self.failUnless( w() is None )
+		self.assertIsNone( w() )
 
 	def testWithBlockReturnValue( self ) :
 
 		with Gaffer.Context() as c :
-			self.failUnless( isinstance( c, Gaffer.Context ) )
-			self.failUnless( c.isSame( Gaffer.Context.current() ) )
+			self.assertIsInstance( c, Gaffer.Context )
+			self.assertTrue( c.isSame( Gaffer.Context.current() ) )
 
 	def testSubstitute( self ) :
 
@@ -296,13 +408,13 @@ class ContextTest( GafferTest.TestCase ) :
 		c["a"] = "apple"
 		c["b"] = "bear"
 
-		self.assertEqual( c.substitute( "~", c.Substitutions.AllSubstitutions & ~c.Substitutions.TildeSubstitutions ), "~" )
-		self.assertEqual( c.substitute( "#", c.Substitutions.AllSubstitutions & ~c.Substitutions.FrameSubstitutions ), "#" )
-		self.assertEqual( c.substitute( "$a/${b}", c.Substitutions.AllSubstitutions & ~c.Substitutions.VariableSubstitutions ), "$a/${b}" )
-		self.assertEqual( c.substitute( "\\", c.Substitutions.AllSubstitutions & ~c.Substitutions.EscapeSubstitutions ), "\\" )
-		self.assertEqual( c.substitute( "\\$a", c.Substitutions.AllSubstitutions & ~c.Substitutions.EscapeSubstitutions ), "\\apple" )
-		self.assertEqual( c.substitute( "#${a}", c.Substitutions.AllSubstitutions & ~c.Substitutions.FrameSubstitutions ), "#apple" )
-		self.assertEqual( c.substitute( "#${a}", c.Substitutions.NoSubstitutions ), "#${a}" )
+		self.assertEqual( c.substitute( "~", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.TildeSubstitutions ), "~" )
+		self.assertEqual( c.substitute( "#", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.FrameSubstitutions ), "#" )
+		self.assertEqual( c.substitute( "$a/${b}", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.VariableSubstitutions ), "$a/${b}" )
+		self.assertEqual( c.substitute( "\\", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.EscapeSubstitutions ), "\\" )
+		self.assertEqual( c.substitute( "\\$a", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.EscapeSubstitutions ), "\\apple" )
+		self.assertEqual( c.substitute( "#${a}", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.FrameSubstitutions ), "#apple" )
+		self.assertEqual( c.substitute( "#${a}", IECore.StringAlgo.Substitutions.NoSubstitutions ), "#${a}" )
 
 	def testFrameAndVariableSubstitutionsAreDifferent( self ) :
 
@@ -311,31 +423,19 @@ class ContextTest( GafferTest.TestCase ) :
 
 		# Turning off variable substitutions should have no effect on '#' substitutions.
 		self.assertEqual( c.substitute( "###.$frame" ), "003.3" )
-		self.assertEqual( c.substitute( "###.$frame", c.Substitutions.AllSubstitutions & ~c.Substitutions.VariableSubstitutions ), "003.$frame" )
+		self.assertEqual( c.substitute( "###.$frame", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.VariableSubstitutions ), "003.$frame" )
 
 		# Turning off '#' substitutions should have no effect on variable substitutions.
 		self.assertEqual( c.substitute( "###.$frame" ), "003.3" )
-		self.assertEqual( c.substitute( "###.$frame", c.Substitutions.AllSubstitutions & ~c.Substitutions.FrameSubstitutions ), "###.3" )
+		self.assertEqual( c.substitute( "###.$frame", IECore.StringAlgo.Substitutions.AllSubstitutions & ~IECore.StringAlgo.Substitutions.FrameSubstitutions ), "###.3" )
 
-	def testSubstitutions( self ) :
-
-		c = Gaffer.Context
-		self.assertEqual( c.substitutions( "a"), c.Substitutions.NoSubstitutions )
-		self.assertEqual( c.substitutions( "~/something"), c.Substitutions.TildeSubstitutions )
-		self.assertEqual( c.substitutions( "$a"), c.Substitutions.VariableSubstitutions )
-		self.assertEqual( c.substitutions( "${a}"), c.Substitutions.VariableSubstitutions )
-		self.assertEqual( c.substitutions( "###"), c.Substitutions.FrameSubstitutions )
-		self.assertEqual( c.substitutions( "\#"), c.Substitutions.EscapeSubstitutions )
-		self.assertEqual( c.substitutions( "${a}.###"), c.Substitutions.VariableSubstitutions | c.Substitutions.FrameSubstitutions )
-
-	def testHasSubstitutions( self ) :
+	def testInternedStringVectorDataSubstitutions( self ) :
 
 		c = Gaffer.Context()
-		self.assertFalse( c.hasSubstitutions( "a" ) )
-		self.assertTrue( c.hasSubstitutions( "~something" ) )
-		self.assertTrue( c.hasSubstitutions( "$a" ) )
-		self.assertTrue( c.hasSubstitutions( "${a}" ) )
-		self.assertTrue( c.hasSubstitutions( "###" ) )
+		c["test1"] = IECore.InternedStringVectorData( [ "a", "b" ] )
+		c["test2"] = IECore.InternedStringVectorData()
+		self.assertEqual( c.substitute( "${test1}" ), "/a/b" )
+		self.assertEqual( c.substitute( "${test2}" ), "/" )
 
 	def testNames( self ) :
 
@@ -359,7 +459,7 @@ class ContextTest( GafferTest.TestCase ) :
 
 		GafferTest.testManyContexts()
 
-	def testGetWithAndWithoutCopying( self ) :
+	def testGetCopies( self ) :
 
 		c = Gaffer.Context()
 		c["test"] = IECore.IntVectorData( [ 1, 2 ] )
@@ -370,137 +470,13 @@ class ContextTest( GafferTest.TestCase ) :
 		c["test"].append( 10 )
 		self.assertEqual( c["test"], IECore.IntVectorData( [ 1, 2 ] ) )
 
-		# if we ask nicely, we can get a reference to the internal
-		# value without any copying.
-		self.assertTrue( c.get( "test", _copy=False ).isSame( c.get( "test", _copy=False ) ) )
-		# but then if we modify the returned value, we are changing the
-		# context itself too. this should be avoided - we're just doing it
-		# here to test that we are indeed referencing the internal value.
-		c.get( "test", _copy=False ).append( 10 )
-		self.assertEqual( c["test"], IECore.IntVectorData( [ 1, 2, 10 ] ) )
-
-	def testGetWithDefaultAndCopyArgs( self ) :
+	def testGetWithDefault( self ) :
 
 		c = Gaffer.Context()
 		c["test"] = IECore.IntVectorData( [ 1, 2 ] )
 
-		self.assertTrue( c.get( "test", 10, _copy=False ).isSame( c.get( "test", 20, _copy=False ) ) )
-		self.assertTrue( c.get( "test", defaultValue=10, _copy=False ).isSame( c.get( "test", defaultValue=20, _copy=False ) ) )
-
-	def testCopyWithSharedOwnership( self ) :
-
-		c1 = Gaffer.Context()
-
-		c1["testInt"] = 10
-		c1["testIntVector"] = IECore.IntVectorData( [ 10 ] )
-
-		self.assertEqual( c1["testInt"], 10 )
-		self.assertEqual( c1["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		r = c1.get( "testIntVector", _copy=False ).refCount()
-
-		c2 = Gaffer.Context( c1, ownership = Gaffer.Context.Ownership.Shared )
-
-		self.assertEqual( c2["testInt"], 10 )
-		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		c1["testInt"] = 20
-		self.assertEqual( c1["testInt"], 20 )
-		# c2 has changed too! with slightly improved performance comes
-		# great responsibility!
-		self.assertEqual( c2["testInt"], 20 )
-
-		# both contexts reference the same object, but c2 at least owns
-		# a reference to its values, and can be used after c1 has been
-		# deleted.
-		self.assertTrue( c2.get( "testIntVector", _copy=False ).isSame( c1.get( "testIntVector", _copy=False ) ) )
-		self.assertEqual( c2.get( "testIntVector", _copy=False ).refCount(), r + 1 )
-
-		del c1
-
-		self.assertEqual( c2["testInt"], 20 )
-		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-		self.assertEqual( c2.get( "testIntVector", _copy=False ).refCount(), r )
-
-	def testCopyWithBorrowedOwnership( self ) :
-
-		c1 = Gaffer.Context()
-
-		c1["testInt"] = 10
-		c1["testIntVector"] = IECore.IntVectorData( [ 10 ] )
-
-		self.assertEqual( c1["testInt"], 10 )
-		self.assertEqual( c1["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		r = c1.get( "testIntVector", _copy=False ).refCount()
-
-		c2 = Gaffer.Context( c1, ownership = Gaffer.Context.Ownership.Borrowed )
-
-		self.assertEqual( c2["testInt"], 10 )
-		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		c1["testInt"] = 20
-		self.assertEqual( c1["testInt"], 20 )
-		# c2 has changed too! with slightly improved performance comes
-		# great responsibility!
-		self.assertEqual( c2["testInt"], 20 )
-
-		# check that c2 doesn't own a reference
-		self.assertTrue( c2.get( "testIntVector", _copy=False ).isSame( c1.get( "testIntVector", _copy=False ) ) )
-		self.assertEqual( c2.get( "testIntVector", _copy=False ).refCount(), r )
-
-		# make sure we delete c2 before we delete c1
-		del c2
-
-		# check that we're ok to access c1 after deleting c2
-		self.assertEqual( c1["testInt"], 20 )
-		self.assertEqual( c1["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-	def testSetOnBorrowedContextsDoesntAffectOriginal( self ) :
-
-		c1 = Gaffer.Context()
-
-		c1["testInt"] = 10
-		c1["testIntVector"] = IECore.IntVectorData( [ 10 ] )
-
-		c2 = Gaffer.Context( c1, ownership = Gaffer.Context.Ownership.Borrowed )
-		c2["testInt"] = 20
-		c2["testIntVector"] = IECore.IntVectorData( [ 20 ] )
-
-		self.assertEqual( c1["testInt"], 10 )
-		self.assertEqual( c1["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		self.assertEqual( c2["testInt"], 20 )
-		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 20 ] ) )
-
-	def testSetOnSharedContextsDoesntAffectOriginal( self ) :
-
-		c1 = Gaffer.Context()
-
-		c1["testInt"] = 10
-		c1["testIntVector"] = IECore.IntVectorData( [ 10 ] )
-
-		c2 = Gaffer.Context( c1, ownership = Gaffer.Context.Ownership.Shared )
-		c2["testInt"] = 20
-		c2["testIntVector"] = IECore.IntVectorData( [ 20 ] )
-
-		self.assertEqual( c1["testInt"], 10 )
-		self.assertEqual( c1["testIntVector"], IECore.IntVectorData( [ 10 ] ) )
-
-		self.assertEqual( c2["testInt"], 20 )
-		self.assertEqual( c2["testIntVector"], IECore.IntVectorData( [ 20 ] ) )
-
-	def testSetOnSharedContextsReleasesReference( self ) :
-
-		c1 = Gaffer.Context()
-		c1["testIntVector"] = IECore.IntVectorData( [ 10 ] )
-
-		r = c1.get( "testIntVector", _copy=False ).refCount()
-
-		c2 = Gaffer.Context( c1, ownership = Gaffer.Context.Ownership.Shared )
-		c2["testIntVector"] = IECore.IntVectorData( [ 20 ] )
-
-		self.assertEqual( c1.get( "testIntVector", _copy=False ).refCount(), r )
+		self.assertEqual( c.get( "test", 10 ), IECore.IntVectorData( [ 1, 2 ] ) )
+		self.assertEqual( c.get( "testX", 10 ), 10 )
 
 	def testHash( self ) :
 
@@ -522,24 +498,6 @@ class ContextTest( GafferTest.TestCase ) :
 		c["test2"] = "test2" # no change
 		self.assertEqual( c.hash(), hashes[-1] )
 
-	def testChanged( self ) :
-
-		c = Gaffer.Context()
-		c["test"] = IECore.StringVectorData( [ "one" ] )
-		h = c.hash()
-
-		cs = GafferTest.CapturingSlot( c.changedSignal() )
-
-		d = c.get( "test", _copy = False ) # dangerous! the context won't know if we make changes
-		d.append( "two" )
-		self.assertEqual( c.get( "test" ), IECore.StringVectorData( [ "one", "two" ] ) )
-		self.assertEqual( len( cs ), 0 )
-
-		c.changed( "test" ) # let the context know what we've been up to
-		self.assertEqual( len( cs ), 1 )
-		self.assertEqual( cs[0], ( c, "test" ) )
-		self.assertNotEqual( c.hash(), h )
-
 	def testHashIgnoresUIEntries( self ) :
 
 		c = Gaffer.Context()
@@ -547,6 +505,19 @@ class ContextTest( GafferTest.TestCase ) :
 
 		c["ui:test"] = 1
 		self.assertEqual( h, c.hash() )
+
+		del c["ui:test"]
+		self.assertEqual( c.names(), Gaffer.Context().names() )
+		self.assertEqual( h, c.hash() )
+
+		c["ui:test"] = 1
+		c["ui:test2"] = "foo"
+		self.assertEqual( h, c.hash() )
+
+		c.removeMatching( "ui:test*" )
+		self.assertEqual( c.names(), Gaffer.Context().names() )
+		self.assertEqual( h, c.hash() )
+
 
 	@GafferTest.TestRunner.PerformanceTestMethod()
 	def testManySubstitutions( self ) :
@@ -565,16 +536,13 @@ class ContextTest( GafferTest.TestCase ) :
 		c["a"] = "apple"
 		c["b"] = "bear"
 
-		self.assertEqual( c.substitute( "\${a}.\$b" ), "${a}.$b" )
-		self.assertEqual( c.substitute( "\~" ), "~" )
-		self.assertEqual( c.substitute( "\#\#\#\#" ), "####" )
+		self.assertEqual( c.substitute( r"\${a}.\$b" ), "${a}.$b" )
+		self.assertEqual( c.substitute( r"\~" ), "~" )
+		self.assertEqual( c.substitute( r"\#\#\#\#" ), "####" )
 		# really we're passing \\ to substitute and getting back \ -
 		# the extra slashes are escaping for the python interpreter.
 		self.assertEqual( c.substitute( "\\\\" ), "\\" )
 		self.assertEqual( c.substitute( "\\" ), "" )
-
-		self.assertTrue( c.hasSubstitutions( "\\" ) ) # must return true, because escaping affects substitution
-		self.assertTrue( c.hasSubstitutions( "\\\\" ) ) # must return true, because escaping affects substitution
 
 	def testRemove( self ) :
 
@@ -670,6 +638,211 @@ class ContextTest( GafferTest.TestCase ) :
 		canceller.cancel()
 		with self.assertRaises( IECore.Cancelled ) :
 			IECore.Canceller.check( cc.canceller() )
+
+		contextCopy = Gaffer.Context( cc )
+		self.assertTrue( contextCopy.canceller() is not None )
+		with self.assertRaises( IECore.Cancelled ) :
+			IECore.Canceller.check( cc.canceller() )
+
+	def testCancellerLifetime( self ) :
+
+		canceller = IECore.Canceller()
+		context = Gaffer.Context( Gaffer.Context(), canceller )
+		cancellerWeakRef = weakref.ref( canceller )
+
+		del canceller
+		self.assertIsNotNone( cancellerWeakRef() )
+
+		del context
+		self.assertIsNone( cancellerWeakRef() )
+
+	def testOmitCanceller( self ) :
+
+		context1 = Gaffer.Context( Gaffer.Context(), IECore.Canceller() )
+		self.assertIsNotNone( context1.canceller() )
+
+		context2 = Gaffer.Context( context1, omitCanceller = True )
+		self.assertIsNone( context2.canceller() )
+
+		context3 = Gaffer.Context( context1, omitCanceller = False )
+		self.assertIsNotNone( context3.canceller() )
+
+	def testVariableHash( self ) :
+
+		context = Gaffer.Context()
+		context["foo"] = 1
+		context["bar"] = 1
+
+		self.assertEqual( context.variableHash( "doesntExist" ), IECore.MurmurHash() )
+
+		# Hash includes name, so the hash of different variables is different
+		self.assertNotEqual( context.variableHash( "foo" ), context.variableHash( "bar" ) )
+
+		initialHash = context.variableHash( "foo" )
+		context["foo"] = 2
+		self.assertNotEqual( context.variableHash( "foo" ), initialHash )
+
+		# Hashing should include the type, so different types of 32bit zeros should compare different
+		context["foo"] = 0
+		zeroHash1 = context.variableHash( "foo" )
+		context["foo"] = float(0)
+		zeroHash2 = context.variableHash( "foo" )
+		self.assertNotEqual( zeroHash1, zeroHash2 )
+
+		# Check the intial value again
+		context["foo"] = 1
+		self.assertEqual( context.variableHash( "foo" ), initialHash )
+
+		# With a single entry, the hash for the one variable is the same as the total hash of the context
+		context.remove("bar")
+		context.remove("framesPerSecond")
+		context.remove("frame")
+		self.assertEqual( context.variableHash( "foo" ), context.hash() )
+
+
+	@staticmethod
+	def collisionCountParallelHelper( seed, mode, countList ):
+		r = GafferTest.countContextHash32Collisions( 2**20, mode, seed )
+		for i in range(4):
+			countList[i] = r[i]
+
+	# TODO - add new test flag `gaffer test -type all|standard|performance|verySlow`, where "verySlow"
+	# would enable tests like this
+	@unittest.skipIf( True, "Too expensive to run currently" )
+	def testContextHashCollisions( self ) :
+
+		iters = 10
+		# Test all 4 context creation modes ( see ContextTest.cpp for descriptions )
+		for mode in [0,1,2,3]:
+			# This would be much cleaner once we can use concurrent.futures
+			import threading
+
+			results = [ [0,0,0,0] for i in range( iters ) ]
+			threads = []
+			for i in range( iters ):
+				x = threading.Thread( target=self.collisionCountParallelHelper, args=( i, mode, results[i] ) )
+				x.start()
+				threads.append( x )
+
+			for x in threads:
+				x.join()
+
+			s = [0,0,0,0]
+			for l in results:
+				for i in range(4):
+					s[i] += l[i]
+
+			# countContextHash32Collisions return the number of collisions in each of four 32 bits chunks
+			# of the hash independently - as long as as the uniformity of each chunk is good, the chance
+			# of a full collision of all four chunks is extremely small.
+			#
+			# We test it with 2**20 entries.  We can approximate the number of expected 32 bit
+			# collisions as a binomial distribution - the probability changes as entries are inserted, but
+			# the average probability of a collision per item is when half the entries have been processed,
+			# for a probability of `0.5 * 2**20 / 2**32 = 0.00012207`.  Using this probability, and N=2**20,
+			# in a binomial distribution, yields a mean outcome of 128.0 collisions.
+			# From: https://en.wikipedia.org/wiki/Birthday_problem, section "Collision Counting", the true
+			# result is `2**20 - 2**32 + 2**32 * ( (2**32 - 1)/2**32 )**(2**20) = 127.989` .. close enough
+			# to suggest our approximation works.  Based on our approximated binomial distribution then,
+			# taking the number of iterations up to 10 * 2**20 for our sum over 10 trials, the sum should
+			# have a mean of 1280, and be in the range [1170 .. 1390] 99.8% of the time.
+			#
+			# This means there is some chance of this test failing ( especially because this math is
+			# approximate ), but it is too slow to run on CI anyway, and this test should provide some
+			# assurance that our MurmurHash is performing extremely similarly to a theoretical ideal
+			# uniformly distributed hash, even after a trick like summing the entry hashes.
+			#
+			# Because the bits of the hash are all evenly mixed, the rate of collisions should be identical
+			# regardless of which 32bit chunk we test.
+			#
+			# One weird note for myself in the future: There is one weird pattern you will see if you
+			# print s : If using 64bit sums of individual hashes, then the low 32 bit chunks
+			# ( chunks 0 and 3 ) will always produce the same number of collisions in mode 0 and 1.
+			# This is because most of the entries in mode 1 do not change, and the only source of variation
+			# is the one entry which matches mode 0 ... but this is expected, and crucially, while the
+			# number of collisions within mode 0 and mode 1 come out identical, this does not increase the
+			# chances of a collision between contexts with one varying entry, and context with one varying
+			# entry plus fixed entries ( mode 3 demonstrates this ).
+
+			for i in range(4):
+				self.assertLess( s[i], 1390.0 )
+				self.assertGreater( s[i], 1170.0 )
+
+	def testSetFrameSignalling( self ) :
+
+		c = Gaffer.Context()
+		cs = GafferTest.CapturingSlot( c.changedSignal() )
+
+		c.setFrame( 10 )
+		self.assertEqual( cs, [ ( c, "frame" ) ] )
+		self.assertEqual( c.getFrame(), 10 )
+
+		c.setFrame( 20 )
+		self.assertEqual( cs, [ ( c, "frame" ) ] * 2 )
+		self.assertEqual( c.getFrame(), 20 )
+
+		c.setFrame( 20 )
+		self.assertEqual( cs, [ ( c, "frame" ) ] * 2 )
+		self.assertEqual( c.getFrame(), 20 )
+
+		c.setFrame( 30 )
+		self.assertEqual( cs, [ ( c, "frame" ) ] * 3 )
+		self.assertEqual( c.getFrame(), 30 )
+
+	@unittest.skipIf( not Gaffer.isDebug(), "Only valid for debug builds" )
+	def testHashValidation( self ) :
+
+		GafferTest.testContextHashValidation()
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContextHashPerformance( self ) :
+
+		GafferTest.testContextHashPerformance( 10, 10, False )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContextHashPerformanceStartInitialized( self ) :
+
+		GafferTest.testContextHashPerformance( 10, 10, True )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testContextCopyPerformance( self ) :
+
+		GafferTest.testContextCopyPerformance( 10, 10 )
+
+	def testCopyEditableScope( self ) :
+
+		GafferTest.testCopyEditableScope()
+
+	def testSubstituteInternedString( self ) :
+
+		c = Gaffer.Context()
+		c["test"] = IECore.InternedStringData( "value" )
+		self.assertEqual( c.substitute( "${test}" ), "value" )
+
+		c["test1"] = IECore.InternedStringData( "${test2}" )
+		c["test2"] = IECore.InternedStringData( "recursion!" )
+		self.assertEqual( c.substitute( "${test1}" ), "recursion!" )
+
+	def testReentrantSet( self ) :
+
+		maxDepth = 20
+
+		def changed( context, variable ) :
+
+			value = context[variable]
+			if value.size() < maxDepth :
+				value.addPath( "/a" * (value.size() + 1) )
+				context[variable] = IECore.PathMatcherData( value )
+
+		context = Gaffer.Context()
+		context.changedSignal().connect( changed )
+		context["test"] = IECore.PathMatcherData()
+
+		expected = IECore.PathMatcher()
+		for i in range( 0, maxDepth + 1 ) :
+			expected.addPath( "/a" * i )
+
+		self.assertEqual( context["test"], expected )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -51,13 +51,14 @@ Gaffer.Metadata.registerNode(
 	very useful for the procedural generation of variation.
 	Numeric or colour values may be generated.
 
-	The random values are generated from a seed and a context
-	variable - to get useful variation either the seed or the
-	value of the context variable must be varied too.
+	The random values are generated from a seed and a Context
+	Variable - to get useful variation either the seed or the
+	value of the Context Variable must be varied too.
 	""",
 
 	"nodeGadget:type", "GafferUI::AuxiliaryNodeGadget",
 	"auxiliaryNodeGadget:label", "r",
+	"nodeGadget:focusGadgetVisible", False,
 
 	plugs = {
 
@@ -67,19 +68,19 @@ Gaffer.Metadata.registerNode(
 			"""
 			Seed for the random number generator. Different seeds
 			produce different random numbers. When controlling two
-			different properties using the same context variable,
+			different properties using the same Context Variable,
 			different seeds may be used to ensure that the generated
 			values are different.
 			""",
 
 		],
 
-		"contextEntry" : [
+		"seedVariable" : [
 
 			"description",
 			"""
 			The most important plug for achieving interesting variation.
-			Should be set to the name of a context variable which will
+			Should be set to the name of a Context Variable which will
 			be different for each evaluation of the node. Good examples
 			are "scene:path" to generate a different value per scene
 			location, or "frame" to generate a different value per frame.
@@ -143,11 +144,11 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			Random floating point output derived from seed, context variable
+			Random floating point output derived from seed, Context Variable
 			and float range plugs.
 			""",
 
-			"plugValueWidget:type", "",
+			"layout:section", "Settings.Outputs",
 
 		],
 
@@ -155,9 +156,11 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			Random colour output derived from seed, context variable, base
+			Random colour output derived from seed, Context Variable, base
 			colour, hue, saturation and value plugs.
 			""",
+
+			"layout:section", "Settings.Outputs",
 
 			"plugValueWidget:type", "GafferUI.RandomUI._RandomColorPlugValueWidget",
 
@@ -172,6 +175,8 @@ Gaffer.Metadata.registerNode(
 
 class _RandomColorPlugValueWidget( GafferUI.PlugValueWidget ) :
 
+	__gridSize = imath.V2i( 10, 3 )
+
 	def __init__( self, plug, **kw ) :
 
 		self.__grid = GafferUI.GridContainer( spacing = 4 )
@@ -179,22 +184,41 @@ class _RandomColorPlugValueWidget( GafferUI.PlugValueWidget ) :
 		GafferUI.PlugValueWidget.__init__( self, self.__grid, plug, **kw )
 
 		with self.__grid :
-			for x in range( 0, 10 ) :
-				for y in range( 0, 3 ) :
+			for x in range( 0, self.__gridSize.x ) :
+				for y in range( 0, self.__gridSize.y ) :
 					GafferUI.ColorSwatch( parenting = { "index" : ( x, y ) } )
 
-		self._updateFromPlug()
+	@staticmethod
+	def _valuesForUpdate( plugs, auxiliaryPlugs ) :
 
-	def _updateFromPlug( self ) :
-
-		node = self.getPlug().source().node()
+		node = next( iter( plugs ) ).source().node()
 		seed = node["seed"].getValue()
 
-		gridSize = self.__grid.gridSize()
-		for x in range( 0, gridSize.x ) :
-			for y in range( 0, gridSize.y ) :
-				self.__grid[x,y].setColor( node.randomColor( seed ) )
+		result = []
+		for x in range( 0, _RandomColorPlugValueWidget.__gridSize.x ) :
+			column = []
+			for y in range( 0, _RandomColorPlugValueWidget.__gridSize.y ) :
+				column.append( node.randomColor( seed ) )
 				seed += 1
+			result.append( column )
+
+		return result
+
+	def _updateFromValues( self, values, exception ) :
+
+		for x in range( 0, self.__gridSize.x ) :
+			for y in range( 0, self.__gridSize.y ) :
+				if exception is not None :
+					self.__grid[x,y].setColor( imath.Color3f( 1, 0.33, 0.33 ) )
+				elif len( values ) :
+					self.__grid[x,y].setColor( values[x][y] )
+				else :
+					# We are called with `values == []` prior to
+					# the BackgroundTask for `_valuesForUpdate()`
+					# being launched. No point displaying a "busy"
+					# state as it is typically so quick as to just
+					# be visual noise.
+					pass
 
 # PlugValueWidget popup menu
 ##########################################################################
@@ -233,8 +257,8 @@ def __popupMenu( menuDefinition, plugValueWidget ) :
 			"/Randomise...",
 			{
 				"command" : functools.partial( __createRandom, plug ),
-				"active" : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ),
+				"active" : not Gaffer.MetadataAlgo.readOnly( plug ),
 			}
 		)
 
-__popupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu )

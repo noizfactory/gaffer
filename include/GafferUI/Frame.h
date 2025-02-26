@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_FRAME_H
-#define GAFFERUI_FRAME_H
+#pragma once
 
 #include "GafferUI/IndividualContainer.h"
 
@@ -49,7 +48,7 @@ class GAFFERUI_API Frame : public IndividualContainer
 
 	public :
 
-		Frame( GadgetPtr child );
+		explicit Frame( GadgetPtr child );
 		~Frame() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::Frame, FrameTypeId, IndividualContainer );
@@ -58,7 +57,9 @@ class GAFFERUI_API Frame : public IndividualContainer
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
@@ -68,9 +69,4 @@ class GAFFERUI_API Frame : public IndividualContainer
 
 IE_CORE_DECLAREPTR( Frame );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<Frame> > FrameIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<Frame> > RecursiveFrameIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_FRAME_H

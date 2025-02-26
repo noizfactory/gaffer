@@ -45,11 +45,12 @@
 #include "IECoreScene/ShaderNetwork.h"
 #include "IECore/StringAlgo.h"
 
-#include "OpenEXR/ImathColorAlgo.h"
-#include "OpenEXR/ImathRandom.h"
+#include "Imath/ImathColorAlgo.h"
+#include "Imath/ImathRandom.h"
 
 #include "boost/algorithm/string/predicate.hpp"
 
+#include "fmt/format.h"
 
 using namespace Imath;
 using namespace IECore;
@@ -62,16 +63,16 @@ namespace
 
 bool internedStringCompare( InternedString a, InternedString b )
 {
-    return a.string() < b.string();
+	return a.string() < b.string();
 }
 
-typedef std::pair<StringAlgo::MatchPattern, ConstColor3fDataPtr> Override;
+using Override = std::pair<StringAlgo::MatchPattern, ConstColor3fDataPtr>;
 std::vector<Override> unpackOverrides( const CompoundDataPlug *plug )
 {
 	std::vector<Override> overrides;
 
 	std::string name;
-	for( NameValuePlugIterator it( plug ); !it.done(); ++it )
+	for( NameValuePlug::Iterator it( plug ); !it.done(); ++it )
 	{
 		// This will fail if the member has been disabled, or has no name
 		if( ConstDataPtr plugData =  plug->memberDataAndName( it->get(), name ) )
@@ -82,9 +83,9 @@ std::vector<Override> unpackOverrides( const CompoundDataPlug *plug )
 			}
 			else
 			{
-				throw IECore::Exception( boost::str( boost::format(
-					"Color Override value for \"%s\" is not a Color3f") % name )
-				);
+				throw IECore::Exception( fmt::format(
+					"Color Override value for \"{}\" is not a Color3f", name
+				) );
 			}
 		}
 	}
@@ -116,14 +117,12 @@ Color3f colorForSetName( const InternedString &name, const std::vector<Override>
 // We're limited in our target GLSL version to fixed size shader array params
 size_t g_maxShaderColors = 9;
 
-static const StringDataPtr fragmentSource()
+const StringDataPtr fragmentSource()
 {
 	static StringDataPtr g_fragmentSource = new IECore::StringData(
 		"#if __VERSION__ <= 120\n"
 		"#define in varying\n"
 		"#endif\n"
-
-		"#include \"IECoreGL/ColorAlgo.h\"\n"
 
 		"uniform vec3 colors[" + std::to_string( g_maxShaderColors ) + "];"
 		"uniform int numColors;"
@@ -140,7 +139,7 @@ static const StringDataPtr fragmentSource()
 		"	{"
 		"		float stripeIndex = floor( (gl_FragCoord.x - gl_FragCoord.y) / stripeWidth );"
 		"		stripeIndex = mod( stripeIndex, float(numColors) );"
-		"		gl_FragColor = ( gl_FragColor * 0.8 + 0.2 ) * vec4( ieLinToSRGB( colors[ int(stripeIndex) ] ), 1.0);"
+		"		gl_FragColor = ( gl_FragColor * 0.8 + 0.2 ) * vec4( colors[ int(stripeIndex) ], 1.0 );"
 		"	}"
 		"}"
 	);
@@ -167,17 +166,12 @@ ShaderNetworkPtr stripeShader( float stripeWidth, size_t numColorsUsed, const st
 } // end anon namespace
 
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SetVisualiser );
+GAFFER_NODE_DEFINE_TYPE( SetVisualiser );
 
 size_t SetVisualiser::g_firstPlugIndex = 0;
 
-
-// NoMatch is the Gaffer standard default behaviour for nodes that accept
-// filters. It may seem more intuitive to have a visualisation node affect
-// everything by default - but consistency across Gaffer is more important.
-// Even at the expense of inconsistency with existing vis nodes.
 SetVisualiser::SetVisualiser( const std::string &name )
-	: SceneElementProcessor( name, PathMatcher::NoMatch )
+	: AttributeProcessor( name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
@@ -187,11 +181,6 @@ SetVisualiser::SetVisualiser( const std::string &name )
 
 	addChild( new CompoundDataPlug( "colorOverrides", Plug::In ) );
 	addChild( new AtomicCompoundDataPlug( "__outSets", Plug::Out, new CompoundData() ) );
-
-	// Fast pass-throughs for the things we don't alter.
-	outPlug()->objectPlug()->setInput( inPlug()->objectPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
 }
 
 SetVisualiser::~SetVisualiser()
@@ -250,7 +239,7 @@ const Gaffer::AtomicCompoundDataPlug *SetVisualiser::outSetsPlug() const
 
 void SetVisualiser::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
-	SceneElementProcessor::affects( input, outputs );
+	AttributeProcessor::affects( input, outputs );
 
 	// Making attributes depend on outSets as much as possible (instead of
 	// the input plugs directly) allows us to better take advantage of Gaffers
@@ -264,20 +253,11 @@ void SetVisualiser::affects( const Gaffer::Plug *input, AffectedPlugsContainer &
 	{
 		outputs.push_back( outSetsPlug() );
 	}
-	else if (
-		input == includeInheritedPlug() ||
-		input == stripeWidthPlug() ||
-		input == outSetsPlug() ||
-		input == inPlug()->setPlug()
-	)
-	{
-		outputs.push_back( outPlug()->attributesPlug() );
-	}
 }
 
 void SetVisualiser::hash( const ValuePlug *output, const Context *context, MurmurHash &h ) const
 {
-	SceneElementProcessor::hash( output, context, h );
+	AttributeProcessor::hash( output, context, h );
 
 	if( output == outSetsPlug() )
 	{
@@ -336,17 +316,25 @@ void SetVisualiser::compute( Gaffer::ValuePlug *output, const Gaffer::Context *c
 	}
 	else
 	{
-		SceneElementProcessor::compute( output, context );
+		AttributeProcessor::compute( output, context );
 	}
 }
 
-bool SetVisualiser::processesAttributes() const
+bool SetVisualiser::affectsProcessedAttributes( const Gaffer::Plug *input ) const
 {
-	return true;
+	return
+		AttributeProcessor::affectsProcessedAttributes( input ) ||
+		input == includeInheritedPlug() ||
+		input == stripeWidthPlug() ||
+		input == outSetsPlug() ||
+		input == inPlug()->setPlug()
+	;
 }
 
 void SetVisualiser::hashProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, MurmurHash &h ) const
 {
+	AttributeProcessor::hashProcessedAttributes( path, context, h );
+
 	ConstCompoundDataPtr outSetsData = outSetsPlug()->getValue();
 
 	outSetsData->hash( h );
@@ -365,7 +353,7 @@ void SetVisualiser::hashProcessedAttributes( const ScenePath &path, const Gaffer
 	stripeWidthPlug()->hash( h );
 }
 
-ConstCompoundObjectPtr SetVisualiser::computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, ConstCompoundObjectPtr inputAttributes ) const
+ConstCompoundObjectPtr SetVisualiser::computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, const IECore::CompoundObject *inputAttributes ) const
 {
 	CompoundObjectPtr result = new CompoundObject;
 

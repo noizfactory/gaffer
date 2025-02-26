@@ -34,9 +34,10 @@
 #
 ##########################################################################
 
-import os
+import stat
 import unittest
 import imath
+import pathlib
 
 import IECore
 import Gaffer
@@ -44,22 +45,21 @@ import GafferTest
 
 class ApplicationRootTest( GafferTest.TestCase ) :
 
-	__defaultPreferencesFile = os.path.expanduser( "~/gaffer/startup/testApp/preferences.py" )
-	__preferencesFile = "/tmp/testPreferences.py"
+	__defaultPreferencesFile = pathlib.Path( "~/gaffer/startup/testApp/preferences.py" ).expanduser()
+
+	class testApp( Gaffer.Application ) :
+
+		def __init__( self ) :
+
+			Gaffer.Application.__init__( self )
 
 	def testPreferences( self ) :
 
-		class testApp( Gaffer.Application ) :
-
-			def __init__( self ) :
-
-				Gaffer.Application.__init__( self )
-
-		application = testApp()
+		application = ApplicationRootTest.testApp()
 		applicationRoot = application.root()
 
 		p = applicationRoot["preferences"]
-		self.failUnless( isinstance( p, Gaffer.Preferences ) )
+		self.assertIsInstance( p, Gaffer.Preferences )
 
 		p["category1"] = Gaffer.Plug()
 		p["category1"]["i"] = Gaffer.IntPlug( defaultValue = 2 )
@@ -72,20 +72,25 @@ class ApplicationRootTest( GafferTest.TestCase ) :
 		p["category2"]["s"].setValue( "oranges" )
 		p["category2"]["v"].setValue( imath.V3f( 2, 3, 4 ) )
 
-		self.failIf( os.path.exists( self.__defaultPreferencesFile ) )
+		self.assertFalse( self.__defaultPreferencesFile.exists() )
 		applicationRoot.savePreferences()
-		self.failUnless( os.path.exists( self.__defaultPreferencesFile ) )
+		self.assertTrue( self.__defaultPreferencesFile.exists() )
 
-		self.failIf( os.path.exists( self.__preferencesFile ) )
-		applicationRoot.savePreferences( self.__preferencesFile )
-		self.failUnless( os.path.exists( self.__preferencesFile ) )
+		preferencesFile = self.temporaryDirectory() / "testPreferences.gfr"
+
+		self.assertFalse( preferencesFile.exists() )
+		applicationRoot.savePreferences( preferencesFile )
+		self.assertTrue( preferencesFile.exists() )
 
 		p["category1"]["i"].setValue( 1 )
 		p["category2"]["s"].setValue( "beef" )
 		p["category2"]["v"].setValue( imath.V3f( -10 ) )
 
 		executionContext = { "application" : application }
-		execfile( self.__preferencesFile, executionContext, executionContext )
+		exec(
+			compile( open( preferencesFile, encoding = "utf-8" ).read(), preferencesFile, "exec" ),
+			executionContext, executionContext
+		)
 
 		self.assertEqual( p["category1"]["i"].getValue(), 10 )
 		self.assertEqual( p["category2"]["s"].getValue(), "oranges" )
@@ -95,16 +100,17 @@ class ApplicationRootTest( GafferTest.TestCase ) :
 
 		a = Gaffer.ApplicationRoot( "testApp" )
 
-		a.savePreferences( self.__preferencesFile )
-		os.chmod( self.__preferencesFile, 0 )
-		self.assertRaises( RuntimeError, a.savePreferences, self.__preferencesFile )
+		preferencesFile = self.temporaryDirectory() / "testPreferences.gfr"
+		a.savePreferences( preferencesFile )
+		preferencesFile.chmod( 0 )
+		self.assertRaises( RuntimeError, a.savePreferences, preferencesFile )
 
 	def testPreferencesLocation( self ) :
 
 		a = Gaffer.ApplicationRoot( "testApp" )
 
-		self.assertEqual( a.preferencesLocation(), os.path.dirname( self.__defaultPreferencesFile ) )
-		self.failUnless( os.path.isdir( a.preferencesLocation() ) )
+		self.assertEqual( a.preferencesLocation(), self.__defaultPreferencesFile.parent )
+		self.assertTrue( pathlib.Path( a.preferencesLocation() ).is_dir() )
 
 	def testClipboard( self ) :
 
@@ -116,7 +122,7 @@ class ApplicationRootTest( GafferTest.TestCase ) :
 			self.assertTrue( app.isSame( a ) )
 			d.append( app.getClipboardContents() )
 
-		c = a.clipboardContentsChangedSignal().connect( f )
+		c = a.clipboardContentsChangedSignal().connect( f, scoped = True )
 
 		self.assertEqual( len( d ), 0 )
 		self.assertEqual( a.getClipboardContents(), None )
@@ -133,14 +139,17 @@ class ApplicationRootTest( GafferTest.TestCase ) :
 		self.assertEqual( len( d ), 2 )
 		self.assertEqual( a.getClipboardContents(), IECore.IntData( 20 ) )
 
+	def testScriptContainer( self ) :
+
+		a = Gaffer.ApplicationRoot()
+		self.assertIsInstance( a["scripts"], Gaffer.ScriptContainer )
+
 	def tearDown( self ) :
 
-		for f in [
-			self.__defaultPreferencesFile,
-			self.__preferencesFile,
-		] :
-			if os.path.exists( f ) :
-				os.remove( f )
+		GafferTest.TestCase.tearDown( self )
+
+		if self.__defaultPreferencesFile.exists() :
+			self.__defaultPreferencesFile.unlink()
 
 if __name__ == "__main__":
 	unittest.main()

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_COLLECTSCENES_H
-#define GAFFERSCENE_COLLECTSCENES_H
+#pragma once
 
 #include "GafferScene/SceneProcessor.h"
 
@@ -54,10 +53,10 @@ class GAFFERSCENE_API CollectScenes : public SceneProcessor
 
 	public :
 
-		CollectScenes( const std::string &name=defaultName<CollectScenes>() );
+		explicit CollectScenes( const std::string &name=defaultName<CollectScenes>() );
 		~CollectScenes() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::CollectScenes, CollectScenesTypeId, SceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::CollectScenes, CollectScenesTypeId, SceneProcessor );
 
 		Gaffer::StringVectorDataPlug *rootNamesPlug();
 		const Gaffer::StringVectorDataPlug *rootNamesPlug() const;
@@ -68,9 +67,18 @@ class GAFFERSCENE_API CollectScenes : public SceneProcessor
 		Gaffer::StringPlug *sourceRootPlug();
 		const Gaffer::StringPlug *sourceRootPlug() const;
 
+		Gaffer::BoolPlug *mergeGlobalsPlug();
+		const Gaffer::BoolPlug *mergeGlobalsPlug() const;
+
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 	protected :
+
+		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
+
+		Gaffer::ValuePlug::CachePolicy hashCachePolicy( const Gaffer::ValuePlug *output ) const override;
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
 
 		void hashBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const override;
 		Imath::Box3f computeBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const override;
@@ -98,6 +106,12 @@ class GAFFERSCENE_API CollectScenes : public SceneProcessor
 
 	private :
 
+		class SourceScope;
+		class SourcePathScope;
+
+		Gaffer::ObjectPlug *rootTreePlug();
+		const Gaffer::ObjectPlug *rootTreePlug() const;
+
 		static size_t g_firstPlugIndex;
 
 };
@@ -105,5 +119,3 @@ class GAFFERSCENE_API CollectScenes : public SceneProcessor
 IE_CORE_DECLAREPTR( CollectScenes )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_COLLECTSCENES_H

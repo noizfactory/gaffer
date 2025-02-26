@@ -40,9 +40,9 @@
 #include "ApplicationRootBinding.h"
 #include "ArrayPlugBinding.h"
 #include "BoxPlugBinding.h"
+#include "CollectBinding.h"
 #include "CompoundDataPlugBinding.h"
 #include "CompoundNumericPlugBinding.h"
-#include "ConnectionBinding.h"
 #include "ContextBinding.h"
 #include "ContextProcessorBinding.h"
 #include "DirtyPropagationScopeBinding.h"
@@ -53,8 +53,10 @@
 #include "MetadataAlgoBinding.h"
 #include "MetadataBinding.h"
 #include "MonitorBinding.h"
+#include "NodeAlgoBinding.h"
 #include "NodeBinding.h"
 #include "NumericPlugBinding.h"
+#include "OptionalValuePlugBinding.h"
 #include "ParallelAlgoBinding.h"
 #include "PathBinding.h"
 #include "PathFilterBinding.h"
@@ -65,8 +67,9 @@
 #include "ScriptNodeBinding.h"
 #include "SerialisationBinding.h"
 #include "SetBinding.h"
-#include "SignalBinding.h"
+#include "SignalsBinding.h"
 #include "SplinePlugBinding.h"
+#include "SpreadsheetBinding.h"
 #include "StringPlugBinding.h"
 #include "SubGraphBinding.h"
 #include "SwitchBinding.h"
@@ -77,13 +80,23 @@
 #include "UndoScopeBinding.h"
 #include "ValuePlugBinding.h"
 #include "NameValuePlugBinding.h"
+#include "ShufflesBinding.h"
+#include "MessagesBinding.h"
+#include "TweakPlugBinding.h"
 
 #include "GafferBindings/DependencyNodeBinding.h"
 
 #include "Gaffer/Backdrop.h"
+#include "Gaffer/PatternMatch.h"
 
 #ifdef __linux__
 #include <sys/prctl.h>
+#endif
+
+#ifdef _MSC_VER
+#include "IECore/MessageHandler.h"
+
+#include "tbb/tbbmalloc_proxy.h"
 #endif
 
 using namespace boost::python;
@@ -103,18 +116,24 @@ bool isDebug()
 #endif
 }
 
-// This is documented as being for the use of extension
-// modules, but then isn't declared in the Python headers,
-// so we declare it ourselves.
-extern "C" void Py_GetArgcArgv( int *argc, char ***argv );
+#ifndef _MSC_VER
+
+int g_argc = 0;
+char **g_argv = nullptr;
+
+int storeArgcArgv( int argc, char **argv, char **env )
+{
+	g_argc = argc;
+	g_argv = argv;
+	return 0;
+}
 
 void clobberArgv()
 {
-	// Get the original argc/argv that was passed to
-	// `main()`. We will modify this in place.
-	int argc;
-	char **argv;
-	Py_GetArgcArgv( &argc, &argv );
+	if( g_argc < 2 )
+	{
+		return;
+	}
 
 	// A typical command line looks like this :
 	//
@@ -129,15 +148,15 @@ void clobberArgv()
 	// shuffle all the arguments around so that
 	// the `gaffer.py` argument disappears and we
 	// get back to the original.
-	char *end = argv[argc-1] + strlen( argv[argc-1] );
-	strncpy( argv[0], "gaffer", strlen( argv[0] ) );
-	strncpy( argv[1], "", strlen( argv[1] ) );
-	char *emptyString = argv[1];
-	for( int i = 1; i < argc - 1; ++i )
+	char *end = g_argv[g_argc-1] + strlen( g_argv[g_argc-1] );
+	strncpy( g_argv[0], "gaffer", strlen( g_argv[0] ) );
+	strncpy( g_argv[1], "", strlen( g_argv[1] ) );
+	char *emptyString = g_argv[1];
+	for( int i = 1; i < g_argc - 1; ++i )
 	{
-		argv[i] = argv[i+1];
+		g_argv[i] = g_argv[i+1];
 	}
-	argv[argc-1] = emptyString;
+	g_argv[g_argc-1] = emptyString;
 
 	// We've just shuffled the pointers so far, but
 	// in practice the original strings were contiguous
@@ -147,23 +166,26 @@ void clobberArgv()
 	//
 	// Pack everything back down so `ps` sees what it
 	// expects.
-	char *c = argv[0];
-	for( int i = 0; i < argc - 1; ++i )
+	char *c = g_argv[0];
+	for( int i = 0; i < g_argc - 1; ++i )
 	{
-		const size_t l = strlen( argv[i] ) + 1;
-		memmove( c, argv[i], l );
-		argv[i] = c;
+		const size_t l = strlen( g_argv[i] ) + 1;
+		memmove( c, g_argv[i], l );
+		g_argv[i] = c;
 		c += l;
 	}
-	argv[argc-1] = c;
+	g_argv[g_argc-1] = c;
 	memset( c, 0, end - c );
 }
+#endif
 
 void nameProcess()
 {
 	// Some things (for instance, `ps` in default mode) look at `argv` to get
 	// the name.
+#ifndef _MSC_VER
 	clobberArgv();
+#endif
 	// Others (for instance, `top` in default mode) use other methods.
 	// Cater to everyone as best we can.
 #ifdef __linux__
@@ -171,13 +193,41 @@ void nameProcess()
 #endif
 }
 
+#ifdef _MSC_VER
+void verifyAllocator()
+{
+
+	char **replacementLog;
+	int replacementStatus = TBB_malloc_replacement_log( &replacementLog );
+
+	if( replacementStatus != 0 )
+	{
+		IECore::msg( IECore::Msg::Warning, "Gaffer", "Failed to install TBB memory allocator. Performance may be degraded." );
+		for( char **logEntry = replacementLog; *logEntry != 0; logEntry++ )
+		{
+			IECore::msg( IECore::Msg::Warning, "Gaffer", *logEntry );
+		}
+	}
+
+}
+#endif
+
 } // namespace
+
+// Arrange for `storeArgcArgv()` to be called when our module loads,
+// so we can stash the original values for `argc` and `argv`.
+// In Python 2 we could simply use `Py_GetArgcArgv()` instead, but
+// in Python 3 that gives us a mangled copy which is of no use.
+#if  defined( __APPLE__ )
+__attribute__( ( section( "__DATA,__mod_init_func" ) ) ) decltype( storeArgcArgv ) *g_initArgcArgv = storeArgcArgv;
+#elif defined( __linux__ )
+__attribute__( ( section( ".init_array" ) ) ) decltype( storeArgcArgv ) *g_initArgcArgv = storeArgcArgv;
+#endif
 
 BOOST_PYTHON_MODULE( _Gaffer )
 {
 
-	bindConnection();
-	bindSignal();
+	bindSignals();
 	bindGraphComponent();
 	bindContext();
 	bindSerialisation();
@@ -218,17 +268,22 @@ BOOST_PYTHON_MODULE( _Gaffer )
 	bindProcessMessageHandler();
 	bindNameValuePlug();
 	bindProcess();
+	bindSpreadsheet();
+	bindNodeAlgo();
+	bindShuffles();
+	bindMessages();
+	bindTweakPlugs();
+	bindOptionalValuePlug();
+	bindCollect();
 
 	NodeClass<Backdrop>();
+	DependencyNodeClass<PatternMatch>();
 
 	def( "isDebug", &isDebug );
 
 	def( "_nameProcess", &nameProcess );
-
-	// Various parts of gaffer create new threads from C++, and those
-	// threads may call back into Python via wrapped classes at any time.
-	// We must prepare Python for this by calling PyEval_InitThreads().
-
-	PyEval_InitThreads();
+#ifdef _MSC_VER
+	def( "_verifyAllocator", &verifyAllocator );
+#endif
 
 }

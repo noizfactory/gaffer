@@ -59,7 +59,6 @@ Gaffer.Metadata.registerNode(
 	"icon", "referenceNode.png",
 
 	"graphEditor:childrenViewable", True,
-	"childNodesAreReadOnly", True,
 
 	"layout:customWidget:fileName:widgetType", "GafferUI.ReferenceUI._FileNameWidget"
 
@@ -78,13 +77,13 @@ def nodeMenuCreateCommand( menu ) :
 	graphEditor = menu.ancestor( GafferUI.GraphEditor )
 	assert( graphEditor is not None )
 
-	fileName = _waitForFileName( parentWindow = menu.ancestor( GafferUI.Window ) )
+	filePath = _waitForFileName( parentWindow = menu.ancestor( GafferUI.Window ) )
 
 	node = Gaffer.Reference()
 	graphEditor.graphGadget().getRoot().addChild( node )
 
-	if fileName :
-		_load( node, fileName, parentWindow = graphEditor.ancestor( GafferUI.Window ) )
+	if filePath :
+		_load( node, filePath, parentWindow = graphEditor.ancestor( GafferUI.Window ) )
 
 	return node
 
@@ -107,26 +106,26 @@ class _FileNameWidget( GafferUI.Widget ) :
 			label = GafferUI.Label( "File", horizontalAlignment = GafferUI.Label.HorizontalAlignment.Right )
 			label._qtWidget().setFixedWidth( GafferUI.PlugWidget.labelWidth() )
 
-			self.__textWidget = GafferUI.TextWidget( node.fileName(), editable = False )
+			self.__textWidget = GafferUI.TextWidget( node.fileName().as_posix() if node.fileName() is not None else "", editable = False )
 
 			loadButton = GafferUI.Button( image = "pathChooser.png", hasFrame=False )
 			loadButton.setToolTip( "Load" )
-			loadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__loadClicked ), scoped = False )
+			loadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__loadClicked ) )
 
 			self.__reloadButton = GafferUI.Button( image = "refresh.png", hasFrame=False )
 			self.__reloadButton.setToolTip( "Reload" )
-			self.__reloadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__reloadClicked ), scoped = False )
+			self.__reloadButton.clickedSignal().connect( Gaffer.WeakMethod( self.__reloadClicked ) )
 
-		node.referenceLoadedSignal().connect( Gaffer.WeakMethod( self.__referenceLoaded ), scoped = False )
+		node.referenceLoadedSignal().connect( Gaffer.WeakMethod( self.__referenceLoaded ) )
 
 	def __loadClicked( self, button ) :
 
-		fileName = _waitForFileName( self.__node.fileName(), parentWindow = self.ancestor( GafferUI.Window ) )
-		if not fileName :
+		filePath = _waitForFileName( self.__node.fileName(), parentWindow = self.ancestor( GafferUI.Window ) )
+		if filePath is None :
 			return
 
 		with Gaffer.UndoScope( self.__node.scriptNode() ) :
-			_load( self.__node, fileName, self.ancestor( GafferUI.Window ) )
+			_load( self.__node, filePath, self.ancestor( GafferUI.Window ) )
 
 	def __reloadClicked( self, button ) :
 
@@ -135,20 +134,20 @@ class _FileNameWidget( GafferUI.Widget ) :
 
 	def __referenceLoaded( self, node ) :
 
-		self.__textWidget.setText( node.fileName() )
+		self.__textWidget.setText( node.fileName().as_posix() if node.fileName() is not None else "" )
 
 ##########################################################################
 # Utilities
 ##########################################################################
 
-def _waitForFileName( initialFileName="", parentWindow=None ) :
+def _waitForFileName( initialFilePath=None, parentWindow=None ) :
 
 	bookmarks = None
 	if parentWindow is not None :
 		bookmarks = GafferUI.Bookmarks.acquire( parentWindow, category="reference" )
 
-	if initialFileName :
-		path = Gaffer.FileSystemPath( os.path.dirname( os.path.abspath( initialFileName ) ) )
+	if initialFilePath is not None :
+		path = Gaffer.FileSystemPath( initialFilePath.absolute().parent )
 	else :
 		path = Gaffer.FileSystemPath( bookmarks.getDefault( parentWindow ) if bookmarks is not None else os.getcwd() )
 
@@ -158,14 +157,14 @@ def _waitForFileName( initialFileName="", parentWindow=None ) :
 	path = dialogue.waitForPath( parentWindow = parentWindow )
 
 	if not path :
-		return ""
+		return None
 
-	return str( path )
+	return path.standardPath()
 
-def _load( node, fileName, parentWindow ) :
+def _load( node, filePath, parentWindow ) :
 
 	with GafferUI.ErrorDialogue.ErrorHandler( title = "Errors Occurred During Loading", closeLabel = "Oy vey", parentWindow = parentWindow ) :
-		node.load( fileName )
+		node.load( filePath )
 
 ##########################################################################
 # GraphEditor node context menu
@@ -192,7 +191,8 @@ def __duplicateAsBox( graphEditor, node ) :
 			closeLabel = "Oy vey",
 			parentWindow = graphEditor.ancestor( GafferUI.Window ),
 		) :
-			script.executeFile( node.fileName(), parent = box, continueOnError = True )
+			sp = IECore.SearchPath( os.environ.get( "GAFFER_REFERENCE_PATHS", "" ) )
+			script.executeFile( sp.find( str( node.fileName() ) ), parent = box, continueOnError = True )
 
 def __graphEditorNodeContextMenu( graphEditor, node, menuDefinition ) :
 
@@ -207,4 +207,4 @@ def __graphEditorNodeContextMenu( graphEditor, node, menuDefinition ) :
 		}
 	)
 
-GafferUI.GraphEditor.nodeContextMenuSignal().connect( __graphEditorNodeContextMenu, scoped = False )
+GafferUI.GraphEditor.nodeContextMenuSignal().connect( __graphEditorNodeContextMenu )

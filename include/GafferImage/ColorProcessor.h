@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_COLORPROCESSOR_H
-#define GAFFERIMAGE_COLORPROCESSOR_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -51,10 +50,13 @@ class GAFFERIMAGE_API ColorProcessor : public ImageProcessor
 
 	public :
 
-		ColorProcessor( const std::string &name=defaultName<ColorProcessor>() );
+		explicit ColorProcessor( const std::string &name=defaultName<ColorProcessor>() );
 		~ColorProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ColorProcessor, ColorProcessorTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ColorProcessor, ColorProcessorTypeId, ImageProcessor );
+
+		Gaffer::BoolPlug *processUnpremultipliedPlug();
+		const Gaffer::BoolPlug *processUnpremultipliedPlug() const;
 
 		Gaffer::StringPlug *channelsPlug();
 		const Gaffer::StringPlug *channelsPlug() const;
@@ -64,25 +66,27 @@ class GAFFERIMAGE_API ColorProcessor : public ImageProcessor
 	protected :
 
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		void hashChannelData( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-
-		/// Implemented to process the color data and stash the results on colorDataPlug()
-		/// format, dataWindow, metadata, and channelNames are passed through via direct connection to the input values.
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
-		/// Implemented to use the results of colorDataPlug() via processColorData()
-		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
-		/// May be implemented by derived classes to return true if the specified input is used in processColorData().
-		/// Must first call the base class implementation and return true if it does.
-		virtual bool affectsColorData( const Gaffer::Plug *input ) const;
-		/// May be implemented by derived classes to compute the hash for the color processing - all implementations
-		/// must call their base class implementation first.
-		virtual void hashColorData( const Gaffer::Context *context, IECore::MurmurHash &h ) const;
-		/// Must be implemented by derived classes to modify R, G and B in place.
-		virtual void processColorData( const Gaffer::Context *context, IECore::FloatVectorData *r, IECore::FloatVectorData *g, IECore::FloatVectorData *b ) const = 0;
+		/// Function object used to implement the processing of color values.
+		using ColorProcessorFunction = std::function<void ( IECore::FloatVectorData *r, IECore::FloatVectorData *g, IECore::FloatVectorData *b )>;
+
+		/// Must be implemented by derived classes to return true if the specified input is used in `colorProcessor()`.
+		virtual bool affectsColorProcessor( const Gaffer::Plug *input ) const = 0;
+		/// Must be implemented by derived classes to compute the hash for the color processor.
+		virtual void hashColorProcessor( const Gaffer::Context *context, IECore::MurmurHash &h ) const = 0;
+		/// Must be implemented by derived classes to return a ColorProcessorFunction. An empty function
+		/// may be returned, in which case the node will pass through the input image data unchanged.
+		virtual ColorProcessorFunction colorProcessor( const Gaffer::Context *context ) const = 0;
 
 	private :
+
+		void hashChannelData( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const final;
+		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const final;
+
+		Gaffer::ObjectPlug *colorProcessorPlug();
+		const Gaffer::ObjectPlug *colorProcessorPlug() const;
 
 		// Used to store the result of processColorData(), so that it can be reused in computeChannelData().
 		// Evaluated in a context with an "image:colorProcessor:__layerName" variable, so we can cache
@@ -97,5 +101,3 @@ class GAFFERIMAGE_API ColorProcessor : public ImageProcessor
 IE_CORE_DECLAREPTR( ColorProcessor )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_CHANNELDATAPROCESSOR_H

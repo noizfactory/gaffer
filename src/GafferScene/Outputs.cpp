@@ -59,8 +59,8 @@ using namespace GafferScene;
 namespace
 {
 
-typedef std::pair<std::string, OutputPtr> NamedOutput;
-typedef multi_index::multi_index_container<
+using NamedOutput = std::pair<std::string, OutputPtr>;
+using OutputMap = multi_index::multi_index_container<
 	NamedOutput,
 	multi_index::indexed_by<
 		multi_index::ordered_unique<
@@ -68,7 +68,7 @@ typedef multi_index::multi_index_container<
 		>,
 		multi_index::sequenced<>
 	>
-> OutputMap;
+>;
 
 OutputMap &outputMap()
 {
@@ -82,7 +82,7 @@ OutputMap &outputMap()
 // Outputs implementation
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Outputs );
+GAFFER_NODE_DEFINE_TYPE( Outputs );
 
 size_t Outputs::g_firstPlugIndex = 0;
 
@@ -188,7 +188,7 @@ IECore::ConstCompoundObjectPtr Outputs::computeProcessedGlobals( const Gaffer::C
 	result->members() = inputGlobals->members();
 
 	// add our outputs to the result
-	for( InputValuePlugIterator it( dsp ); !it.done(); ++it )
+	for( ValuePlug::InputIterator it( dsp ); !it.done(); ++it )
 	{
 		const ValuePlug *outputPlug = it->get();
 		if( outputPlug->getChild<BoolPlug>( "active" )->getValue() )

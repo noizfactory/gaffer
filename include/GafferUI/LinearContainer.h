@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_LINEARCONTAINER_H
-#define GAFFERUI_LINEARCONTAINER_H
+#pragma once
 
 #include "GafferUI/ContainerGadget.h"
 
@@ -71,7 +70,7 @@ class GAFFERUI_API LinearContainer : public ContainerGadget
 			Decreasing
 		};
 
-		LinearContainer( const std::string &name=defaultName<LinearContainer>(), Orientation orientation=X,
+		explicit LinearContainer( const std::string &name=defaultName<LinearContainer>(), Orientation orientation=X,
 			Alignment alignment=Centre, float spacing = 0.0f, Direction=Increasing );
 
 		~LinearContainer() override;
@@ -90,31 +89,17 @@ class GAFFERUI_API LinearContainer : public ContainerGadget
 		void setDirection( Direction direction );
 		Direction getDirection() const;
 
-		Imath::Box3f bound() const override;
-
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
-
-	private :
-
-		void renderRequested( GadgetPtr gadget );
+		void updateLayout() const override;
 
 		Orientation m_orientation;
 		Alignment m_alignment;
 		float m_spacing;
 		Direction m_direction;
 
-		mutable bool m_clean;
-		void calculateChildTransforms() const;
-
 };
 
 IE_CORE_DECLAREPTR( LinearContainer );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<LinearContainer> > LinearContainerIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<LinearContainer> > RecursiveLinearContainerIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_LINEARCONTAINER_H

@@ -99,6 +99,10 @@ class gui( Gaffer.Application ) :
 		if len( args["scripts"] ) :
 			for fileName in args["scripts"] :
 				GafferUI.FileMenu.addScript( self.root(), fileName )
+			if not len( self.root()["scripts"] ) :
+				# Loading was cancelled, in which case we should quit the app.
+				GafferUI.EventLoop.mainEventLoop().stop()
+				return False # Remove idle callback
 		else :
 			scriptNode = Gaffer.ScriptNode()
 			Gaffer.NodeAlgo.applyUserDefaults( scriptNode )
@@ -127,7 +131,10 @@ class gui( Gaffer.Application ) :
 
 		from Qt import QtWidgets
 
-		self.__clipboardContentsChangedConnection = self.root().clipboardContentsChangedSignal().connect( Gaffer.WeakMethod( self.__clipboardContentsChanged ) )
+		self.__clipboardContentsChangedConnection = self.root().clipboardContentsChangedSignal().connect(
+			Gaffer.WeakMethod( self.__clipboardContentsChanged ),
+			scoped = True
+		)
 		QtWidgets.QApplication.clipboard().dataChanged.connect( Gaffer.WeakMethod( self.__qtClipboardContentsChanged ) )
 		self.__ignoreQtClipboardContentsChanged = False
 		self.__qtClipboardContentsChanged() # Trigger initial sync
@@ -154,8 +161,8 @@ class gui( Gaffer.Application ) :
 		from Qt import QtWidgets
 
 		text = QtWidgets.QApplication.clipboard().text().encode( "utf-8" )
-		if text :
-			with Gaffer.BlockedConnection( self.__clipboardContentsChangedConnection ) :
+		if text and text != str( self.root().getClipboardContents() ).encode( "utf-8" ) :
+			with Gaffer.Signals.BlockedConnection( self.__clipboardContentsChangedConnection ) :
 				self.root().setClipboardContents( IECore.StringData( text ) )
 
 IECore.registerRunTimeTyped( gui )

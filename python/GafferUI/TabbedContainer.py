@@ -35,6 +35,9 @@
 #
 ##########################################################################
 
+import enum
+import functools
+
 import IECore
 
 import Gaffer
@@ -46,20 +49,23 @@ from Qt import QtWidgets
 
 class TabbedContainer( GafferUI.ContainerWidget ) :
 
-	__DragState = IECore.Enum.create( "None", "Waiting", "Active" )
+	__DragState = enum.Enum( "__DragState", [ "None_", "Waiting", "Active" ] )
 	__palette = None
 
 	def __init__( self, cornerWidget=None, **kw ) :
 
 		GafferUI.ContainerWidget.__init__( self, _TabWidget(), **kw )
 
+		# Tab bar
+		# -------
+
 		self.__tabBar = GafferUI.Widget( QtWidgets.QTabBar() )
 		self.__tabBar._qtWidget().setDrawBase( False )
 		self.__tabBar._qtWidget().tabMoved.connect( Gaffer.WeakMethod( self.__moveWidget ) )
-		self.__tabBar.dragEnterSignal().connect( Gaffer.WeakMethod( self.__tabBarDragEnter ), scoped = False )
-		self.__tabBar.dragMoveSignal().connect( Gaffer.WeakMethod( self.__tabBarDragMove ), scoped = False )
-		self.__tabBar.dragLeaveSignal().connect( Gaffer.WeakMethod( self.__tabBarDragLeave ), scoped = False )
-		self.__tabBarDragState = self.__DragState.None
+		self.__tabBar.dragEnterSignal().connect( Gaffer.WeakMethod( self.__tabBarDragEnter ) )
+		self.__tabBar.dragMoveSignal().connect( Gaffer.WeakMethod( self.__tabBarDragMove ) )
+		self.__tabBar.dragLeaveSignal().connect( Gaffer.WeakMethod( self.__tabBarDragLeave ) )
+		self.__tabBarDragState = self.__DragState.None_
 
 		# See comments in Button.py
 		if TabbedContainer.__palette is None :
@@ -69,15 +75,50 @@ class TabbedContainer( GafferUI.ContainerWidget ) :
 		self.__tabBar._qtWidget().setPalette( TabbedContainer.__palette )
 
 		self._qtWidget().setTabBar( self.__tabBar._qtWidget() )
-
-		self._qtWidget().setUsesScrollButtons( False )
 		self._qtWidget().setElideMode( QtCore.Qt.ElideNone )
 
-		self.__widgets = []
+		# Corner widget and scrolling
+		# ---------------------------
+		#
+		# QTabBar does provide scroll buttons for use when there is not enough
+		# horizontal space to show all tabs. But these are really awkward to use
+		# : you may not know which way to scroll, it may take several clicks to
+		# find the thing you want, and it's hard to track the jumpy movement of
+		# the tabs. Instead we provide a dropdown menu which provides an
+		# overview of all tabs and allows you to jump to the right one with a
+		# single click. This is stored in `self.__cornerContainer[0]`, alongside
+		# an optional user-provided corner widget which is stored in
+		# `self.__cornerContainer[1]`.
 
-		self.__cornerWidget = None
+		self.__cornerContainer = GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Horizontal )
+		with self.__cornerContainer :
+			GafferUI.MenuButton(
+				image = "tabScrollMenu.png", hasFrame = False,
+				menu = GafferUI.Menu( Gaffer.WeakMethod( self.__scrollMenuDefinition ) )
+			)
+		self._qtWidget().setCornerWidget( self.__cornerContainer._qtWidget() )
 		self.setCornerWidget( cornerWidget )
 
+		# When there's not enough horizontal space, we need QTabWidget to scroll
+		# to show the current tab. But `QTabBarPrivate::makeVisible()` refuses
+		# to do this unless the scroll buttons are visible. So we have to
+		# pretend to be using them and then use the stylesheet to set their size to
+		# 0. One benefit of this hack is that we can track the show/hide events
+		# for the buttons so that we only show our menu button when scrolling
+		# is necessary. This is a bit more reliable than trying to do it ourselves
+		# using resize events and size queries.
+
+		self._qtWidget().setUsesScrollButtons( True )
+		assert( len( self._qtWidget().tabBar().children() ) == 2 ) # We expect a left and a right button
+		_VisibilityLink(
+			self._qtWidget().tabBar().children()[0],
+			self.__cornerContainer[0]._qtWidget()
+		)
+
+		# Child storage and signals
+		# -------------------------
+
+		self.__widgets = []
 		self.__currentChangedSignal = GafferUI.WidgetEventSignal()
 		self._qtWidget().currentChanged.connect( Gaffer.WeakMethod( self.__currentChanged ) )
 
@@ -167,46 +208,49 @@ class TabbedContainer( GafferUI.ContainerWidget ) :
 
 	def removeChild( self, child ) :
 
-		assert( child is self.__cornerWidget or child in self.__widgets )
-
-		if child is self.__cornerWidget :
-			self._qtWidget().setCornerWidget( None )
-			self.__cornerWidget = None
+		if child is self.getCornerWidget() :
+			self.setCornerWidget( None )
 		else :
-			self._qtWidget().removeTab( self.__widgets.index( child ) )
+			assert( child in self.__widgets )
+			# We must remove the child from __widgets before the tab, otherwise
+			# currentChangedSignal will be emit with the old widget.
+			removalIndex = self.__widgets.index( child )
 			self.__widgets.remove( child )
+			self._qtWidget().removeTab( removalIndex )
 
-		child._qtWidget().setParent( None )
-		child._applyVisibility()
+			child._qtWidget().setParent( None )
+			child._applyVisibility()
 
 	def setCornerWidget( self, cornerWidget ) :
 
-		if self.__cornerWidget is not None :
-			self.removeChild( self.__cornerWidget )
+		if len( self.__cornerContainer ) > 1 :
+			del self.__cornerContainer[1]
 
 		if cornerWidget is not None :
 			oldParent = cornerWidget.parent()
 			if oldParent is not None :
 				oldParent.removeChild( cornerWidget )
-			self._qtWidget().setCornerWidget( cornerWidget._qtWidget() )
-			cornerWidget._applyVisibility()
-			assert( cornerWidget._qtWidget().parent() is self._qtWidget() )
-		else :
-			self._qtWidget().setCornerWidget( None )
-
-		self.__cornerWidget = cornerWidget
+			assert( len( self.__cornerContainer ) == 1 )
+			self.__cornerContainer.append( cornerWidget )
 
 	def getCornerWidget( self ) :
 
-		return self.__cornerWidget
+		return self.__cornerContainer[1] if len( self.__cornerContainer ) > 1 else None
+
+	def setTabVisible( self, child, visible ) :
+
+		self._qtWidget().setTabVisible( self.__widgets.index( child ), visible )
+
+	def getTabVisible( self, child ) :
+
+		return self._qtWidget().isTabVisible( self.__widgets.index( child ) )
 
 	## If the tabs are hidden, then the corner widget will
 	# also be hidden.
 	def setTabsVisible( self, visible ) :
 
 		self._qtWidget().tabBar().setVisible( visible )
-		if self.__cornerWidget is not None :
-			self.__cornerWidget.setVisible( visible )
+		self.__cornerContainer.setVisible( visible )
 
 	def getTabsVisible( self ) :
 
@@ -231,7 +275,8 @@ class TabbedContainer( GafferUI.ContainerWidget ) :
 
 	def __currentChanged( self, index ) :
 
-		self.__currentChangedSignal( self, self[index] )
+		current = self[index] if len(self) else None
+		self.__currentChangedSignal( self, current )
 
 	def __tabBarDragEnter( self, widget, event ) :
 
@@ -250,7 +295,7 @@ class TabbedContainer( GafferUI.ContainerWidget ) :
 
 	def __tabBarDragLeave( self, widget, event ) :
 
-		self.__tabBarDragState = self.__DragState.None
+		self.__tabBarDragState = self.__DragState.None_
 		return True
 
 	def __tabBarDragActivate( self ) :
@@ -265,6 +310,29 @@ class TabbedContainer( GafferUI.ContainerWidget ) :
 		tab = self.__tabBar._qtWidget().tabAt( p )
 		if tab >= 0 :
 			self._qtWidget().setCurrentIndex( tab )
+
+	def __scrollMenuDefinition( self ) :
+
+		result = IECore.MenuDefinition()
+
+		current = self.getCurrent()
+		for child in self :
+			result.append(
+				self.getLabel( child ),
+				{
+					"checkBox" : child is current,
+					"command" : functools.partial(
+						Gaffer.WeakMethod( self.__scrollTo ),
+						child
+					)
+				}
+			)
+
+		return result
+
+	def __scrollTo( self, child, *unused ) :
+
+		self.setCurrent( child )
 
 # Private implementation - a QTabWidget with custom size behaviour.
 class _TabWidget( QtWidgets.QTabWidget ) :
@@ -299,3 +367,21 @@ class _TabWidget( QtWidgets.QTabWidget ) :
 
 		return result
 
+# Used to synchronise the visibility of our "scroll menu" with the visibility
+# of Qt's scroll buttons.
+class _VisibilityLink( QtCore.QObject ) :
+
+	def __init__( self, sourceWidget, destinationWidget ) :
+
+		# Parent to destination widget
+		QtCore.QObject.__init__( self, destinationWidget )
+
+		sourceWidget.installEventFilter( self )
+
+	def eventFilter( self, qObject, qEvent ) :
+
+		qEventType = qEvent.type()
+		if qEventType == qEvent.Show or qEventType == qEvent.Hide :
+			self.parent().setVisible( qObject.isVisible() )
+
+		return False

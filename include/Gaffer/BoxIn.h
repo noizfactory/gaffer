@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_BOXIN_H
-#define GAFFER_BOXIN_H
+#pragma once
 
 #include "Gaffer/BoxIO.h"
 
@@ -47,18 +46,13 @@ class GAFFER_API BoxIn : public BoxIO
 
 	public :
 
-		BoxIn( const std::string &name=defaultName<BoxIn>() );
+		explicit BoxIn( const std::string &name=defaultName<BoxIn>() );
 		~BoxIn() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::BoxIn, BoxInTypeId, BoxIO );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::BoxIn, BoxInTypeId, BoxIO );
 
 };
 
 IE_CORE_DECLAREPTR( BoxIn )
 
-typedef FilteredChildIterator<TypePredicate<BoxIn> > BoxInIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<BoxIn> > RecursiveBoxInIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_BOXIN_H

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_OBJECTTOSCENE_H
-#define GAFFERSCENE_OBJECTTOSCENE_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -47,9 +46,9 @@ class GAFFERSCENE_API ObjectToScene : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ObjectToScene, ObjectToSceneTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ObjectToScene, ObjectToSceneTypeId, ObjectSource );
 
-		ObjectToScene( const std::string &name=defaultName<ObjectToScene>() );
+		explicit ObjectToScene( const std::string &name=defaultName<ObjectToScene>() );
 		~ObjectToScene() override;
 
 		Gaffer::ObjectPlug *objectPlug();
@@ -71,5 +70,3 @@ class GAFFERSCENE_API ObjectToScene : public ObjectSource
 IE_CORE_DECLAREPTR( ObjectToScene )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_OBJECTTOSCENE_H

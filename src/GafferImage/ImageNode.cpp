@@ -48,7 +48,7 @@ using namespace IECore;
 using namespace GafferImage;
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ImageNode );
+GAFFER_NODE_DEFINE_TYPE( ImageNode );
 
 size_t ImageNode::g_firstPlugIndex = 0;
 
@@ -104,7 +104,11 @@ void ImageNode::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *co
 		// hash will get overwritten anyway). Instead we call ComputeNode::hash() in our
 		// hash*() implementations, and allow subclass implementations to not call the base class
 		// if they intend to overwrite the hash.
-		if( output == imagePlug->channelDataPlug() )
+		if( output == imagePlug->viewNamesPlug() )
+		{
+			hashViewNames( imagePlug, context, h );
+		}
+		else if( output == imagePlug->channelDataPlug() )
 		{
 			const std::string &channel = context->get<std::string>( ImagePlug::channelNameContextName );
 			if( channelEnabled( channel ) )
@@ -128,6 +132,14 @@ void ImageNode::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *co
 		{
 			hashMetadata( imagePlug, context, h );
 		}
+		else if( output == imagePlug->deepPlug() )
+		{
+			hashDeep( imagePlug, context, h );
+		}
+		else if( output == imagePlug->sampleOffsetsPlug() )
+		{
+			hashSampleOffsets( imagePlug, context, h );
+		}
 		else if( output == imagePlug->channelNamesPlug() )
 		{
 			hashChannelNames( imagePlug, context, h );
@@ -137,6 +149,11 @@ void ImageNode::hash( const Gaffer::ValuePlug *output, const Gaffer::Context *co
 	{
 		ComputeNode::hash( output, context, h );
 	}
+}
+
+void ImageNode::hashViewNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->viewNamesPlug(), context, h );
 }
 
 void ImageNode::hashFormat( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
@@ -152,6 +169,16 @@ void ImageNode::hashDataWindow( const GafferImage::ImagePlug *parent, const Gaff
 void ImageNode::hashMetadata( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
 	ComputeNode::hash( parent->metadataPlug(), context, h );
+}
+
+void ImageNode::hashDeep( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->deepPlug(), context, h );
+}
+
+void ImageNode::hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
+{
+	ComputeNode::hash( parent->sampleOffsetsPlug(), context, h );
 }
 
 void ImageNode::hashChannelNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const
@@ -190,7 +217,13 @@ void ImageNode::compute( ValuePlug *output, const Context *context ) const
 
 	// node is enabled - defer to our derived classes to perform the appropriate computation
 
-	if( output == imagePlug->formatPlug() )
+	if( output == imagePlug->viewNamesPlug() )
+	{
+		static_cast<StringVectorDataPlug *>( output )->setValue(
+			computeViewNames( context, imagePlug )
+		);
+	}
+	else if( output == imagePlug->formatPlug() )
 	{
 		static_cast<AtomicFormatPlug *>( output )->setValue(
 			computeFormat( context, imagePlug )
@@ -208,6 +241,23 @@ void ImageNode::compute( ValuePlug *output, const Context *context ) const
 			computeMetadata( context, imagePlug )
 		);
 	}
+	else if( output == imagePlug->deepPlug() )
+	{
+		static_cast<BoolPlug *>( output )->setValue(
+			computeDeep( context, imagePlug )
+		);
+	}
+	else if( output == imagePlug->sampleOffsetsPlug() )
+	{
+		V2i tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
+		if( tileOrigin.x % ImagePlug::tileSize() || tileOrigin.y % ImagePlug::tileSize() )
+		{
+			throw Exception( "The image:tileOrigin must be a multiple of ImagePlug::tileSize()" );
+		}
+		static_cast<IntVectorDataPlug *>( output )->setValue(
+			computeSampleOffsets( tileOrigin, context, imagePlug )
+		);
+	}
 	else if( output == imagePlug->channelNamesPlug() )
 	{
 		static_cast<StringVectorDataPlug *>( output )->setValue(
@@ -216,7 +266,7 @@ void ImageNode::compute( ValuePlug *output, const Context *context ) const
 	}
 	else if( output == imagePlug->channelDataPlug() )
 	{
-		std::string channelName = context->get<string>( ImagePlug::channelNameContextName );
+		const std::string &channelName = context->get<string>( ImagePlug::channelNameContextName );
 		if( channelEnabled( channelName ) )
 		{
 			V2i tileOrigin = context->get<V2i>( ImagePlug::tileOriginContextName );
@@ -235,6 +285,12 @@ void ImageNode::compute( ValuePlug *output, const Context *context ) const
 	}
 }
 
+IECore::ConstStringVectorDataPtr ImageNode::computeViewNames( const Gaffer::Context *context, const ImagePlug *parent ) const
+{
+	throw IECore::NotImplementedException( string( typeName() ) + "::computeViewNames" );
+}
+
+
 GafferImage::Format ImageNode::computeFormat( const Gaffer::Context *context, const ImagePlug *parent ) const
 {
 	throw IECore::NotImplementedException( string( typeName() ) + "::computeFormat" );
@@ -248,6 +304,16 @@ Imath::Box2i ImageNode::computeDataWindow( const Gaffer::Context *context, const
 IECore::ConstCompoundDataPtr ImageNode::computeMetadata( const Gaffer::Context *context, const ImagePlug *parent ) const
 {
 	throw IECore::NotImplementedException( string( typeName() ) + "::computeMetadata" );
+}
+
+bool ImageNode::computeDeep( const Gaffer::Context *context, const ImagePlug *parent ) const
+{
+	throw IECore::NotImplementedException( string( typeName() ) + "::computeDeep" );
+}
+
+IECore::ConstIntVectorDataPtr ImageNode::computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const
+{
+	throw IECore::NotImplementedException( string( typeName() ) + "::computeSampleOffsets" );
 }
 
 IECore::ConstStringVectorDataPtr ImageNode::computeChannelNames( const Gaffer::Context *context, const ImagePlug *parent ) const
@@ -266,7 +332,7 @@ void ImageNode::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outp
 
 	if( input == enabledPlug() )
 	{
-		for( ValuePlugIterator it( outPlug() ); !it.done(); ++it )
+		for( ValuePlug::Iterator it( outPlug() ); !it.done(); ++it )
 		{
 			if( (*it)->getInput() )
 			{

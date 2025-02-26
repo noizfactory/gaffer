@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SETVISUALISER_H
-#define GAFFERSCENE_SETVISUALISER_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/AttributeProcessor.h"
 
 #include "Gaffer/NumericPlug.h"
 
@@ -60,15 +59,15 @@ namespace GafferScene
 /// display. This allows more efficient hashing/compute without the need for
 /// any internal state management, as well as permitting informative UIs that
 /// help the user understand the resultant color mappings.
-class GAFFERSCENE_API SetVisualiser : public SceneElementProcessor
+class GAFFERSCENE_API SetVisualiser : public AttributeProcessor
 {
 
 	public :
 
-		SetVisualiser( const std::string &name=defaultName<SetVisualiser>() );
+		explicit SetVisualiser( const std::string &name=defaultName<SetVisualiser>() );
 		~SetVisualiser() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SetVisualiser, SetVisualiserTypeId, SceneElementProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SetVisualiser, SetVisualiserTypeId, AttributeProcessor );
 
 		Gaffer::StringPlug *setsPlug();
 		const Gaffer::StringPlug *setsPlug() const;
@@ -86,12 +85,12 @@ class GAFFERSCENE_API SetVisualiser : public SceneElementProcessor
 
 	protected :
 
-		virtual void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		virtual void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
+		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 
-		bool processesAttributes() const override;
+		bool affectsProcessedAttributes( const Gaffer::Plug *input ) const override;
 		void hashProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECore::ConstCompoundObjectPtr computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::ConstCompoundObjectPtr inputAttributes ) const override;
+		IECore::ConstCompoundObjectPtr computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, const IECore::CompoundObject *inputAttributes ) const override;
 
 	private :
 
@@ -113,5 +112,3 @@ class GAFFERSCENE_API SetVisualiser : public SceneElementProcessor
 IE_CORE_DECLAREPTR( SetVisualiser )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SETVISUALISER_H

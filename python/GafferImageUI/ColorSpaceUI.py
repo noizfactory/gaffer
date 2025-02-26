@@ -39,7 +39,7 @@ import IECore
 import Gaffer
 import GafferUI
 import GafferImage
-import OpenColorIOTransformUI
+from . import OpenColorIOTransformUI
 
 Gaffer.Metadata.registerNode(
 
@@ -66,6 +66,8 @@ Gaffer.Metadata.registerNode(
 			"presetValues", OpenColorIOTransformUI.colorSpacePresetValues,
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"openColorIO:extraPresetNames", IECore.StringVectorData( [ "Working Space" ] ),
+			"openColorIO:extraPresetValues", IECore.StringVectorData( [ "" ] ),
 
 		],
 
@@ -80,6 +82,8 @@ Gaffer.Metadata.registerNode(
 			"presetValues", OpenColorIOTransformUI.colorSpacePresetValues,
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
+			"openColorIO:extraPresetNames", IECore.StringVectorData( [ "Working Space" ] ),
+			"openColorIO:extraPresetValues", IECore.StringVectorData( [ "" ] ),
 
 		]
 

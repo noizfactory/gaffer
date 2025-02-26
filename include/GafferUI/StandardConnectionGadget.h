@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_STANDARDCONNECTIONGADGET_H
-#define GAFFERUI_STANDARDCONNECTIONGADGET_H
+#pragma once
 
 #include "GafferUI/ConnectionGadget.h"
 
@@ -75,8 +74,9 @@ class GAFFERUI_API StandardConnectionGadget : public ConnectionGadget
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
-		bool hasLayer( Layer layer ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 	private :
 
@@ -114,7 +114,7 @@ class GAFFERUI_API StandardConnectionGadget : public ConnectionGadget
 		bool keyPressed( const KeyEvent &event );
 		bool keyReleased( const KeyEvent &event );
 
-		void plugMetadataChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug );
+		void plugMetadataChanged( const Gaffer::Plug *plug, IECore::InternedString key );
 
 		bool updateUserColor();
 
@@ -134,7 +134,7 @@ class GAFFERUI_API StandardConnectionGadget : public ConnectionGadget
 		/// classes so we can show which end is being
 		/// hovered.
 		bool m_hovering;
-		boost::optional<Imath::Color3f> m_userColor;
+		std::optional<Imath::Color3f> m_userColor;
 
 		bool m_dotPreview;
 		Imath::V3f m_dotPreviewLocation;
@@ -143,13 +143,8 @@ class GAFFERUI_API StandardConnectionGadget : public ConnectionGadget
 		Imath::V3f m_dstPosOrig;
 		Imath::V3f m_dstTangentOrig;
 
-		boost::signals::scoped_connection m_keyPressConnection;
-		boost::signals::scoped_connection m_keyReleaseConnection;
+		Gaffer::Signals::ScopedConnection m_keyPressConnection;
+		Gaffer::Signals::ScopedConnection m_keyReleaseConnection;
 };
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<StandardConnectionGadget> > StandardConnectionGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<StandardConnectionGadget> > RecursiveStandardConnectionGadgetIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_STANDARDCONNECTIONGADGET_H

@@ -42,7 +42,7 @@
 #include "IECore/SimpleTypedData.h"
 #include "IECore/StringAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
 using namespace IECore;
@@ -78,15 +78,6 @@ Path::Path( const Names &names, const IECore::InternedString &root, PathFilterPt
 
 Path::~Path()
 {
-	if( havePathChangedSignal() && m_filter )
-	{
-		// In an ideal world, we'd derive from boost::signals::trackable, and wouldn't
-		// need to do this manual connection management. But we construct a lot of Path
-		// instances and trackable has significant overhead so we must avoid it. We must
-		// disconnect somehow though, otherwise when the filter changes, filterChanged()
-		// will be called on a dead Path instance.
-		m_filter->changedSignal().disconnect( boost::bind( &Path::filterChanged, this ) );
-	}
 	delete m_pathChangedSignal;
 }
 
@@ -100,23 +91,23 @@ bool Path::isEmpty() const
 	return m_names.empty() && m_root.string().empty();
 }
 
-bool Path::isValid() const
+bool Path::isValid( const IECore::Canceller *canceller ) const
 {
 	return !isEmpty();
 }
 
-bool Path::isLeaf() const
+bool Path::isLeaf( const IECore::Canceller *canceller ) const
 {
 	return false;
 }
 
-void Path::propertyNames( std::vector<IECore::InternedString> &names ) const
+void Path::propertyNames( std::vector<IECore::InternedString> &names, const IECore::Canceller *canceller ) const
 {
 	names.push_back( g_namePropertyName );
 	names.push_back( g_fullNamePropertyName );
 }
 
-IECore::ConstRunTimeTypedPtr Path::property( const IECore::InternedString &name ) const
+IECore::ConstRunTimeTypedPtr Path::property( const IECore::InternedString &name, const IECore::Canceller *canceller ) const
 {
 	if( name == g_namePropertyName )
 	{
@@ -149,12 +140,12 @@ PathPtr Path::parent() const
 	return result;
 }
 
-size_t Path::children( std::vector<PathPtr> &children ) const
+size_t Path::children( std::vector<PathPtr> &children, const IECore::Canceller *canceller ) const
 {
-	doChildren( children );
+	doChildren( children, canceller );
 	if( m_filter )
 	{
-		m_filter->filter( children );
+		m_filter->filter( children, canceller );
 	}
 	return children.size();
 }
@@ -171,13 +162,10 @@ void Path::setFilter( PathFilterPtr filter )
 	// the connection unless m_pathChangedSignal exists.
 	if( havePathChangedSignal() )
 	{
-		if( m_filter )
-		{
-			m_filter->changedSignal().disconnect( boost::bind( &Path::filterChanged, this ) );
-		}
+		m_filterChangedConnection.disconnect();
 		if( filter )
 		{
-			filter->changedSignal().connect( boost::bind( &Path::filterChanged, this ) );
+			m_filterChangedConnection = filter->changedSignal().connect( boost::bind( &Path::filterChanged, this ) );
 		}
 	}
 
@@ -220,14 +208,10 @@ void Path::setFromPath( const Path *path )
 
 void Path::setFromString( const std::string &string )
 {
-	Names newNames;
-	StringAlgo::tokenize<InternedString>( string, '/', back_inserter( newNames ) );
-
 	InternedString newRoot;
-	if( string.size() && string[0] == '/' )
-	{
-		newRoot = "/";
-	}
+	Names newNames;
+
+	rootAndNames( string, newRoot, newNames );
 
 	if( newRoot == m_root && newNames == m_names )
 	{
@@ -238,6 +222,16 @@ void Path::setFromString( const std::string &string )
 	m_root = newRoot;
 
 	emitPathChanged();
+}
+
+void Path::rootAndNames( const std::string &string, InternedString &root, Names &names ) const
+{
+	StringAlgo::tokenize<InternedString>( string, '/', back_inserter( names ) );
+
+	if( string.size() && string[0] == '/' )
+	{
+		root = "/";
+	}
 }
 
 PathPtr Path::copy() const
@@ -380,7 +374,17 @@ bool Path::operator != ( const Path &other ) const
 	return !(*this == other );
 }
 
-void Path::doChildren( std::vector<PathPtr> &children ) const
+const Plug *Path::cancellationSubject() const
+{
+	return nullptr;
+}
+
+ContextPtr Path::inspectionContext( const IECore::Canceller *canceller ) const
+{
+	return nullptr;
+}
+
+void Path::doChildren( std::vector<PathPtr> &children, const IECore::Canceller *canceller ) const
 {
 }
 
@@ -397,7 +401,7 @@ void Path::pathChangedSignalCreated()
 {
 	if( m_filter )
 	{
-		m_filter->changedSignal().connect( boost::bind( &Path::filterChanged, this ) );
+		m_filterChangedConnection = m_filter->changedSignal().connect( boost::bind( &Path::filterChanged, this ) );
 	}
 }
 

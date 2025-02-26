@@ -37,6 +37,8 @@
 #include "GafferSceneUI/ContextAlgo.h"
 
 #include "GafferScene/ScenePlug.h"
+#include "GafferScene/VisibleSet.h"
+#include "GafferScene/VisibleSetData.h"
 
 #include "Gaffer/Context.h"
 
@@ -49,9 +51,9 @@ using namespace GafferScene;
 namespace
 {
 
-InternedString g_expandedPathsName( "ui:scene:expandedPaths" );
 InternedString g_selectedPathsName( "ui:scene:selectedPaths" );
 InternedString g_lastSelectedPathName( "ui:scene:lastSelectedPath" );
+InternedString g_visibleSetName( "ui:scene:visibleSet" );
 
 bool expandWalk( const ScenePlug::ScenePath &path, const ScenePlug *scene, size_t depth, PathMatcher &expanded, PathMatcher &leafPaths )
 {
@@ -98,72 +100,77 @@ namespace GafferSceneUI
 namespace ContextAlgo
 {
 
+void setVisibleSet( Context *context, const GafferScene::VisibleSet &visibleSet )
+{
+	context->set( g_visibleSetName, visibleSet );
+}
+
+GafferScene::VisibleSet getVisibleSet( const Gaffer::Context *context )
+{
+	return context->get<VisibleSet>( g_visibleSetName, VisibleSet() );
+}
+
+bool affectsVisibleSet( const IECore::InternedString &name )
+{
+	return name == g_visibleSetName;
+}
+
 void setExpandedPaths( Context *context, const IECore::PathMatcher &paths )
 {
-	context->set( g_expandedPathsName, new IECore::PathMatcherData( paths ) );
+	auto visibleSet = getVisibleSet( context );
+	visibleSet.expansions = paths;
+	setVisibleSet( context, visibleSet );
 }
 
 IECore::PathMatcher getExpandedPaths( const Gaffer::Context *context )
 {
-	if( const IECore::PathMatcherData *expandedPaths = context->get<IECore::PathMatcherData>( g_expandedPathsName, nullptr ) )
-	{
-		return expandedPaths->readable();
-	}
-
-	return IECore::PathMatcher();
+	auto visibleSet = getVisibleSet( context );
+	return visibleSet.expansions;
 }
 
 bool affectsExpandedPaths( const IECore::InternedString &name )
 {
-	return name == g_expandedPathsName;
+	return name == g_visibleSetName;
 }
 
 void expand( Context *context, const PathMatcher &paths, bool expandAncestors )
 {
-	IECore::PathMatcherData *expandedPaths = const_cast<IECore::PathMatcherData *>( context->get<IECore::PathMatcherData>( g_expandedPathsName, nullptr ) );
-	if( !expandedPaths )
+	const auto *visibleSet = context->getIfExists<VisibleSet>( g_visibleSetName );
+	if( !visibleSet )
 	{
-		expandedPaths = new IECore::PathMatcherData();
-		context->set( g_expandedPathsName, expandedPaths );
+		setVisibleSet( context, VisibleSet() );
+		visibleSet = context->getIfExists<VisibleSet>( g_visibleSetName );
 	}
-
-	IECore::PathMatcher &expanded = expandedPaths->writable();
+	VisibleSet &visible = *const_cast<VisibleSet*>(visibleSet);
 
 	bool needUpdate = false;
 	if( expandAncestors )
 	{
 		for( IECore::PathMatcher::RawIterator it = paths.begin(), eIt = paths.end(); it != eIt; ++it )
 		{
-			needUpdate |= expanded.addPath( *it );
+			needUpdate |= visible.expansions.addPath( *it );
 		}
 	}
 	else
 	{
 		for( IECore::PathMatcher::Iterator it = paths.begin(), eIt = paths.end(); it != eIt; ++it )
 		{
-			needUpdate |= expanded.addPath( *it );
+			needUpdate |= visible.expansions.addPath( *it );
 		}
 	}
 
 	if( needUpdate )
 	{
-		// We modified the expanded paths in place to avoid unecessary copying,
-		// so the context doesn't know they've changed. So we emit the changed
-		// signal ourselves
-		context->changedSignal()( context, g_expandedPathsName );
+		// We modified the expanded paths in place with const_cast to avoid unecessary copying,
+		// so the context doesn't know they've changed. So we must let it know
+		// about the change.
+		setVisibleSet( context, *visibleSet );
 	}
 }
 
 IECore::PathMatcher expandDescendants( Context *context, const IECore::PathMatcher &paths, const ScenePlug *scene, int depth )
 {
-	IECore::PathMatcherData *expandedPaths = const_cast<IECore::PathMatcherData *>( context->get<IECore::PathMatcherData>( g_expandedPathsName, nullptr ) );
-	if( !expandedPaths )
-	{
-		expandedPaths = new IECore::PathMatcherData();
-		context->set( g_expandedPathsName, expandedPaths );
-	}
-
-	IECore::PathMatcher &expanded = expandedPaths->writable();
+	auto visibleSet = getVisibleSet( context );
 
 	bool needUpdate = false;
 	IECore::PathMatcher leafPaths;
@@ -171,15 +178,13 @@ IECore::PathMatcher expandDescendants( Context *context, const IECore::PathMatch
 	// \todo: parallelize the walk
 	for( IECore::PathMatcher::Iterator it = paths.begin(), eIt = paths.end(); it != eIt; ++it )
 	{
-		needUpdate |= expandWalk( *it, scene, depth + 1, expanded, leafPaths );
+		needUpdate |= expandWalk( *it, scene, depth + 1, visibleSet.expansions, leafPaths );
 	}
 
 	if( needUpdate )
 	{
-		// We modified the expanded paths in place to avoid unecessary copying,
-		// so the context doesn't know they've changed. So we emit the changed
-		// signal ourselves
-		context->changedSignal()( context, g_expandedPathsName );
+		// If we modified the expanded paths, we need to set the value back on the context
+		setVisibleSet( context, visibleSet );
 	}
 
 	return leafPaths;

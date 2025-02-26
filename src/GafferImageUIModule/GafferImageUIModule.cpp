@@ -39,6 +39,7 @@
 
 #include "ImageGadgetBinding.h"
 #include "ImageViewBinding.h"
+#include "OpenColorIOAlgoBinding.h"
 
 using namespace boost::python;
 
@@ -49,5 +50,6 @@ BOOST_PYTHON_MODULE( _GafferImageUI )
 
 	bindImageView();
 	bindImageGadget();
+	bindOpenColorIOAlgo();
 
 }

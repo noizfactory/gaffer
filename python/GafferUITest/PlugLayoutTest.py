@@ -50,13 +50,13 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 
 		ui = GafferUI.PlugLayout( n )
 
-		w = ui.plugValueWidget( n["a"], lazy=False )
+		w = ui.plugValueWidget( n["a"] )
 		self.assertTrue( w is not None )
 		self.assertTrue( w.getPlug().isSame( n["a"] ) )
 
 		n["a"].setName( "b" )
 
-		w2 = ui.plugValueWidget( n["b"], lazy=False )
+		w2 = ui.plugValueWidget( n["b"] )
 		self.assertTrue( w2 is not None )
 		self.assertTrue( w2 is w )
 		self.assertTrue( w2.getPlug().isSame( n["b"] ) )
@@ -97,22 +97,11 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 
 		p = GafferUI.PlugLayout( n )
 
-		self.assertTrue( isinstance( p.customWidget( "test", lazy = False ), self.CustomWidget ) )
+		self.assertTrue( isinstance( p.customWidget( "test" ), self.CustomWidget ) )
 		self.assertTrue( p.customWidget( "test" ).node.isSame( n ) )
 
-	def testLazyBuilding( self ) :
-
-		n = Gaffer.Node()
-		n["a"] = Gaffer.IntPlug()
-
-		with GafferUI.Window() as window :
-			plugLayout = GafferUI.PlugLayout( n )
-
-		self.assertTrue( plugLayout.plugValueWidget( n["a"], lazy = True ) is None )
-
-		window.setVisible( True )
-
-		self.assertTrue( plugLayout.plugValueWidget( n["a"], lazy = True ) is not None )
+		Gaffer.Metadata.registerValue( n, "layout:customWidget:test:widgetType", "" )
+		self.assertIsNone( p.customWidget( "test") )
 
 	def testSectionQueries( self ) :
 
@@ -165,17 +154,17 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		n["p2"] = Gaffer.IntPlug()
 
 		l = GafferUI.PlugLayout( n )
-		self.assertTrue( isinstance( l.plugValueWidget( n["p1"], lazy = False ), GafferUI.NumericPlugValueWidget ) )
-		w2 = l.plugValueWidget( n["p2"], lazy = False )
+		self.assertTrue( isinstance( l.plugValueWidget( n["p1"] ), GafferUI.NumericPlugValueWidget ) )
+		w2 = l.plugValueWidget( n["p2"] )
 		self.assertTrue( isinstance( w2, GafferUI.NumericPlugValueWidget ) )
 
 		Gaffer.Metadata.registerValue( n["p1"], "plugValueWidget:type", "GafferUI.ConnectionPlugValueWidget" )
-		self.assertTrue( isinstance( l.plugValueWidget( n["p1"], lazy = False ), GafferUI.ConnectionPlugValueWidget ) )
-		self.assertTrue( w2 is l.plugValueWidget( n["p2"], lazy = False ) )
+		self.assertTrue( isinstance( l.plugValueWidget( n["p1"] ), GafferUI.ConnectionPlugValueWidget ) )
+		self.assertTrue( w2 is l.plugValueWidget( n["p2"] ) )
 
 		Gaffer.Metadata.deregisterValue( n["p1"], "plugValueWidget:type" )
-		self.assertTrue( isinstance( l.plugValueWidget( n["p1"], lazy = False ), GafferUI.NumericPlugValueWidget ) )
-		self.assertTrue( w2 is l.plugValueWidget( n["p2"], lazy = False ) )
+		self.assertTrue( isinstance( l.plugValueWidget( n["p1"] ), GafferUI.NumericPlugValueWidget ) )
+		self.assertTrue( w2 is l.plugValueWidget( n["p2"] ) )
 
 	def testRemovingAndAddingWidget( self ) :
 
@@ -183,13 +172,13 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		n["p"] = Gaffer.IntPlug()
 
 		l = GafferUI.PlugLayout( n )
-		self.assertTrue( isinstance( l.plugValueWidget( n["p"], lazy = False ), GafferUI.NumericPlugValueWidget ) )
+		self.assertTrue( isinstance( l.plugValueWidget( n["p"] ), GafferUI.NumericPlugValueWidget ) )
 
 		Gaffer.Metadata.registerValue( n["p"], "plugValueWidget:type", "" )
-		self.assertTrue( l.plugValueWidget( n["p"], lazy = False ) is None )
+		self.assertTrue( l.plugValueWidget( n["p"] ) is None )
 
 		Gaffer.Metadata.deregisterValue( n["p"], "plugValueWidget:type" )
-		self.assertTrue( isinstance( l.plugValueWidget( n["p"], lazy = False ), GafferUI.NumericPlugValueWidget ) )
+		self.assertTrue( isinstance( l.plugValueWidget( n["p"] ), GafferUI.NumericPlugValueWidget ) )
 
 	def testContext( self ) :
 
@@ -198,16 +187,8 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		s["n"]["p"] = Gaffer.IntPlug()
 
 		l = GafferUI.PlugLayout( s["n"] )
-		self.assertTrue( l.getContext().isSame( s.context() ) )
-		self.assertTrue( l.plugValueWidget( s["n"]["p"], lazy = False ).getContext().isSame( s.context() ) )
-
-		c = Gaffer.Context()
-		l.setContext( c )
-		self.assertTrue( l.getContext().isSame( c ) )
-		self.assertTrue( l.plugValueWidget( s["n"]["p"] ).getContext().isSame( c ) )
-
-		l = GafferUI.PlugLayout( s )
-		self.assertTrue( l.getContext().isSame( s.context() ) )
+		self.assertEqual( l.context(), s.context() )
+		self.assertEqual( l.plugValueWidget( s["n"]["p"] ).context(), s.context() )
 
 	def testContextWithoutScriptNode( self ) :
 
@@ -215,10 +196,10 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		n["p"] = Gaffer.Plug()
 
 		l = GafferUI.PlugLayout( n )
-		self.assertTrue( isinstance( l.getContext(), Gaffer.Context ) )
+		self.assertTrue( isinstance( l.context(), Gaffer.Context ) )
 
 		l = GafferUI.PlugLayout( n["p"] )
-		self.assertTrue( isinstance( l.getContext(), Gaffer.Context ) )
+		self.assertTrue( isinstance( l.context(), Gaffer.Context ) )
 
 	def testContextSensitiveSummariesAndActivators( self ) :
 
@@ -230,6 +211,9 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 
 				self["b"] = Gaffer.BoolPlug()
 				self["s"] = Gaffer.StringPlug()
+
+				self["out"] = Gaffer.StringPlug( direction = Gaffer.Plug.Direction.Out )
+				self["out"].setInput( self["s"] )
 
 		IECore.registerRunTimeTyped( SummaryAndActivatorTestNode )
 
@@ -262,10 +246,31 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		s["e"].setExpression( 'parent["n"]["b"] = context["bVariable"]' )
 
 		l = GafferUI.PlugLayout( s["n"] )
-		self.assertEqual( l.plugValueWidget( s["n"]["s"], lazy = False ).enabled(), False )
+		self.assertEqual( l.plugValueWidget( s["n"]["s"] ).enabled(), False )
 
 		p["value"].setValue( True )
-		self.assertEqual( l.plugValueWidget( s["n"]["s"], lazy = False ).enabled(), True )
+		self.assertEqual( l.plugValueWidget( s["n"]["s"] ).enabled(), True )
+
+		# When a node is focussed, the layout should use the tracked context
+		# instead of the script context.
+
+		s["stringIO"] = GafferTest.StringInOutNode()
+		s["stringIO"]["in"].setInput( s["n"]["out"] )
+
+		s["contextVariables"] = Gaffer.ContextVariables()
+		s["contextVariables"].setup( s["stringIO"]["out"] )
+		s["contextVariables"]["in"].setInput( s["stringIO"]["out"] )
+		s["contextVariables"]["variables"].addChild( Gaffer.NameValuePlug( "bVariable", False ) )
+
+		with GafferUITest.ContextTrackerTest.UpdateHandler() :
+			s.setFocus( s["contextVariables"] )
+
+		self.assertFalse( l.plugValueWidget( s["n"]["s"] ).enabled() )
+
+		with GafferUITest.ContextTrackerTest.UpdateHandler() :
+			s.setFocus( s["stringIO"] )
+
+		self.assertTrue( l.plugValueWidget( s["n"]["s"] ).enabled() )
 
 	def testMultipleLayouts( self ) :
 
@@ -288,11 +293,11 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 		l1 = GafferUI.PlugLayout( n, layoutName = "layout1" )
 		l2 = GafferUI.PlugLayout( n, layoutName = "layout2" )
 
-		self.assertTrue( l1.plugValueWidget( n["p1"], lazy = False ).enabled() )
-		self.assertFalse( l1.plugValueWidget( n["p2"], lazy = False ).enabled() )
+		self.assertTrue( l1.plugValueWidget( n["p1"] ).enabled() )
+		self.assertFalse( l1.plugValueWidget( n["p2"] ).enabled() )
 
-		self.assertFalse( l2.plugValueWidget( n["p1"], lazy = False ).enabled() )
-		self.assertTrue( l2.plugValueWidget( n["p2"], lazy = False ).enabled() )
+		self.assertFalse( l2.plugValueWidget( n["p1"] ).enabled() )
+		self.assertTrue( l2.plugValueWidget( n["p2"] ).enabled() )
 
 	def testRootSection( self ) :
 
@@ -304,8 +309,8 @@ class PlugLayoutTest( GafferUITest.TestCase ) :
 
 		l = GafferUI.PlugLayout( n, rootSection = "sectionA" )
 
-		self.assertTrue( l.plugValueWidget( n["p1"], lazy = False ) is None )
-		self.assertTrue( l.plugValueWidget( n["p2"], lazy = False ) is not None )
+		self.assertTrue( l.plugValueWidget( n["p1"] ) is None )
+		self.assertTrue( l.plugValueWidget( n["p2"] ) is not None )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -37,6 +37,8 @@
 
 #include "GafferUI/StandardGraphLayout.h"
 
+#include "GafferUI/BackdropNodeGadget.h"
+#include "GafferUI/CompoundNodule.h"
 #include "GafferUI/ConnectionGadget.h"
 #include "GafferUI/GraphGadget.h"
 #include "GafferUI/NodeGadget.h"
@@ -49,7 +51,9 @@
 #include "Gaffer/ContextProcessor.h"
 #include "Gaffer/DependencyNode.h"
 #include "Gaffer/Dot.h"
+#include "Gaffer/EditScope.h"
 #include "Gaffer/Loop.h"
+#include "Gaffer/NameSwitch.h"
 #include "Gaffer/Plug.h"
 #include "Gaffer/StandardSet.h"
 #include "Gaffer/Switch.h"
@@ -60,7 +64,7 @@
 #include "IECore/MessageHandler.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathVec.h"
+#include "Imath/ImathVec.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 #include "boost/graph/adjacency_list.hpp"
@@ -140,15 +144,9 @@ class Constraint
 			LessThanOrEqualTo
 		};
 
-		/// \todo Remove - it's only here so we can call m_constraints.resize()
-		/// to remove the collision constraints.
-		Constraint()
-		{
-		}
-
 		// Enforces p - q ( ==, >=, <= ) d in direction v
-		Constraint( V2f *p, V2f *q, Type type, float d, const V2f &v, float w = 0.5 )
-			:	m_p( p ), m_q( q ), m_type( type ), m_d( d ), m_v( v ), m_w( w )
+		Constraint( V2f *p, V2f *q, Type type, float d, const V2f &v, float w = 0.5, int category = 0 )
+			:	m_p( p ), m_q( q ), m_type( type ), m_d( d ), m_v( v ), m_w( w ), m_category( category )
 		{
 		}
 
@@ -172,6 +170,11 @@ class Constraint
 			*m_q -= r * (1.0f - m_w);
 		}
 
+		int category() const
+		{
+			return m_category;
+		}
+
 	private :
 
 		V2f *m_p;
@@ -180,6 +183,7 @@ class Constraint
 		float m_d;
 		V2f m_v;
 		float m_w;
+		int m_category;
 
 };
 
@@ -202,7 +206,7 @@ class LayoutEngine
 			// Build a map from node to vertex so we can use it to lookup nodes
 			// when inserting edges.
 
-			for( NodeIterator it( graphGadget->getRoot() ); !it.done(); ++it )
+			for( Node::Iterator it( graphGadget->getRoot() ); !it.done(); ++it )
 			{
 				Node *node = it->get();
 				const NodeGadget *nodeGadget = graphGadget->nodeGadget( node );
@@ -213,15 +217,11 @@ class LayoutEngine
 
 				Box3f bb = nodeGadget->bound();
 
-				bool auxiliary = bool( runTimeCast<const AuxiliaryNodeGadget>( nodeGadget ) );
-
 				VertexDescriptor v = add_vertex( m_graph );
 				m_graph[v].node = node;
 				m_graph[v].position = graphGadget->getNodePosition( node );
 				m_graph[v].bound = Box2f( V2f( bb.min.x, bb.min.y ), V2f( bb.max.x, bb.max.y ) );
-				m_graph[v].pinned = false;
-				m_graph[v].collisionGroup = 0;
-				m_graph[v].auxiliary = auxiliary;
+				m_graph[v].auxiliary = runTimeCast<const AuxiliaryNodeGadget>( nodeGadget );
 				m_nodesToVertices[node] = v;
 			}
 
@@ -229,7 +229,7 @@ class LayoutEngine
 
 			for( NodesToVertices::const_iterator it = m_nodesToVertices.begin(), eIt = m_nodesToVertices.end(); it != eIt; ++it )
 			{
-				for( RecursiveInputPlugIterator pIt( it->first ); !pIt.done(); ++pIt )
+				for( Plug::RecursiveInputIterator pIt( it->first ); !pIt.done(); ++pIt )
 				{
 					ConnectionGadget *connection = graphGadget->connectionGadget( pIt->get() );
 					if( !connection || connection->getMinimised() )
@@ -347,9 +347,6 @@ class LayoutEngine
 
 			VertexDescriptor groupDescriptor = add_vertex( m_graph );
 			Vertex &group = m_graph[groupDescriptor];
-			group.node = nullptr;
-			group.pinned = false;
-			group.collisionGroup = 0;
 			group.position = bound.center();
 			group.bound = Box2f( bound.min - group.position, bound.max - group.position );
 
@@ -376,8 +373,9 @@ class LayoutEngine
 
 				if( sInternal != tInternal )
 				{
-					// edge connects group to outside world, move
-					// the edge to the group.
+					// Edge connects group to outside world. Move the edge to
+					// the group, and adjust the offsets so that they lie on
+					// the group's bound.
 
 					VertexDescriptor newS = sInternal ? groupDescriptor : s;
 					VertexDescriptor newT = tInternal ? groupDescriptor : t;
@@ -390,10 +388,12 @@ class LayoutEngine
 					if( sInternal )
 					{
 						newEdge.sourceOffset = ( newEdge.sourceOffset + m_graph[s].position ) - group.position;
+						newEdge.sourceOffset = exitPoint( newEdge.sourceOffset, newEdge.sourceTangent, group.bound );
 					}
 					else
 					{
 						newEdge.targetOffset = ( newEdge.targetOffset + m_graph[t].position ) - group.position;
+						newEdge.targetOffset = exitPoint( newEdge.targetOffset, newEdge.targetTangent, group.bound );
 					}
 				}
 
@@ -410,6 +410,7 @@ class LayoutEngine
 			for( vector<VertexDescriptor>::const_iterator it = childVertexDescriptors.begin(), eIt = childVertexDescriptors.end(); it != eIt; ++it )
 			{
 				Vertex &child = m_graph[*it];
+				child.collisionGroup = -1;
 				for( int d = 0; d < 2; ++d )
 				{
 					addConstraint(
@@ -464,7 +465,9 @@ class LayoutEngine
 			}
 		}
 
-		void addConnectionDirectionConstraints()
+		// The `category` is just a user-provided identifier to allow
+		// the constraints to be subsequently removed by `removeConstraints( category )`.
+		void addConnectionDirectionConstraints( int category = 0 )
 		{
 
 			EdgeIteratorRange e = edges( m_graph );
@@ -491,20 +494,23 @@ class LayoutEngine
 						src,
 						Constraint::GreaterThanOrEqualTo,
 						separation,
-						d == 0 ? V2f( edge.idealDirection[d], 0 ) : V2f( 0, edge.idealDirection[d] )					);
+						d == 0 ? V2f( edge.idealDirection[d], 0 ) : V2f( 0, edge.idealDirection[d] ),
+						/* w = */ 0.5,
+						category
+					);
 
 				}
 			}
 
 		}
 
-		void addSiblingConstraints()
+		void addSiblingConstraints( int category = 0 )
 		{
 			VertexIteratorRange v = vertices( m_graph );
 			for( VertexIterator it = v.first; it != v.second; ++it )
 			{
-				addSiblingConstraints( *it, Direction( 0, -1 ) );
-				addSiblingConstraints( *it, Direction( 1, 0 ) );
+				addSiblingConstraints( *it, Direction( 0, -1 ), category );
+				addSiblingConstraints( *it, Direction( 1, 0 ), category );
 			}
 		}
 
@@ -524,7 +530,7 @@ class LayoutEngine
 
 			for( NodesToVertices::const_iterator nodeIt = m_nodesToVertices.begin(), eIt = m_nodesToVertices.end(); nodeIt != eIt; ++nodeIt )
 			{
-				for( RecursiveInputPlugIterator plugIt( nodeIt->first ); !plugIt.done(); ++plugIt )
+				for( Plug::RecursiveInputIterator plugIt( nodeIt->first ); !plugIt.done(); ++plugIt )
 				{
 					const Plug *dstPlug = plugIt->get();
 					const Plug *srcPlug = dstPlug->getInput();
@@ -596,6 +602,17 @@ class LayoutEngine
 			}
 		}
 
+		void removeConstraints( int category )
+		{
+			m_constraints.erase(
+				std::remove_if(
+					m_constraints.begin(), m_constraints.end(),
+					[category] ( const Constraint &c ) { return c.category() == category; }
+				),
+				m_constraints.end()
+			);
+		}
+
 		void clearConstraints()
 		{
 			m_constraints.clear();
@@ -605,7 +622,7 @@ class LayoutEngine
 		{
 			VertexIteratorRange v = vertices( m_graph );
 
-			size_t numConstraints = m_constraints.size();
+			const size_t firstCollisionConstraintIndex = m_constraints.size();
 			for( int i = 0; i < m_maxIterations; ++i )
 			{
 				for( VertexIterator it = v.first; it != v.second; ++it )
@@ -621,7 +638,7 @@ class LayoutEngine
 				{
 					addCollisionConstraints();
 					applyConstraints( m_constraintsIterations );
-					m_constraints.resize( numConstraints );
+					m_constraints.erase( m_constraints.begin() + firstCollisionConstraintIndex, m_constraints.end() );
 				}
 
 				float maxMovement = 0;
@@ -668,13 +685,32 @@ class LayoutEngine
 		// or on one of the two 45 degree diagonals. We represent such
 		// directions as integer vectors, where the x and y coordinates may
 		// only have values of -1, 0 or +1.
-		typedef V2s Direction;
+		using Direction = V2s;
 
 		Direction direction( const V3f &v )
 		{
 			V3f vn( v.x, v.y, 0.0f );
 			vn.normalize();
 			return Direction( int( round( vn.x ) ), int( round( vn.y ) ) );
+		}
+
+		// Projects `origin` in `direction` until it exits `box`, and returns
+		// the exit point. `origin` must be contained by `box`.
+		V2f exitPoint( const V2f &origin, const V2f &direction, const Box2f &box )
+		{
+			float t = numeric_limits<float>::max();
+			for( int d = 0; d < 2; ++d )
+			{
+				if( direction[d] > 0.0f )
+				{
+					t = std::min( t, (box.max[d] - origin[d]) / direction[d] );
+				}
+				else if( direction[d] < 0.0f )
+				{
+					t = std::min( t, (box.min[d] - origin[d]) / direction[d] );
+				}
+			}
+			return origin + direction * t;
 		}
 
 		// We convert the visible graph of nodes and connections into a boost
@@ -686,56 +722,55 @@ class LayoutEngine
 			// The node this vertex represents.
 			// May be nullptr for vertices introduced
 			// by groupNodes().
-			Node *node;
+			Node *node = nullptr;
 			// Node position within graph.
-			V2f position;
+			V2f position = V2f( 0.0f );
 			// Node bound in local space.
-			Box2f bound;
+			Box2f bound = Box2f( V2f( 0.0f ) );
 			// True if node is not to be moved.
-			bool pinned;
+			bool pinned = false;
 			// Provides finer control over collision avoidance.
-			int collisionGroup;
+			int collisionGroup = 0;
+			// True if node is represented by a (smaller) AuxiliaryNodeGadget
+			bool auxiliary = false;
 
 			// State variables for use in solve().
-			V2f previousPosition;
-			V2f force;
-
-			// True if node is represented by a (smaller) AuxiliaryNodeGadget
-			bool auxiliary;
+			V2f previousPosition = V2f( 0.0f );
+			V2f force = V2f( 0.0f );
 		};
 
 		struct Edge
 		{
 			// Offsets of plugs relative to
 			// parent node origin.
-			V2f sourceOffset;
-			V2f targetOffset;
+			V2f sourceOffset = V2f( 0.0f );
+			V2f targetOffset = V2f( 0.0f );
 
 			Direction sourceTangent;
 			Direction targetTangent;
 			Direction idealDirection;
 		};
 
-		typedef boost::adjacency_list<boost::listS, boost::listS, boost::bidirectionalS, Vertex, Edge> Graph;
+		using Graph = boost::adjacency_list<boost::listS, boost::listS, boost::bidirectionalS, Vertex, Edge>;
 
-		typedef Graph::vertex_descriptor VertexDescriptor;
-		typedef Graph::edge_descriptor EdgeDescriptor;
+		using VertexDescriptor = Graph::vertex_descriptor;
+		using EdgeDescriptor = Graph::edge_descriptor;
 
-		typedef Graph::vertex_iterator VertexIterator;
-		typedef std::pair<VertexIterator, VertexIterator> VertexIteratorRange;
+		using VertexIterator = Graph::vertex_iterator;
+		using VertexIteratorRange = std::pair<VertexIterator, VertexIterator>;
 
-		typedef Graph::in_edge_iterator InEdgeIterator;
-		typedef std::pair<InEdgeIterator, InEdgeIterator> InEdgeIteratorRange;
+		using InEdgeIterator = Graph::in_edge_iterator;
+		using InEdgeIteratorRange = std::pair<InEdgeIterator, InEdgeIterator>;
 
-		typedef Graph::out_edge_iterator OutEdgeIterator;
-		typedef std::pair<OutEdgeIterator, OutEdgeIterator> OutEdgeIteratorRange;
+		using OutEdgeIterator = Graph::out_edge_iterator;
+		using OutEdgeIteratorRange = std::pair<OutEdgeIterator, OutEdgeIterator>;
 
-		typedef Graph::edge_iterator EdgeIterator;
-		typedef std::pair<EdgeIterator, EdgeIterator> EdgeIteratorRange;
+		using EdgeIterator = Graph::edge_iterator;
+		using EdgeIteratorRange = std::pair<EdgeIterator, EdgeIterator>;
 
-		typedef std::map<const Node *, VertexDescriptor> NodesToVertices;
+		using NodesToVertices = std::map<const Node *, VertexDescriptor>;
 
-		void addSiblingConstraints( VertexDescriptor vertex, const Direction &edgeDirection )
+		void addSiblingConstraints( VertexDescriptor vertex, const Direction &edgeDirection, int category )
 		{
 			// find all the edges pointing in the specified direction.
 
@@ -773,7 +808,9 @@ class LayoutEngine
 						*prev,
 						Constraint::GreaterThanOrEqualTo,
 						separation,
-						dimension == 0 ? V2f( 1, 0 ) : V2f( 0, 1 )
+						dimension == 0 ? V2f( 1, 0 ) : V2f( 0, 1 ),
+						/* w = */ 0.5,
+						category
 					);
 				}
 				prev = curr;
@@ -781,7 +818,7 @@ class LayoutEngine
 		}
 
 		// Adds a constraint between p and q, adjusting w based on their pinning status.
-		void addConstraint( Vertex &p, Vertex &q, Constraint::Type type, float d, const V2f &v, float w = 0.5f )
+		void addConstraint( Vertex &p, Vertex &q, Constraint::Type type, float d, const V2f &v, float w = 0.5f, int category = 0 )
 		{
 			if( p.pinned && q.pinned )
 			{
@@ -804,7 +841,8 @@ class LayoutEngine
 					type,
 					d,
 					v,
-					w
+					w,
+					category
 				)
 			);
 		}
@@ -838,7 +876,7 @@ class LayoutEngine
 
 			// find colliding bounds, and add constraints to separate them
 
-			typedef vector<Box2f>::const_iterator BoundIterator;
+			using BoundIterator = vector<Box2f>::const_iterator;
 			vector<BoundIterator> intersectingBounds;
 			for( BoundIterator it = bounds.begin(), eIt = bounds.end(); it != eIt; ++it )
 			{
@@ -1094,7 +1132,7 @@ class LayoutEngine
 			}
 
 			bool leftEdgeBlocked = false;
-			for( RecursiveNoduleIterator it( dstNodeGadget ); !it.done(); ++it )
+			for( Nodule::RecursiveIterator it( dstNodeGadget ); !it.done(); ++it )
 			{
 				V3f noduleTangent = dstNodeGadget->connectionTangent( it->get() );
 
@@ -1172,7 +1210,7 @@ bool StandardGraphLayout::connectNodes( GraphGadget *graph, Gaffer::Set *nodes, 
 		}
 
 		bool hasInputs = false;
-		for( RecursiveInputPlugIterator it( node ); !it.done(); ++it )
+		for( Plug::RecursiveInputIterator it( node ); !it.done(); ++it )
 		{
 			if( (*it)->getInput() && nodeGadget->nodule( it->get() ) )
 			{
@@ -1232,11 +1270,48 @@ void StandardGraphLayout::layoutNodes( GraphGadget *graph, Gaffer::Set *nodes ) 
 		layout.pinNodes( nodes, true /* invert */ );
 	}
 
+	// If there are any backdrops to be positioned, group
+	// them with their children so that they move as one.
+
+	bool affectingBackdrops = false;
+	for( auto &node : Node::Range( *graph->getRoot() ) )
+	{
+		if( nodes && !nodes->contains( node.get() ) )
+		{
+			continue;
+		}
+		auto backdrop = runTimeCast<BackdropNodeGadget>( graph->nodeGadget( node.get() ) );
+		if( !backdrop )
+		{
+			continue;
+		}
+
+		affectingBackdrops = true;
+
+		vector<Node *> framedNodes;
+		backdrop->framed( framedNodes );
+		if( framedNodes.size() )
+		{
+			StandardSetPtr groupSet = new StandardSet;
+			groupSet->add( NodePtr( node ) );
+			groupSet->add( framedNodes.begin(), framedNodes.end() );
+			const V3f groupCenter = backdrop->transformedBound().center();
+			layout.groupNodes( groupSet.get(), V2f( groupCenter.x, groupCenter.y ) );
+		}
+	}
+
+	if( !affectingBackdrops )
+	{
+		// Disable collisions with backdrops, since we don't want to prevent
+		// individual nodes from finding a suitable home inside them.
+		layout.assignCollisionGroup( (IECore::TypeId)Gaffer::BackdropTypeId, -1 );
+	}
+
 	// do a first round of layout without worrying about
 	// collisions between nodes.
 
 	layout.addConnectionDirectionConstraints();
-	layout.addSiblingConstraints();
+	layout.addSiblingConstraints( /* category = */ 1 );
 	layout.solve( false );
 
 	// do a second round of layout, now resolving collisions.
@@ -1246,8 +1321,7 @@ void StandardGraphLayout::layoutNodes( GraphGadget *graph, Gaffer::Set *nodes ) 
 	// collisions detection from working. a better alternative
 	// might be to remove conflicting constraints before applying them.
 
-	layout.clearConstraints();
-	layout.addConnectionDirectionConstraints();
+	layout.removeConstraints( /* category = */ 1 );
 	layout.solve( true );
 
 	layout.applyPositions();
@@ -1277,11 +1351,35 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 	}
 
 	// get all visible output plugs we could potentially connect in to our node
-	vector<Plug *> outputPlugs;
-	if( !this->outputPlugs( graph, potentialInputs, outputPlugs ) )
+	vector<Endpoint> outputs;
+	if( !this->outputs( graph, potentialInputs, outputs ) )
 	{
 		return false;
 	}
+
+	// Sort outputs spatially, left to right and then bottom to top. This
+	// makes the result deterministic regardless of the ordering of
+	// `potentialInputs`, and avoids the creation of intersecting connections
+	// (because our iteration order for the plugs on `node` is naturally
+	// left to right).
+
+	std::sort(
+		outputs.begin(), outputs.end(),
+		[] ( const Endpoint &e1, const Endpoint &e2 ) {
+			for( int i = 0; i < 3; ++i )
+			{
+				if( e1.position[i] < e2.position[i] )
+				{
+					return true;
+				}
+				else if( e2.position[i] < e1.position[i] )
+				{
+					return false;
+				}
+			}
+			return false;
+		}
+	);
 
 	// If we're trying to connect a Dot, Switch, BoxOut, ContextProcessor
 	// or Loop, then we may need to give it plugs first.
@@ -1289,33 +1387,49 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 	/// doing the work ourselves. In fact, because PlugAdders and Nodules are
 	/// both derived from ConnectionCreator, we should only need to consider
 	/// ConnectionCreators, and shouldn't need to know anything about what's
-	/// happening behind the scenes.
+	/// happening behind the scenes. To make this work, I think we probably
+	/// need to make a few tweaks, some of which would require a major version
+	/// change :
+	///
+	/// - Add a `virtual bool ConnectionCreator::hasConnection()` method so
+	///   that we can avoid modifying existing connections.
+	/// - Have `ConnectionCreator::createConnection()` return the other endpoint
+	///   of the connection.
+	/// - Make the Dot node to use PlugAdders rather than its own mechanism
+	///   (see PR #3059).
 	if( Dot *dot = runTimeCast<Dot>( node ) )
 	{
 		if( !dot->inPlug() )
 		{
-			dot->setup( outputPlugs.front() );
+			dot->setup( outputs.front().plug );
+		}
+	}
+	else if( NameSwitch *switchNode = runTimeCast<NameSwitch>( node ) )
+	{
+		if( !switchNode->inPlugs() )
+		{
+			switchNode->setup( outputs.front().plug );
 		}
 	}
 	else if( Switch *switchNode = runTimeCast<Switch>( node ) )
 	{
-		if( !switchNode->getChild<Plug>( "in" ) )
+		if( !switchNode->inPlugs() )
 		{
-			switchNode->setup( outputPlugs.front() );
+			switchNode->setup( outputs.front().plug );
 		}
 	}
 	else if( BoxOut *boxOut = runTimeCast<BoxOut>( node ) )
 	{
 		if( !boxOut->plug() )
 		{
-			boxOut->setup( outputPlugs.front() );
+			boxOut->setup( outputs.front().plug );
 		}
 	}
 	else if( ContextProcessor *contextProcessor = runTimeCast<ContextProcessor>( node ) )
 	{
 		if( !contextProcessor->inPlug() )
 		{
-			if( ValuePlug *valuePlug = runTimeCast<ValuePlug>( outputPlugs.front() ) )
+			if( ValuePlug *valuePlug = runTimeCast<ValuePlug>( outputs.front().plug ) )
 			{
 				contextProcessor->setup( valuePlug );
 			}
@@ -1325,10 +1439,17 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 	{
 		if( !loop->inPlug() )
 		{
-			if( ValuePlug *valuePlug = runTimeCast<ValuePlug>( outputPlugs.front() ) )
+			if( ValuePlug *valuePlug = runTimeCast<ValuePlug>( outputs.front().plug ) )
 			{
 				loop->setup( valuePlug );
 			}
+		}
+	}
+	else if( auto editScope = runTimeCast<EditScope>( node ) )
+	{
+		if( !editScope->inPlug() )
+		{
+			editScope->setup( outputs.front().plug );
 		}
 	}
 
@@ -1336,27 +1457,40 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 
 	size_t numConnectionsMade = 0;
 	Plug *firstConnectionSrc = nullptr, *firstConnectionDst = nullptr;
-	vector<Plug *> inputPlugs;
-	unconnectedInputPlugs( nodeGadget, inputPlugs );
-	for( vector<Plug *>::const_iterator oIt = outputPlugs.begin(), oEIt = outputPlugs.end(); oIt != oEIt; oIt++ )
+	vector<Endpoint> inputs;
+	unconnectedInputs( nodeGadget, inputs );
+	for( const auto &output : outputs )
 	{
-		for( vector<Plug *>::const_iterator iIt = inputPlugs.begin(), iEIt = inputPlugs.end(); iIt != iEIt; iIt++ )
+		// Find the best destination for the source, based on
+		// how well the nodule tangents match.
+		Plug *bestDst = nullptr;
+		float bestScore = std::numeric_limits<float>::lowest();
+		for( const auto &input : inputs )
 		{
-			if( (*iIt)->acceptsInput( *oIt ) )
+			if( !input.plug->acceptsInput( output.plug ) )
 			{
-				(*iIt)->setInput( *oIt );
-				if( numConnectionsMade == 0 )
-				{
-					firstConnectionSrc = *oIt;
-					firstConnectionDst = *iIt;
-				}
-				numConnectionsMade += 1;
-				// some nodes dynamically add new inputs when we connect
-				// existing inputs, so we recalculate the input plugs
-				// to take account
-				unconnectedInputPlugs( nodeGadget, inputPlugs );
-				break;
+				continue;
 			}
+
+			const float score = input.tangent.dot( -output.tangent );
+			if( score > bestScore )
+			{
+				bestDst = input.plug;
+				bestScore = score;
+			}
+		}
+		if( bestDst )
+		{
+			bestDst->setInput( output.plug );
+			if( numConnectionsMade == 0 )
+			{
+				firstConnectionSrc = output.plug;
+				firstConnectionDst = bestDst;
+			}
+			numConnectionsMade += 1;
+			// Some nodes dynamically add new inputs when we connect existing
+			// inputs, so we recalculate the inputs to take account.
+			unconnectedInputs( nodeGadget, inputs );
 		}
 	}
 
@@ -1371,24 +1505,23 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 			// Find the destination plugs at the end of the existing
 			// connections we want to insert into.
 			vector<Plug *> insertionDsts;
-			const Plug::OutputContainer &outputs = firstConnectionSrc->outputs();
-			for( Plug::OutputContainer::const_iterator it = outputs.begin(); it != outputs.end(); ++it )
+			for( auto output : firstConnectionSrc->outputs() )
 			{
 				// ignore outputs that aren't visible:
-				NodeGadget *nodeGadget = graph->nodeGadget( (*it)->node() );
-				if( !nodeGadget || !nodeGadget->nodule( *it ) )
+				NodeGadget *nodeGadget = graph->nodeGadget( output->node() );
+				if( !nodeGadget || !nodeGadget->nodule( output ) )
 				{
 					continue;
 				}
 				// Ignore the output which we made when connecting the node above
-				if( *it == firstConnectionDst )
+				if( output == firstConnectionDst )
 				{
 					continue;
 				}
-				if( (*it)->acceptsInput( correspondingOutput ) )
+				if( output->acceptsInput( correspondingOutput ) )
 				{
 					// Insertion accepted - store for reconnection
-					insertionDsts.push_back( *it );
+					insertionDsts.push_back( output );
 				}
 				else
 				{
@@ -1399,9 +1532,9 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 				}
 			}
 			// Reconnect the destination plugs such that we've inserted our node
-			for( vector<Plug *>::const_iterator it = insertionDsts.begin(), eIt = insertionDsts.end(); it != eIt; ++it )
+			for( auto insertDst : insertionDsts )
 			{
-				(*it)->setInput( correspondingOutput );
+				insertDst->setInput( correspondingOutput );
 			}
 		}
 	}
@@ -1409,20 +1542,23 @@ bool StandardGraphLayout::connectNodeInternal( GraphGadget *graph, Gaffer::Node 
 	return numConnectionsMade;
 }
 
-size_t StandardGraphLayout::outputPlugs( NodeGadget *nodeGadget, std::vector<Gaffer::Plug *> &plugs ) const
+size_t StandardGraphLayout::outputs( NodeGadget *nodeGadget, std::vector<Endpoint> &endpoints ) const
 {
-	for( RecursiveOutputPlugIterator it( nodeGadget->node() ); !it.done(); it++ )
+	for( Plug::RecursiveOutputIterator it( nodeGadget->node() ); !it.done(); it++ )
 	{
-		if( nodeGadget->nodule( it->get() ) )
+		if( auto nodule = nodeGadget->nodule( it->get() ) )
 		{
-			plugs.push_back( it->get() );
+			if( !runTimeCast<CompoundNodule>( nodule ) )
+			{
+				endpoints.push_back( { it->get(), nodule->transformedBound( nullptr ).center(), nodeGadget->connectionTangent( nodule ) } );
+			}
 		}
 	}
 
-	return plugs.size();
+	return endpoints.size();
 }
 
-size_t StandardGraphLayout::outputPlugs( GraphGadget *graph, Gaffer::Set *nodes, std::vector<Gaffer::Plug *> &plugs ) const
+size_t StandardGraphLayout::outputs( GraphGadget *graph, Gaffer::Set *nodes, std::vector<Endpoint> &endpoints ) const
 {
 	for( size_t i = 0; i < nodes->size(); i++ )
 	{
@@ -1432,24 +1568,28 @@ size_t StandardGraphLayout::outputPlugs( GraphGadget *graph, Gaffer::Set *nodes,
 			NodeGadget *nodeGadget = graph->nodeGadget( node );
 			if( nodeGadget )
 			{
-				outputPlugs( nodeGadget, plugs );
+				outputs( nodeGadget, endpoints );
 			}
 		}
 	}
-	return plugs.size();
+	return endpoints.size();
 }
 
-size_t StandardGraphLayout::unconnectedInputPlugs( NodeGadget *nodeGadget, std::vector<Plug *> &plugs ) const
+size_t StandardGraphLayout::unconnectedInputs( NodeGadget *nodeGadget, std::vector<Endpoint> &endpoints ) const
 {
-	plugs.clear();
-	for( RecursiveInputPlugIterator it( nodeGadget->node() ); !it.done(); it++ )
+	endpoints.clear();
+	for( Plug::RecursiveInputIterator it( nodeGadget->node() ); !it.done(); it++ )
 	{
-		if( (*it)->getInput() == nullptr and nodeGadget->nodule( it->get() ) )
+		if( (*it)->getInput() )
 		{
-			plugs.push_back( it->get() );
+			continue;
+		}
+		if( auto *nodule = nodeGadget->nodule( it->get() ) )
+		{
+			endpoints.push_back( { it->get(), nodule->transformedBound( nullptr ).center(), nodeGadget->connectionTangent( nodule ) } );
 		}
 	}
-	return plugs.size();
+	return endpoints.size();
 }
 
 Gaffer::Plug *StandardGraphLayout::correspondingOutput( const Gaffer::Plug *input ) const
@@ -1463,7 +1603,7 @@ Gaffer::Plug *StandardGraphLayout::correspondingOutput( const Gaffer::Plug *inpu
 		return nullptr;
 	}
 
-	for( RecursiveOutputPlugIterator it( dependencyNode ); !it.done(); ++it )
+	for( Plug::RecursiveOutputIterator it( dependencyNode ); !it.done(); ++it )
 	{
 		if( dependencyNode->correspondingInput( it->get() ) == input )
 		{

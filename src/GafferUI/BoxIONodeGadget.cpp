@@ -42,13 +42,15 @@
 #include "Gaffer/BoxIO.h"
 #include "Gaffer/BoxOut.h"
 #include "Gaffer/Metadata.h"
+#include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/StringPlug.h"
 #include "Gaffer/UndoScope.h"
 
 #include "boost/algorithm/string/replace.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferUI;
@@ -78,6 +80,11 @@ class BoxIOPlugAdder : public PlugAdder
 		bool canCreateConnection( const Plug *endpoint ) const override
 		{
 			if( !PlugAdder::canCreateConnection( endpoint ) )
+			{
+				return false;
+			}
+
+			if( MetadataAlgo::readOnly( m_boxIO.get() ) )
 			{
 				return false;
 			}

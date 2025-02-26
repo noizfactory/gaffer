@@ -36,17 +36,20 @@
 
 import os
 import unittest
+import math
 import imath
 
 import IECore
 
+import Gaffer
 import GafferTest
 import GafferImage
 import GafferImageTest
 
 class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 
-	__rgbFilePath = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/rgb.100x100.exr" )
+	__rgbFilePath = GafferImageTest.ImageTestCase.imagesPath() / "rgb.100x100.exr"
+	__file300PxPath = GafferImageTest.ImageTestCase.imagesPath() / "dotGrid.warped.exr"
 
 	# Test that the outputs change when different channels are selected.
 	def testChannels( self ) :
@@ -59,14 +62,14 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 		s["area"].setValue( r["out"]["format"].getValue().getDisplayWindow() )
 
 		s["channels"].setValue( IECore.StringVectorData( [ "", "G", "B" ] ) )
-		self.__assertColour( s["average"].getValue(), imath.Color4f( 0., 0.0744, 0.1250, 1. ) )
-		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 1. ) )
-		self.__assertColour( s["max"].getValue(), imath.Color4f( 0, 0.5, 0.5, 1. ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( 0., 0.0744, 0.1250, 0. ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0. ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0, 0.5, 0.5, 0. ) )
 
 		s["channels"].setValue( IECore.StringVectorData( [ "R", "", "B" ] ) )
-		self.__assertColour( s["average"].getValue(), imath.Color4f( 0.0544, 0, 0.1250, 1. ) )
-		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 1. ) )
-		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0, 0.5, 1. ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( 0.0544, 0, 0.1250, 0. ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0. ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0, 0.5, 0. ) )
 
 	def testDisconnectedDirty( self ) :
 
@@ -113,7 +116,7 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 		r["fileName"].setValue( self.__rgbFilePath )
 
 		s = GafferImage.ImageStats()
-		s["area"].setValue( r["out"]["format"].getValue().getDisplayWindow() )
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.DisplayWindow )
 
 		# Get the hashes of the outputs when there is no input.
 		minHash = s["min"].hash()
@@ -135,7 +138,7 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 		s["in"].setInput( r["out"] )
 		s["channels"].setValue( IECore.StringVectorData( [ "R", "G", "B", "A" ] ) )
 
-		s["area"].setValue( r["out"]["format"].getValue().getDisplayWindow() )
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.DisplayWindow )
 		self.__assertColour( s["average"].getValue(), imath.Color4f( 0.0544, 0.0744, 0.1250, 0.2537 ) )
 		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
 		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
@@ -150,6 +153,31 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 		s["in"].setInput( r["out"] )
 		s["channels"].setValue( IECore.StringVectorData( [ "R", "G", "B", "A" ] ) )
 
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.DisplayWindow )
+		self.__assertColour( s["average"].getValue(), imath.Color4f(0.054375, 0.074375, 0.125, 0.25375) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.Area )
+		s["area"].setValue( imath.Box2i( imath.V2i( 0, 0 ), imath.V2i( 100, 100 ) ) )
+
+		self.__assertColour( s["average"].getValue(), imath.Color4f(0.054375, 0.074375, 0.125, 0.25375) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.DataWindow )
+		self.__assertColour( s["average"].getValue(), imath.Color4f(0.151042, 0.206597, 0.347222, 0.704861) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+
+		s["areaSource"].setValue( GafferImage.ImageStats.AreaSource.Area )
+		s["area"].setValue( imath.Box2i( imath.V2i( 20, 20 ), imath.V2i( 80, 80 ) ) )
+
+		self.__assertColour( s["average"].getValue(), imath.Color4f(0.151042, 0.206597, 0.347222, 0.704861) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+
+
 		s["area"].setValue( imath.Box2i( imath.V2i( 20, 20 ), imath.V2i( 25, 25 ) ) )
 		self.__assertColour( s["average"].getValue(), imath.Color4f( 0.5, 0, 0, 0.5 ) )
 		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0, 0, 0.5 ) )
@@ -159,6 +187,92 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 		self.__assertColour( s["average"].getValue(), imath.Color4f( 0.4048, 0.1905, 0, 0.5952 ) )
 		self.__assertColour( s["min"].getValue(), imath.Color4f( 0.25, 0, 0, 0.5 ) )
 		self.__assertColour( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0, 0.75 ) )
+
+		# Offset the colors in the image so we can see the effects of whether or not we include pixels outside
+		# the data window.
+
+		g = GafferImage.Grade()
+		g["in"].setInput( r["out"] )
+		g['channels'].setValue( "*" )
+		g['blackClamp'].setValue( False )
+		g['whiteClamp'].setValue( False )
+		g['offset'].setValue( imath.Color4f( 1 ) )
+
+		s["in"].setInput( g["out"] )
+
+		s["area"].setValue( imath.Box2i( imath.V2i( 20, 20 ), imath.V2i( 25, 25 ) ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( 1.5, 1, 1, 1.5 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 1.5, 1, 1, 1.5 ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 1.5, 1, 1, 1.5 ) )
+
+		s["area"].setValue( imath.Box2i( imath.V2i( 19, 20 ), imath.V2i( 24, 25 ) ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( 1.2, 0.8, 0.8, 1.2 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 1.5, 1, 1, 1.5 ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+
+		g['offset'].setValue( imath.Color4f( -2 ) )
+
+		s["area"].setValue( imath.Box2i( imath.V2i( 20, 20 ), imath.V2i( 25, 25 ) ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( -1.5, -2, -2, -1.5 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( -1.5, -2, -2, -1.5 ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( -1.5, -2, -2, -1.5 ) )
+
+		s["area"].setValue( imath.Box2i( imath.V2i( 19, 20 ), imath.V2i( 24, 25 ) ) )
+		self.__assertColour( s["average"].getValue(), imath.Color4f( -1.2, -1.6, -1.6, -1.2 ) )
+		self.__assertColour( s["max"].getValue(), imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( s["min"].getValue(), imath.Color4f( -1.5, -2, -2, -1.5 ) )
+
+	# Test only tiles which intersect a changed boundary have modified hashes
+	def testROIHash( self ) :
+
+		r = GafferImage.ImageReader()
+		r["fileName"].setValue( self.__file300PxPath )
+
+		s = GafferImage.ImageStats()
+		s["in"].setInput( r["out"] )
+		s["channels"].setValue( IECore.StringVectorData( [ "R", "G", "B", "A" ] ) )
+
+		allHashes = []
+		stats = []
+		for a in [
+			imath.Box2i( imath.V2i( 0, 0 ), imath.V2i( 300, 300 ) ),
+			imath.Box2i( imath.V2i( 3, 5 ), imath.V2i( 300, 300 ) )
+		]:
+			s["area"].setValue( a )
+
+			hashes = {}
+			c = Gaffer.Context( Gaffer.Context.current() )
+			for x in range( 0, 300, 64 ):
+				for y in range( 0, 300, 64 ):
+					c["image:channelName"] = "R"
+					c["image:tileOrigin"] = imath.V2i( x, y )
+					with c:
+						hashes[ (x,y) ] = s["__tileStats"].hash()
+			allHashes.append( hashes )
+
+			stats.append( [ s["min"].getValue(), s["max"].getValue(), s["average"].getValue() ] )
+
+		self.__assertColour( stats[0][0], imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( stats[0][1], imath.Color4f( 0.8027, 1, 1, 0 ) )
+		self.__assertColour( stats[0][2], imath.Color4f( 0.0031, 0.0499, 0.1956, 0 ) )
+
+		self.__assertColour( stats[1][0], imath.Color4f( 0, 0, 0, 0 ) )
+		self.__assertColour( stats[1][1], imath.Color4f( 0.8027, 1, 1, 0 ) )
+		self.__assertColour( stats[1][2], imath.Color4f( 0.0031, 0.0503, 0.1973, 0 ) )
+
+		numDiff = 0
+		numSame = 0
+		for k, v in allHashes[0].items():
+			if v == allHashes[1][k]:
+				numSame += 1
+			else:
+				numDiff += 1
+
+		# Check that interior hashes stay the same
+		self.assertEqual( numSame, 16 )
+
+		# Check that border hashes change
+		self.assertEqual( numDiff, 9 )
 
 	def testMin( self ) :
 
@@ -186,6 +300,91 @@ class ImageStatsTest( GafferImageTest.ImageTestCase ) :
 
 		self.assertEqual( s["min"].getValue(), imath.Color4f( 1 ) )
 		self.assertEqual( s["max"].getValue(), imath.Color4f( 1 ) )
+
+	def testView( self ) :
+
+		constantSource = GafferImage.Constant()
+		constantSource["color"].setValue( imath.Color4f( 0.1, 0.2, 0.3, 0.4 ) )
+
+		reader = GafferImage.ImageReader()
+		reader["fileName"].setValue( self.__rgbFilePath )
+
+		views = GafferImage.CreateViews()
+		views["views"].resize( 2 )
+		views["views"][0]["name"].setValue( "left" )
+		views["views"][1]["name"].setValue( "right" )
+		views["views"][0]["value"].setInput( constantSource["out"] )
+		views["views"][1]["value"].setInput( reader["out"] )
+
+		s = GafferImage.ImageStats()
+		s["in"].setInput( views["out"] )
+		s["area"].setValue( reader["out"]["format"].getValue().getDisplayWindow() )
+
+		for contextView, queryAndResults in [
+			( None, [ ( "", None ), ( "left", imath.Color4f( 0.1, 0.2, 0.3, 0.4 ) ), ( "right", imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) ) ] ),
+			( "left", [ ( "", imath.Color4f( 0.1, 0.2, 0.3, 0.4 ) ), ( "left", imath.Color4f( 0.1, 0.2, 0.3, 0.4 ) ), ( "right", imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) ) ] ),
+			("right", [ ( "", imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) ), ( "left", imath.Color4f( 0.1, 0.2, 0.3, 0.4 ) ), ( "right", imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) ) ] )
+
+		]:
+			for queryView, result in queryAndResults:
+				with Gaffer.Context( Gaffer.Context.current() ) as c:
+					s["view"].setValue( queryView )
+					if contextView:
+						c["image:viewName"] = contextView
+					if result is None:
+						# The result when contextView and queryView are both not overridden is an error,
+						# views has just left and right views, so it's illegal to ask for "default".
+						with self.assertRaisesRegex( Gaffer.ProcessException, 'View does not exist "default"' ):
+							self.assertEqual( s["max"].getValue(), result )
+					else:
+						self.assertEqual( s["max"].getValue(), result )
+
+		# When reading from an image with a default view, we get the default when requesting a view that
+		# doesn't exist
+		s["in"].setInput( reader["out"] )
+		s["view"].setValue( "left" )
+		self.assertEqual( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+		s["view"].setValue( "right" )
+		self.assertEqual( s["max"].getValue(), imath.Color4f( 0.5, 0.5, 0.5, 0.875 ) )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration" } )
+	def testTaskCollaboration( self ) :
+
+		checker = GafferImage.Checkerboard()
+
+		stats = GafferImage.ImageStats()
+		stats["in"].setInput( checker["out"] )
+		stats["area"].setValue( stats["in"].format().getDisplayWindow() )
+
+		with Gaffer.PerformanceMonitor() as pm :
+			GafferTest.parallelGetValue( stats["average"]["r"], 10000 )
+
+		self.assertEqual( pm.plugStatistics( stats["__allStats" ] ).computeCount, 1 )
+
+	def testInf( self ) :
+
+		# Make an image with all `inf` values. We can't do this directly
+		# with a Constant because the inputs are clamped at float max,
+		# so we divide an image by zero to get what we want.
+
+		constant0 = GafferImage.Constant()
+		constant1 = GafferImage.Constant()
+		constant1["color"].setValue( imath.Color4f( 1 ) )
+
+		merge = GafferImage.Merge()
+		merge["in"][0].setInput( constant0["out"] )
+		merge["in"][1].setInput( constant1["out"] )
+		merge["operation"].setValue( merge.Operation.Divide )
+
+		# Since all values are `inf`, all outputs should be too.
+
+		stats = GafferImage.ImageStats()
+		stats["in"].setInput( merge["out"] )
+		stats["area"].setValue( stats["in"].format().getDisplayWindow() )
+
+		self.assertTrue( math.isinf( stats["max"][0].getValue() ) )
+		self.assertTrue( math.isinf( stats["min"][0].getValue() ) )
+		self.assertTrue( math.isinf( stats["average"][0].getValue() ) )
 
 	def __assertColour( self, colour1, colour2 ) :
 		for i in range( 0, 4 ):

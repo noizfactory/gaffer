@@ -68,7 +68,7 @@ class ParameterValueWidget( GafferUI.Widget ) :
 
 		return self.__plugValueWidget
 
-	__popupMenuSignal = Gaffer.Signal2()
+	__popupMenuSignal = Gaffer.Signals.Signal2()
 	## This signal is emitted whenever a popup menu for a parameter is about
 	# to be shown. This provides an opportunity to customise the menu from
 	# external code. The signature for slots is ( menuDefinition, parameterValueWidget ),
@@ -142,7 +142,7 @@ def __plugPopupMenu( menuDefinition, plugValueWidget ) :
 
 	ParameterValueWidget.popupMenuSignal()( menuDefinition, parameterValueWidget )
 
-__plugPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
 
 # add menu items for presets
 
@@ -175,7 +175,7 @@ def __parameterPopupMenu( menuDefinition, parameterValueWidget ) :
 	for name in parameterHandler.parameter().presetNames() :
 		menuDefinition.append( "/" + name, { "command" : IECore.curry( __setValue, parameterHandler, name ) } )
 
-__parameterPopupMenuConnection = ParameterValueWidget.popupMenuSignal().connect( __parameterPopupMenu )
+__parameterPopupMenuConnection = ParameterValueWidget.popupMenuSignal().connect( __parameterPopupMenu, scoped = True )
 
 def __setValue( parameterHandler, value ) :
 

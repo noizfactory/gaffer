@@ -41,44 +41,21 @@
 #include "GafferImage/CDL.h"
 #include "GafferImage/ColorSpace.h"
 #include "GafferImage/DisplayTransform.h"
+#include "GafferImage/LookTransform.h"
 #include "GafferImage/LUT.h"
+#include "GafferImage/OpenColorIOConfigPlug.h"
+#include "GafferImage/OpenColorIOContext.h"
 #include "GafferImage/OpenColorIOTransform.h"
+#include "GafferImage/Saturation.h"
 
 #include "GafferBindings/DependencyNodeBinding.h"
+#include "GafferBindings/PlugBinding.h"
 
 using namespace boost::python;
 using namespace GafferImage;
 
 namespace
 {
-
-boost::python::list availableColorSpaces()
-{
-	std::vector<std::string> e;
-	OpenColorIOTransform::availableColorSpaces( e );
-
-	boost::python::list result;
-	for( std::vector<std::string>::const_iterator it = e.begin(), eIt = e.end(); it != eIt; ++it )
-	{
-		result.append( *it );
-	}
-
-	return result;
-}
-
-boost::python::list availableRoles()
-{
-	std::vector<std::string> e;
-	OpenColorIOTransform::availableRoles( e );
-
-	boost::python::list result;
-	for( std::vector<std::string>::const_iterator it = e.begin(), eIt = e.end(); it != eIt; ++it )
-	{
-		result.append( *it );
-	}
-
-	return result;
-}
 
 boost::python::list supportedExtensions()
 {
@@ -94,6 +71,12 @@ boost::python::list supportedExtensions()
 	return result;
 }
 
+OpenColorIOConfigPlugPtr acquireDefaultConfigPlugWrapper( Gaffer::ScriptNode &scriptNode, bool createIfNecessary )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return OpenColorIOConfigPlug::acquireDefaultConfigPlug( &scriptNode, createIfNecessary );
+}
+
 } // namespace
 
 void GafferImageModule::bindOpenColorIOTransform()
@@ -101,13 +84,19 @@ void GafferImageModule::bindOpenColorIOTransform()
 
 	GafferBindings::DependencyNodeClass<ColorProcessor>();
 
-	GafferBindings::DependencyNodeClass<OpenColorIOTransform>()
-		.def( "availableColorSpaces", &availableColorSpaces ).staticmethod( "availableColorSpaces" )
-		.def( "availableRoles", &availableRoles ).staticmethod( "availableRoles" )
-	;
+	// This probably shouldn't live in this file, but neither should the ColorProcessor line above?
+	GafferBindings::DependencyNodeClass<Saturation>();
+
+	{
+		scope s = GafferBindings::DependencyNodeClass<OpenColorIOTransform>();
+
+		enum_<OpenColorIOTransform::Direction>( "Direction" )
+			.value( "Forward", OpenColorIOTransform::Forward )
+			.value( "Inverse", OpenColorIOTransform::Inverse )
+		;
+	}
 
 	GafferBindings::DependencyNodeClass<ColorSpace>();
-	GafferBindings::DependencyNodeClass<CDL>();
 	GafferBindings::DependencyNodeClass<DisplayTransform>();
 
 	{
@@ -121,11 +110,26 @@ void GafferImageModule::bindOpenColorIOTransform()
 			.value( "Linear", LUT::Linear )
 			.value( "Tetrahedral", LUT::Tetrahedral )
 		;
-
-		enum_<LUT::Direction>( "Direction" )
-			.value( "Forward", LUT::Forward )
-			.value( "Inverse", LUT::Inverse )
-		;
 	}
 
+	GafferBindings::DependencyNodeClass<CDL>();
+	GafferBindings::DependencyNodeClass<LookTransform>();
+	GafferBindings::DependencyNodeClass<OpenColorIOContext>();
+
+	GafferBindings::PlugClass<OpenColorIOConfigPlug>()
+		.def(
+			boost::python::init<const std::string &, Gaffer::Plug::Direction, unsigned>(
+				(
+					boost::python::arg_( "name" ) = Gaffer::GraphComponent::defaultName<OpenColorIOConfigPlug>(),
+					boost::python::arg_( "direction" ) = Gaffer::Plug::In,
+					boost::python::arg_( "flags" ) = Gaffer::Plug::Default
+				)
+			)
+		)
+		.def(
+			"acquireDefaultConfigPlug", &acquireDefaultConfigPlugWrapper,
+			( arg( "scriptNode" ), arg( "createIfNecessary" ) = true )
+		)
+		.staticmethod( "acquireDefaultConfigPlug" )
+	;
 }

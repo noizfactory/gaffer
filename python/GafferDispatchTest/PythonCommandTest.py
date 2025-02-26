@@ -54,7 +54,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 	def __dispatcher( self, frameRange = None ) :
 
 		result = GafferDispatchTest.DispatcherTest.TestDispatcher()
-		result["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
+		result["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
 
 		if frameRange is not None :
 			result["framesMode"].setValue( result.FramesMode.CustomRange )
@@ -216,8 +216,11 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		n = GafferDispatch.PythonCommand()
 		self.assertFalse( n.requiresSequenceExecution() )
 
-		n["sequence"].setValue( True )
+		n["framesMode"].setValue( n.FramesMode.Sequence )
 		self.assertTrue( n.requiresSequenceExecution() )
+
+		n["framesMode"].setValue( n.FramesMode.Batch )
+		self.assertFalse( n.requiresSequenceExecution() )
 
 	def testFramesNotAvailableInNonSequenceMode( self ) :
 
@@ -225,17 +228,18 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		s["n"] = GafferDispatch.PythonCommand()
 		s["n"]["command"].setValue( "self.frames = frames" )
 
-		d = self.__dispatcher( frameRange = "1-5" )
-		self.assertRaisesRegexp( RuntimeError, "NameError: name 'frames' is not defined", d.dispatch, [ s["n"] ] )
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		self.assertRaisesRegex( RuntimeError, "NameError: name 'frames' is not defined", s["d"]["task"].execute )
 
 		s["n"]["dispatcher"]["batchSize"].setValue( 5 )
-		self.assertRaisesRegexp( RuntimeError, "NameError: name 'frames' is not defined", d.dispatch, [ s["n"] ] )
+		self.assertRaisesRegex( RuntimeError, "NameError: name 'frames' is not defined", s["d"]["task"].execute )
 
 	def testSequenceMode( self ) :
 
 		s = Gaffer.ScriptNode()
 		s["n"] = GafferDispatch.PythonCommand()
-		s["n"]["sequence"].setValue( True )
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
 
 		s["n"]["command"].setValue( inspect.cleandoc(
 			"""
@@ -247,8 +251,9 @@ class PythonCommandTest( GafferTest.TestCase ) :
 			"""
 		) )
 
-		d = self.__dispatcher( frameRange = "1-5" )
-		d.dispatch( [ s[ "n" ] ] )
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
 
 		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
 		self.assertEqual( s["n"].numCalls, 1 )
@@ -258,7 +263,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 
 		s["n"] = GafferDispatch.PythonCommand()
-		s["n"]["sequence"].setValue( True )
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
 		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
 
 		s["e"] = Gaffer.Expression()
@@ -276,8 +281,9 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		).split( "\n" )
 		s["n"]["command"].setValue( "\n".join( commandLines ) )
 
-		d = self.__dispatcher( frameRange = "1-5" )
-		self.assertRaisesRegexp( Exception, "Context has no entry named \"frame\"", d.dispatch, [ s[ "n" ] ] )
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		self.assertRaisesRegex( Exception, "Context has no variable named \"frame\"", s["d"]["task"].execute )
 
 		commandLines = inspect.cleandoc(
 			"""
@@ -290,7 +296,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 		s["n"]["command"].setValue( "\n".join( commandLines ) )
 
-		d.dispatch( [ s[ "n" ] ] )
+		s["d"]["task"].execute()
 		self.assertEqual( s["n"].testInt, [ 1, 4, 9, 16, 25 ] )
 		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
 		self.assertEqual( s["n"].numCalls, 1 )
@@ -301,7 +307,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 
 		s["n"] = GafferDispatch.PythonCommand()
-		s["n"]["sequence"].setValue( True )
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Sequence )
 		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
 
 		commandLines = inspect.cleandoc(
@@ -316,11 +322,37 @@ class PythonCommandTest( GafferTest.TestCase ) :
 		).split( "\n" )
 		s["n"]["command"].setValue( "\n".join( commandLines ) )
 
-		d = self.__dispatcher( frameRange = "1-5" )
-		d.dispatch( [ s[ "n" ] ] )
+		s["d"] = self.__dispatcher( frameRange = "1-5" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
 		self.assertEqual( s["n"].testInt, 42 )
 		self.assertEqual( s["n"].frames, [ 1, 2, 3, 4, 5 ] )
 		self.assertEqual( s["n"].numCalls, 1 )
+
+	def testBatchMode( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferDispatch.PythonCommand()
+		s["n"]["framesMode"].setValue( GafferDispatch.PythonCommand.FramesMode.Batch )
+		s["n"]["variables"].addChild( Gaffer.NameValuePlug( "testInt", 42 ) )
+		s["n"]["dispatcher"]["batchSize"].setValue( 5 )
+		s["n"].calls = []
+
+		s["n"]["command"].setValue( "self.calls.append( frames )" )
+
+		s["d"] = self.__dispatcher( frameRange = "1-20" )
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
+		self.assertEqual(
+			s["n"].calls,
+			[
+				[ 1, 2, 3, 4, 5 ],
+				[ 6, 7, 8, 9, 10 ],
+				[ 11, 12, 13, 14, 15 ],
+				[ 16, 17, 18, 19, 20 ]
+			]
+		)
 
 	def testCannotAccessVariablesOutsideFrameRange( self ) :
 
@@ -336,7 +368,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 			"""
 		) )
 
-		self.assertRaisesRegexp( Exception, "Cannot access variables at frame outside range specified for PythonCommand", n.execute )
+		self.assertRaisesRegex( Exception, "Cannot access variables at frame outside range specified for PythonCommand", n.execute )
 
 	def testNonSequenceDispatch( self ) :
 
@@ -351,8 +383,9 @@ class PythonCommandTest( GafferTest.TestCase ) :
 			"""
 		) )
 
-		d = self.__dispatcher()
-		d.dispatch( [ s["n"] ] )
+		s["d"] = self.__dispatcher()
+		s["d"]["tasks"][0].setInput( s["n"]["task"] )
+		s["d"]["task"].execute()
 
 		self.assertEqual( s["n"].numCalls, 1 )
 
@@ -371,7 +404,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 	def testComments( self ) :
 
-		c = Gaffer.PythonCommand()
+		c = GafferDispatch.PythonCommand()
 		c["command"].setValue( "self.test = 10 # this is a comment" )
 
 		c["task"].execute()
@@ -379,7 +412,7 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 	def testImath( self ) :
 
-		c = Gaffer.PythonCommand()
+		c = GafferDispatch.PythonCommand()
 		c["command"].setValue( "self.test = imath.V2i( 1, 2 )" )
 
 		c["task"].execute()
@@ -387,14 +420,14 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 	def testEmptyCommand( self ) :
 
-		c = Gaffer.PythonCommand()
+		c = GafferDispatch.PythonCommand()
 		self.assertEqual( c["command"].getValue(), "" )
 		self.assertEqual( c["task"].hash(), IECore.MurmurHash() )
 
 	def testContextGetNone( self ) :
 
-		command = Gaffer.PythonCommand()
-		command["command"].setValue( "print context.get( 'iAmNotHere' )" )
+		command = GafferDispatch.PythonCommand()
+		command["command"].setValue( "print( context.get( 'iAmNotHere' ) )" )
 
 		with Gaffer.Context() as c :
 			h = command["task"].hash()
@@ -403,8 +436,8 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 	def testAlternateMissingContextVariables( self ) :
 
-		command = Gaffer.PythonCommand()
-		command["command"].setValue( "print 'a : ', context.get( 'a' ), 'b : ', context.get( 'b' )" )
+		command = GafferDispatch.PythonCommand()
+		command["command"].setValue( "print( 'a : ', context.get( 'a' ), 'b : ', context.get( 'b' ) )" )
 
 		neitherHash = command["task"].hash()
 
@@ -422,11 +455,21 @@ class PythonCommandTest( GafferTest.TestCase ) :
 
 	def testContextModificationsDontLeak( self ) :
 
-		command = Gaffer.PythonCommand()
+		command = GafferDispatch.PythonCommand()
 		command["command"].setValue( "context.setFrame( 2 )" )
 		command["task"].execute()
 
 		self.assertEqual( Gaffer.Context.current(), Gaffer.Context() )
+
+	def testVariablesRepr( self ) :
+
+		command = GafferDispatch.PythonCommand()
+		command["variables"].addChild( Gaffer.NameValuePlug( "testKey", "testValue" ) )
+		command["command"].setValue( "self.variablesStr = str( variables ); self.variablesRepr = repr( variables )" )
+		command["task"].execute()
+
+		self.assertEqual( command.variablesStr, str( { "testKey" : "testValue" } ) )
+		self.assertEqual( command.variablesRepr, repr( { "testKey" : "testValue" } ) )
 
 if __name__ == "__main__":
 	unittest.main()

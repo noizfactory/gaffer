@@ -38,11 +38,12 @@
 
 #include "Gaffer/StringPlug.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( StandardAttributes );
+GAFFER_NODE_DEFINE_TYPE( StandardAttributes );
 
 StandardAttributes::StandardAttributes( const std::string &name )
 	:	Attributes( name )
@@ -52,6 +53,7 @@ StandardAttributes::StandardAttributes( const std::string &name )
 
 	attributes->addChild( new Gaffer::NameValuePlug( "scene:visible", new IECore::BoolData( true ), false, "visibility" ) );
 	attributes->addChild( new Gaffer::NameValuePlug( "doubleSided", new IECore::BoolData( true ), false, "doubleSided" ) );
+	attributes->addChild( new Gaffer::NameValuePlug( "render:displayColor", new IECore::Color3fData( Imath::Color3f( 1 ) ), false, "displayColor" ) );
 
 	// motion blur
 
@@ -63,44 +65,16 @@ StandardAttributes::StandardAttributes( const std::string &name )
 
 	// light linking
 
+	/// \todo The default value is wrong - it should be "defaultLights".
 	attributes->addChild( new Gaffer::NameValuePlug( "linkedLights", new IECore::StringData( "" ), false, "linkedLights" ) );
 
 	// light filter linking
 
 	attributes->addChild( new Gaffer::NameValuePlug( "filteredLights", new IECore::StringData( "" ), false, "filteredLights" ) );
 
-	plugSetSignal().connect( boost::bind( &StandardAttributes::plugSet, this, ::_1 ) );
+	// instancing
 
-}
-
-void StandardAttributes::plugSet( Gaffer::Plug *plug )
-{
-	// backward compatibility for gaffer:visibility --> scene:visible rename.
-	// when old files are loaded, they contain a setValue( "gaffer:visibility" )
-	// call that we must revert.
-
-	if( plug == attributesPlug()->getChild<Gaffer::Plug>( "visibility" )->getChild<Gaffer::Plug>( "name" ) )
-	{
-		/// We only need to do this once during loading, so disconnect from the signal so we
-		/// don't have any overhead after the load.
-		/// \todo Now that "name" plugs are created with the correct default value, they
-		/// no longer serialise with a `setValue()` call included. This means that we
-		/// will never reach this point when loading new saved scripts, and therefore won't
-		/// ever remove the callback.
-		///
-		/// Either :
-		///
-		/// 1. Make the name plugs read-only. Then any unwanted old `setValue()` saved in
-		///   scripts will simply fail. Then we can simply remove all this code.
-		/// 2. Just remove all this code anyway, after determining that we no longer have
-		///    old scripts requiring fixup floating around.
-		plugSetSignal().disconnect( boost::bind( &StandardAttributes::plugSet, this, ::_1 ) );
-
-		/// We're resetting the value at the source in case this node has an incoming
-		/// connection. If we directly set the plug in this case, it'll throw an exception,
-		/// which prevents some old scripts loading.
-		plug->source<Gaffer::StringPlug>()->setValue( "scene:visible" );
-	}
+	attributes->addChild( new Gaffer::NameValuePlug( "gaffer:automaticInstancing", new IECore::BoolData( true ), false, "automaticInstancing" ) );
 }
 
 StandardAttributes::~StandardAttributes()

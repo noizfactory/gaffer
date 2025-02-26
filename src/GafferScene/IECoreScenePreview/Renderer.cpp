@@ -48,19 +48,17 @@ using namespace IECoreScenePreview;
 namespace
 {
 
-typedef Renderer::Ptr (*Creator)( Renderer::RenderType, const std::string & );
-
 vector<IECore::InternedString> &types()
 {
 	static vector<IECore::InternedString> g_types;
 	return g_types;
 }
 
-typedef map<IECore::InternedString, Creator> CreatorMap;
+using CreatorMap = map<IECore::InternedString, Renderer::Creator>;
 CreatorMap &creators()
 {
-	static CreatorMap g_creators;
-	return g_creators;
+	static CreatorMap *g_creators = new CreatorMap;
+	return *g_creators;
 }
 
 } // namespace
@@ -77,6 +75,11 @@ Renderer::Renderer()
 Renderer::~Renderer()
 {
 
+}
+
+Renderer::ObjectInterfacePtr Renderer::camera( const std::string &name,  const std::vector<const IECoreScene::Camera *> &samples, const std::vector<float> &times, const AttributesInterface *attributes )
+{
+	return camera( name, samples[0], attributes );
 }
 
 IECore::DataPtr Renderer::command( const IECore::InternedString name, const IECore::CompoundDataMap &parameters )
@@ -99,7 +102,7 @@ const std::vector<IECore::InternedString> &Renderer::types()
 	return ::types();
 }
 
-Renderer::Ptr Renderer::create( const IECore::InternedString &type, RenderType renderType, const std::string &fileName )
+Renderer::Ptr Renderer::create( const IECore::InternedString &type, RenderType renderType, const std::string &fileName, const IECore::MessageHandlerPtr &messageHandler )
 {
 	const CreatorMap &c = creators();
 	CreatorMap::const_iterator it = c.find( type );
@@ -107,19 +110,24 @@ Renderer::Ptr Renderer::create( const IECore::InternedString &type, RenderType r
 	{
 		return nullptr;
 	}
-	return it->second( renderType, fileName );
+	// Take copy of creator, since it is allowed to do a switcheroo
+	// by calling `registerType( name, theRealCreator )`.
+	Creator creator = it->second;
+	return creator( renderType, fileName, messageHandler );
 }
 
-
-void Renderer::registerType( const IECore::InternedString &typeName, Ptr (*creator)( RenderType, const std::string & ) )
+void Renderer::registerType( const IECore::InternedString &typeName, Creator creator )
 {
-	CreatorMap &c = creators();
-	CreatorMap::iterator it = c.find( typeName );
-	if( it != c.end() )
-	{
-		it->second = creator;
-		return;
-	}
-	c[typeName] = creator;
+	creators()[typeName] = creator;
 	::types().push_back( typeName );
+}
+
+void Renderer::deregisterType( const IECore::InternedString &typeName )
+{
+	creators().erase( typeName );
+	auto &t = ::types();
+	t.erase(
+		std::remove( t.begin(), t.end(), typeName ),
+		t.end()
+	);
 }

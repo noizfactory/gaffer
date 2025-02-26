@@ -53,30 +53,30 @@ class TabbedContainerTest( GafferUITest.TestCase ) :
 
 		t.append( c )
 		self.assertEqual( len( t ), 1 )
-		self.assert_( t[0] is c )
-		self.assert_( t.getCurrent() is c )
+		self.assertTrue( t[0] is c )
+		self.assertTrue( t.getCurrent() is c )
 
 	def testOwner( self ) :
 
 		t = GafferUI.TabbedContainer()
 
-		self.failUnless( GafferUI.Widget._owner( t._qtWidget() ) is t )
+		self.assertTrue( GafferUI.Widget._owner( t._qtWidget() ) is t )
 
 	def testCornerWidget( self ) :
 
 		t = GafferUI.TabbedContainer()
-		self.failUnless( t.getCornerWidget() is None )
+		self.assertIsNone( t.getCornerWidget() )
 
 		b = GafferUI.Button( "baby" )
 		t.setCornerWidget( b )
-		self.failUnless( t.getCornerWidget() is b )
-		self.failUnless( b.parent() is t )
+		self.assertTrue( t.getCornerWidget() is b )
+		self.assertTrue( t.isAncestorOf( b ) )
 
 		b2 = GafferUI.Button( "b" )
 		t.setCornerWidget( b2 )
-		self.failUnless( t.getCornerWidget() is b2 )
-		self.failUnless( b2.parent() is t )
-		self.failUnless( b.parent() is None )
+		self.assertTrue( t.getCornerWidget() is b2 )
+		self.assertTrue( t.isAncestorOf( b2 ) )
+		self.assertIsNone( b.parent() )
 
 	def testIndex( self ) :
 
@@ -129,25 +129,35 @@ class TabbedContainerTest( GafferUITest.TestCase ) :
 
 		def s( t, c ) :
 
-			self.failUnless( t is tc )
+			self.assertTrue( t is tc )
 			self.__current = c
 
-		c = tc.currentChangedSignal().connect( s )
+		c = tc.currentChangedSignal().connect( s, scoped = True )
 		self.__current = None
+
+		self.assertIsNone( tc.getCurrent() )
 
 		b1 = GafferUI.Button()
 		tc.append( b1 )
-		self.failUnless( self.__current is b1 )
-		self.failUnless( tc.getCurrent() is b1 )
+		self.assertTrue( self.__current is b1 )
+		self.assertTrue( tc.getCurrent() is b1 )
 
 		b2 = GafferUI.Button()
 		tc.append( b2 )
-		self.failUnless( self.__current is b1 )
-		self.failUnless( tc.getCurrent() is b1 )
+		self.assertTrue( self.__current is b1 )
+		self.assertTrue( tc.getCurrent() is b1 )
 
 		tc.setCurrent( b2 )
-		self.failUnless( self.__current is b2 )
-		self.failUnless( tc.getCurrent() is b2 )
+		self.assertTrue( self.__current is b2 )
+		self.assertTrue( tc.getCurrent() is b2 )
+
+		tc.remove( b1 )
+		self.assertTrue( self.__current is b2 )
+		self.assertTrue( tc.getCurrent() is b2 )
+
+		tc.remove( b2 )
+		self.assertIsNone( self.__current )
+		self.assertIsNone( tc.getCurrent() )
 
 	def testDel( self ) :
 
@@ -159,18 +169,18 @@ class TabbedContainerTest( GafferUITest.TestCase ) :
 
 		self.assertEqual( len( t ), 3 )
 		for b in ( b1, b2, b3 ) :
-			self.failUnless( b.parent() is t )
+			self.assertTrue( b.parent() is t )
 
 		del t[0]
 		self.assertEqual( len( t ), 2 )
 		for b in ( b2, b3 ) :
-			self.failUnless( b.parent() is t )
-		self.failUnless( b1.parent() is None )
+			self.assertTrue( b.parent() is t )
+		self.assertIsNone( b1.parent() )
 
 		del t[:]
 		self.assertEqual( len( t ), 0 )
 		for b in ( b1, b2, b3 ) :
-			self.failUnless( b.parent() is None )
+			self.assertIsNone( b.parent() )
 
 	def testTabsVisible( self ) :
 
@@ -218,7 +228,7 @@ class TabbedContainerTest( GafferUITest.TestCase ) :
 
 		t.setCornerWidget( b )
 		self.assertEqual( len( l ), 0 )
-		self.assertEqual( b.parent(), t )
+		self.assertTrue( t.isAncestorOf( b ) )
 
 	def testInsert( self ) :
 
@@ -283,6 +293,31 @@ class TabbedContainerTest( GafferUITest.TestCase ) :
 		l3.reveal()
 		self.assertTrue( t1.getCurrent() is t3 )
 		self.assertTrue( t3.getCurrent() is c3 )
+
+	def testTabVisibility( self ) :
+
+		with GafferUI.TabbedContainer() as container :
+			t1 = GafferUI.Label()
+			t2 = GafferUI.Label()
+			t3 = GafferUI.Label()
+
+		for tab in t1, t2, t3 :
+			self.assertTrue( container.getTabVisible( tab ) )
+
+		container.setTabVisible( t2, False )
+
+		for tab in t1, t2, t3 :
+			self.assertEqual( container.getTabVisible( tab ), tab is not t2 )
+
+		container.removeChild( t1 )
+
+		for tab in t2, t3 :
+			self.assertEqual( container.getTabVisible( tab ), tab is not t2 )
+
+		container.setTabVisible( t2, True )
+
+		for tab in t2, t3 :
+			self.assertTrue( container.getTabVisible( tab ) )
 
 	def tearDown( self ) :
 

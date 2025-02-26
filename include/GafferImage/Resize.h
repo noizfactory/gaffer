@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_RESIZE_H
-#define GAFFERIMAGE_RESIZE_H
+#pragma once
 
 #include "GafferImage/FormatPlug.h"
 #include "GafferImage/ImageProcessor.h"
@@ -58,10 +57,10 @@ class GAFFERIMAGE_API Resize : public ImageProcessor
 {
 	public :
 
-		Resize( const std::string &name=defaultName<Resize>() );
+		explicit Resize( const std::string &name=defaultName<Resize>() );
 		~Resize() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Resize, ResizeTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Resize, ResizeTypeId, ImageProcessor );
 
 		enum FitMode
 		{
@@ -81,6 +80,9 @@ class GAFFERIMAGE_API Resize : public ImageProcessor
 		Gaffer::StringPlug *filterPlug();
 		const Gaffer::StringPlug *filterPlug() const;
 
+		Gaffer::BoolPlug *filterDeepPlug();
+		const Gaffer::BoolPlug *filterDeepPlug() const;
+
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 	protected :
@@ -96,6 +98,9 @@ class GAFFERIMAGE_API Resize : public ImageProcessor
 
 		void hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
+
+		void hashSampleOffsets( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		IECore::ConstIntVectorDataPtr computeSampleOffsets( const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 	private :
 
@@ -122,5 +127,3 @@ class GAFFERIMAGE_API Resize : public ImageProcessor
 IE_CORE_DECLAREPTR( Resize )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_RESIZE_H

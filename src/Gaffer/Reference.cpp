@@ -36,12 +36,13 @@
 
 #include "Gaffer/Reference.h"
 
-#include "Gaffer/BlockedConnection.h"
 #include "Gaffer/Metadata.h"
 #include "Gaffer/MetadataAlgo.h"
 #include "Gaffer/PlugAlgo.h"
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/StandardSet.h"
+#include "Gaffer/SplinePlug.h"
+#include "Gaffer/Spreadsheet.h"
 #include "Gaffer/StringPlug.h"
 
 #include "IECore/Exception.h"
@@ -49,13 +50,15 @@
 #include "IECore/SearchPath.h"
 
 #include "boost/algorithm/string/predicate.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/container/flat_set.hpp"
+
+#include "fmt/format.h"
 
 #include <unordered_map>
 
-
 using namespace std;
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 
@@ -66,9 +69,72 @@ using namespace Gaffer;
 namespace
 {
 
+bool descendantHasInput( const Plug *plug )
+{
+	for( auto &d : Plug::RecursiveRange( *plug ) )
+	{
+		if( d->getInput() )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool conformSplinePlugs( const Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug, bool ignoreDefaultValues )
+{
+	auto conform = [=] ( auto typedSrc, Gaffer::Plug *dst ) {
+
+		using PlugType = std::remove_const_t<std::remove_pointer_t<decltype( typedSrc )>>;
+		auto typedDest = runTimeCast<PlugType>( dst );
+		if( !typedDest )
+		{
+			return false;
+		}
+
+		if( typedSrc->isSetToDefault() && ignoreDefaultValues && !descendantHasInput( typedSrc ) )
+		{
+			// We don't want to transfer any inputs or values, so must leave
+			// `dstPlug` alone.
+			return false;
+		}
+
+		typedDest->clearPoints();
+		for( size_t i = 0, n = typedSrc->numPoints(); i < n; ++i )
+		{
+			const Plug *point = typedSrc->pointPlug( i );
+			typedDest->addChild( point->createCounterpart( point->getName(), point->direction() ) );
+		}
+		return true;
+	};
+
+	switch( (Gaffer::TypeId)srcPlug->typeId() )
+	{
+		case SplineffPlugTypeId :
+			return conform( static_cast<const SplineffPlug *>( srcPlug ), dstPlug );
+		case SplinefColor3fPlugTypeId :
+			return conform( static_cast<const SplinefColor3fPlug *>( srcPlug ), dstPlug );
+		case SplinefColor4fPlugTypeId :
+			return conform( static_cast<const SplinefColor4fPlug *>( srcPlug ), dstPlug );
+		default :
+			return false;
+	}
+}
+
 /// \todo Consider moving to PlugAlgo.h
 void copyInputsAndValues( Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug, bool ignoreDefaultValues )
 {
+
+	// From a user's perspective, we consider SplinePlugs to have a single
+	// atomic value. So _any_ edit to _any_ child plug should cause the entire
+	// value to be matched. To do that, we first need to conform the destination
+	// so that it has the same number of points as the source, and then we need
+	// to set values for all plugs.
+
+	if( conformSplinePlugs( srcPlug, dstPlug, ignoreDefaultValues ) )
+	{
+		ignoreDefaultValues = false;
+	}
 
 	// If we have an input to copy, we can leave the
 	// recursion to the `setInput()` call, which will
@@ -132,7 +198,7 @@ void transferOutputs( Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug )
 
 	// Recurse
 
-	for( PlugIterator it( srcPlug ); !it.done(); ++it )
+	for( Plug::Iterator it( srcPlug ); !it.done(); ++it )
 	{
 		if( Plug *dstChildPlug = dstPlug->getChild<Plug>( (*it)->getName() ) )
 		{
@@ -141,6 +207,8 @@ void transferOutputs( Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug )
 	}
 }
 
+const InternedString g_childNodesAreReadOnlyName( "childNodesAreReadOnly" );
+
 } // namespace
 
 //////////////////////////////////////////////////////////////////////////
@@ -148,7 +216,7 @@ void transferOutputs( Gaffer::Plug *srcPlug, Gaffer::Plug *dstPlug )
 // been applied to plugs following loading.
 //////////////////////////////////////////////////////////////////////////
 
-class Reference::PlugEdits : public boost::signals::trackable
+class Reference::PlugEdits : public Signals::Trackable
 {
 
 	public :
@@ -156,7 +224,7 @@ class Reference::PlugEdits : public boost::signals::trackable
 		PlugEdits( Reference *reference )
 			:	m_reference( reference )
 		{
-			m_connection = Metadata::plugValueChangedSignal().connect( boost::bind( &PlugEdits::plugValueChanged, this, ::_1, ::_2, ::_3, ::_4 ) );
+			m_connection = Metadata::plugValueChangedSignal( reference ).connect( boost::bind( &PlugEdits::plugValueChanged, this, ::_1, ::_2, ::_3 ) );
 			m_reference->childRemovedSignal().connect( boost::bind( &PlugEdits::childRemoved, this, ::_1, ::_2 ) );
 		}
 
@@ -169,34 +237,79 @@ class Reference::PlugEdits : public boost::signals::trackable
 				return false;
 			}
 
-			return edit->m_metadataEdits.find( key ) != edit->m_metadataEdits.end();
+			return edit->metadataEdits.find( key ) != edit->metadataEdits.end();
 		}
 
-		const boost::container::flat_set<InternedString> &metadataEdits( const Plug *plug )
+		bool isChildEdit( const Plug *plug ) const
 		{
-			const PlugEdit *edit = plugEdit( plug );
-			if( edit )
+			const Plug *parent = plug->parent<Plug>();
+			if( !parent )
 			{
-				return edit->m_metadataEdits;
+				return false;
 			}
 
-			static boost::container::flat_set<InternedString> g_emptyContainer;
-			return g_emptyContainer;
+			const PlugEdit *edit = plugEdit( parent );
+			if( !edit )
+			{
+				return false;
+			}
+
+			if( edit->sizeAfterLoad == -1 || parent->children().size() <= (size_t)edit->sizeAfterLoad )
+			{
+				return false;
+			}
+
+			// Conceptually we want to compare the index of `plug` against
+			// `sizeAfterLoad`. But finding the index currently requires linear
+			// search. We expect the UI to only allow creation of new plugs in
+			// originally-empty containers (to avoid merge hell on reload),
+			// meaning that `sizeAfterLoad` can be expected to be either 0 or 1
+			// (the latter for RowsPlug with a default row). So it is quicker to
+			// reverse the test and search for plug in the range `[0,
+			// sizeAfterLoad)`.
+			return !std::any_of(
+				parent->children().begin(), parent->children().begin() + edit->sizeAfterLoad,
+				[plug]( const GraphComponentPtr &child ) { return child == plug; }
+			);
 		}
 
-		boost::signals::scoped_connection &connection()
+		void transferEdits( Plug *oldPlug, Plug *newPlug ) const
 		{
-			return m_connection;
+			transferEditedMetadata( oldPlug, newPlug );
+			transferChildEdits( oldPlug, newPlug );
 		}
+
+		// Used to allow PlugEdits to track reference loading.
+		struct LoadingScope : boost::noncopyable
+		{
+			LoadingScope( PlugEdits *plugEdits )
+				:	m_plugEdits( plugEdits ), m_blockedConnection( plugEdits->m_connection )
+			{
+			}
+			~LoadingScope()
+			{
+				m_plugEdits->loadingFinished();
+			}
+			private :
+				PlugEdits *m_plugEdits;
+				// Changes made during loading aren't user edits and mustn't be
+				// tracked, so we block the connection.
+				Signals::BlockedConnection m_blockedConnection;
+		};
 
 	private :
 
 		Reference *m_reference;
-		boost::signals::scoped_connection m_connection;
+		Signals::ScopedConnection m_connection;
 
+		// Struct for tracking all edits to a plug, where an edit is conceptually
+		// any change the user makes to the plug after it has been loaded by
+		// `Reference::load()`. In practice we currently only track metadata
+		// edits and the addition of children to a subset of plug types.
 		struct PlugEdit
 		{
-			boost::container::flat_set<InternedString> m_metadataEdits;
+			boost::container::flat_set<InternedString> metadataEdits;
+			int64_t sizeAfterLoad = -1; // Default value means size not tracked
 		};
 
 		std::unordered_map<const Plug*, PlugEdit> m_plugEdits;
@@ -235,11 +348,12 @@ class Reference::PlugEdits : public boost::signals::trackable
 			return &m_plugEdits[plug];
 		}
 
-		void plugValueChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug )
+		void plugValueChanged( const Gaffer::Plug *plug, IECore::InternedString key, Metadata::ValueChangedReason reason )
 		{
-			// We only record edits to this instance. If no plug is given, the
-			// change is to generic metadata, independently of instances.
-			if( !plug )
+			if(
+				reason == Metadata::ValueChangedReason::StaticRegistration ||
+				reason == Metadata::ValueChangedReason::StaticDeregistration
+			)
 			{
 				return;
 			}
@@ -256,20 +370,20 @@ class Reference::PlugEdits : public boost::signals::trackable
 			PlugEdit *edit = plugEdit( plug, /* createIfMissing = */ true );
 			if( !edit )
 			{
-				// May get a NULL edit even with createIfMissing = true,
-				// if the plug is not a reference plug on the right Reference node.
+				// May get a null edit even with `createIfMissing = true`,
+				// if the plug is not a reference plug node.
 				return;
 			}
 
-			if( edit->m_metadataEdits.find( key ) != edit->m_metadataEdits.end() )
+			if( edit->metadataEdits.find( key ) != edit->metadataEdits.end() )
 			{
 				return;
 			}
 
 			Action::enact(
 				m_reference,
-				[edit, key](){ edit->m_metadataEdits.insert( key ); },
-				[edit, key](){ edit->m_metadataEdits.erase( key ); }
+				[edit, key](){ edit->metadataEdits.insert( key ); },
+				[edit, key](){ edit->metadataEdits.erase( key ); }
 			);
 		}
 
@@ -281,7 +395,110 @@ class Reference::PlugEdits : public boost::signals::trackable
 				return;
 			}
 
+			for( Plug::RecursiveIterator it( plug ); !it.done(); ++it )
+			{
+				m_plugEdits.erase( it->get() );
+			}
+
 			m_plugEdits.erase( plug );
+		}
+
+		void loadingFinished()
+		{
+			for( auto &plug : Plug::RecursiveRange( *m_reference ) )
+			{
+				if( !m_reference->isReferencePlug( plug.get() ) )
+				{
+					continue;
+				}
+
+				const IECore::TypeId plugType = plug->typeId();
+				if(
+					plugType != (IECore::TypeId)SpreadsheetRowsPlugTypeId &&
+					plugType != (IECore::TypeId)CompoundDataPlugTypeId
+				)
+				{
+					// We only support child edits for RowsPlugs and
+					// CompoundDataPlugs at present. It would be trivial
+					// to do the tracking for everything, but most types
+					// don't have dynamic numbers of children, and we
+					// probably don't want the overhead of a PlugEdit for
+					// everything else.
+					continue;
+				}
+				if( auto *edit = plugEdit( plug.get(), /* createIfMissing = */ true ) )
+				{
+					edit->sizeAfterLoad = plug->children().size();
+				}
+			}
+		}
+
+		void transferEditedMetadata( const Plug *srcPlug, Plug *dstPlug ) const
+		{
+			// Transfer metadata that was edited and won't be provided by a
+			// load. Note: Adding the metadata to a new plug
+			// automatically registers a PlugEdit for that plug.
+
+			if( auto *edit = plugEdit( srcPlug ) )
+			{
+				for( const InternedString &key : edit->metadataEdits )
+				{
+					Gaffer::Metadata::registerValue( dstPlug, key, Gaffer::Metadata::value<IECore::Data>( srcPlug, key ), /* persistent =*/ true );
+				}
+			}
+
+			// Recurse
+
+			for( Plug::Iterator it( srcPlug ); !it.done(); ++it )
+			{
+				if( Plug *dstChildPlug = dstPlug->getChild<Plug>( (*it)->getName() ) )
+				{
+					transferEditedMetadata( it->get(), dstChildPlug );
+				}
+			}
+		}
+
+		void transferChildEdits( Plug *oldPlug, Plug *newPlug ) const
+		{
+			if( newPlug->typeId() != oldPlug->typeId() )
+			{
+				return;
+			}
+
+			// Recurse
+
+			for( Plug::Iterator it( oldPlug ); !it.done(); ++it )
+			{
+				if( Plug *dstChildPlug = newPlug->getChild<Plug>( (*it)->getName() ) )
+				{
+					transferChildEdits( it->get(), dstChildPlug );
+				}
+			}
+
+			auto *edit = plugEdit( oldPlug );
+			if( !edit || edit->sizeAfterLoad == -1 )
+			{
+				return;
+			}
+
+			auto *newRows = runTimeCast<Spreadsheet::RowsPlug>( newPlug );
+			for( size_t i = edit->sizeAfterLoad; i < oldPlug->children().size(); ++i )
+			{
+				if( newRows )
+				{
+					// The only valid way to add children to a RowsPlug is to
+					// call `addRow()`. If we don't use that, our new rows may
+					// have the wrong number of columns if the columns in the
+					// referenced file have been changed.
+					Spreadsheet::RowPlug *newRow = newRows->addRow();
+					newRow->setName( oldPlug->getChild( i )->getName() );
+				}
+				else
+				{
+					const Plug *oldChild = oldPlug->getChild<Plug>( i );
+					newPlug->addChild( oldChild->createCounterpart( oldChild->getName(), oldChild->direction() ) );
+				}
+			}
 		}
 
 };
@@ -290,7 +507,7 @@ class Reference::PlugEdits : public boost::signals::trackable
 // Reference
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Reference );
+GAFFER_NODE_DEFINE_TYPE( Reference );
 
 Reference::Reference( const std::string &name )
 	:	SubGraph( name ), m_plugEdits( new PlugEdits( this ) )
@@ -301,14 +518,15 @@ Reference::~Reference()
 {
 }
 
-void Reference::load( const std::string &fileName )
+void Reference::load( const std::filesystem::path &fileName )
 {
 	const char *s = getenv( "GAFFER_REFERENCE_PATHS" );
 	IECore::SearchPath sp( s ? s : "" );
-	boost::filesystem::path path = sp.find( fileName );
+	/// \todo Convert SearchPath to deal in `std::filesystem` rather than `boost::filesystem`.
+	std::filesystem::path path = sp.find( fileName.string() ).string();
 	if( path.empty() )
 	{
-		throw Exception( "Could not find file '" + fileName + "'" );
+		throw Exception( "Could not find file '" + fileName.generic_string() + "'" );
 	}
 
 	ScriptNode *script = scriptNode();
@@ -324,7 +542,7 @@ void Reference::load( const std::string &fileName )
 	);
 }
 
-const std::string &Reference::fileName() const
+const std::filesystem::path &Reference::fileName() const
 {
 	return m_fileName;
 }
@@ -334,7 +552,7 @@ Reference::ReferenceLoadedSignal &Reference::referenceLoadedSignal()
 	return m_referenceLoadedSignal;
 }
 
-void Reference::loadInternal( const std::string &fileName )
+void Reference::loadInternal( const std::filesystem::path &fileName )
 {
 	ScriptNode *script = scriptNode();
 
@@ -349,7 +567,7 @@ void Reference::loadInternal( const std::string &fileName )
 	// incoming plugs don't get renamed.
 
 	std::map<std::string, Plug *> previousPlugs;
-	for( PlugIterator it( this ); !it.done(); ++it )
+	for( Plug::Iterator it( this ); !it.done(); ++it )
 	{
 		Plug *plug = it->get();
 		if( isReferencePlug( plug ) )
@@ -362,7 +580,7 @@ void Reference::loadInternal( const std::string &fileName )
 	// We don't export user plugs to references, but old versions of
 	// Gaffer did, so as above, we must get them out of the way during
 	// the load.
-	for( PlugIterator it( userPlug() ); !it.done(); ++it )
+	for( Plug::Iterator it( userPlug() ); !it.done(); ++it )
 	{
 		Plug *plug = it->get();
 		if( isReferencePlug( plug ) )
@@ -400,13 +618,14 @@ void Reference::loadInternal( const std::string &fileName )
 	bool errors = false;
 	const char *s = getenv( "GAFFER_REFERENCE_PATHS" );
 	IECore::SearchPath sp( s ? s : "" );
-	boost::filesystem::path path = sp.find( fileName );
+	/// \todo Convert SearchPath to deal in `std::filesystem` rather than `boost::filesystem`.
+	std::filesystem::path path = sp.find( fileName.string() ).string();
 	if( !path.empty() )
 	{
-		// Changes made here aren't user edits and mustn't be tracked.
-		BlockedConnection blockedConnection( m_plugEdits->connection() );
-
+		PlugEdits::LoadingScope loadingScope( m_plugEdits.get() );
 		errors = script->executeFile( path.string(), this, /* continueOnError = */ true );
+		// deregister "childNodesAreReadOnly" metadata, in case it was baked in the exported file
+		Metadata::deregisterValue( this, g_childNodesAreReadOnlyName );
 	}
 
 	// Do a little bit of post processing on everything that was loaded.
@@ -418,28 +637,29 @@ void Reference::loadInternal( const std::string &fileName )
 			// Make the loaded plugs non-dynamic, because we don't want them
 			// to be serialised in the script the reference is in - the whole
 			// point is that they are referenced.
+			/// \todo Plug flags are not working. We need to introduce an
+			/// alternative mechanism based on querying parent nodes/plugs
+			/// for serialisation requirements at the point of serialisation.
 			plug->setFlags( Plug::Dynamic, false );
-			for( RecursivePlugIterator it( plug ); !it.done(); ++it )
+
+			if(
+				runTimeCast<const SplineffPlug>( plug ) ||
+				runTimeCast<const SplinefColor3fPlug>( plug ) ||
+				runTimeCast<const SplinefColor4fPlug>( plug )
+			)
+			{
+				// Avoid recursion as it makes it impossible to serialise
+				// the `x/y` children of spline points. See SplinePlugSerialiser
+				// for further details of spline serialisation.
+				continue;
+			}
+
+			for( Plug::RecursiveIterator it( plug ); !it.done(); ++it )
 			{
 				(*it)->setFlags( Plug::Dynamic, false );
 			}
 		}
 	}
-
-	// figure out what version of gaffer was used to save the reference. prior to
-	// version 0.9.0.0, references could contain setValue() calls for promoted plugs,
-	// and we must make sure they don't clobber the user-set values on the reference node.
-	int milestoneVersion = 0;
-	int majorVersion = 0;
-	if( IECore::ConstIntDataPtr v = Metadata::value<IECore::IntData>( this, "serialiser:milestoneVersion" ) )
-	{
-		milestoneVersion = v->readable();
-	}
-	if( IECore::ConstIntDataPtr v = Metadata::value<IECore::IntData>( this, "serialiser:majorVersion" ) )
-	{
-		majorVersion = v->readable();
-	}
-	const bool versionPriorTo09 = milestoneVersion == 0 && majorVersion < 9;
 
 	// Transfer connections, values and metadata from the old plugs onto the corresponding new ones.
 
@@ -451,19 +671,18 @@ void Reference::loadInternal( const std::string &fileName )
 		{
 			try
 			{
+				m_plugEdits->transferEdits( oldPlug, newPlug );
 				if( newPlug->direction() == Plug::In && oldPlug->direction() == Plug::In )
 				{
-					copyInputsAndValues( oldPlug, newPlug, /* ignoreDefaultValues = */ !versionPriorTo09 );
+					copyInputsAndValues( oldPlug, newPlug, /* ignoreDefaultValues = */ true );
 				}
 				transferOutputs( oldPlug, newPlug );
-
-				transferEditedMetadata( oldPlug, newPlug );
 			}
 			catch( const std::exception &e )
 			{
 				msg(
 					Msg::Warning,
-					boost::str( boost::format( "Loading \"%s\" onto \"%s\"" ) % fileName % getName().c_str() ),
+					fmt::format( "Loading \"{}\" onto \"{}\"", fileName.generic_string(), getName().c_str() ),
 					e.what()
 				);
 			}
@@ -481,7 +700,7 @@ void Reference::loadInternal( const std::string &fileName )
 
 	if( errors )
 	{
-		throw Exception( boost::str( boost::format( "Error loading reference \"%s\"" ) % fileName ) );
+		throw Exception( fmt::format( "Error loading reference \"{}\"", fileName.generic_string() ) );
 	}
 
 }
@@ -489,6 +708,11 @@ void Reference::loadInternal( const std::string &fileName )
 bool Reference::hasMetadataEdit( const Plug *plug, const IECore::InternedString key ) const
 {
 	return m_plugEdits->hasMetadataEdit( plug, key );
+}
+
+bool Reference::isChildEdit( const Plug *plug ) const
+{
+	return m_plugEdits->isChildEdit( plug );
 }
 
 bool Reference::isReferencePlug( const Plug *plug ) const
@@ -538,37 +762,4 @@ bool Reference::isReferencePlug( const Plug *plug ) const
 	}
 	// everything else must be from a reference then.
 	return true;
-}
-
-void Reference::transferEditedMetadata( const Plug *srcPlug, Plug *dstPlug ) const
-{
-	// Transfer metadata that was edited and won't be provided by a
-	// load. Note: Adding the metadata to a new plug
-	// automatically registers a PlugEdit for that plug.
-
-	for( const InternedString &key : m_plugEdits->metadataEdits( srcPlug ) )
-	{
-		Gaffer::Metadata::registerValue( dstPlug, key, Gaffer::Metadata::value<IECore::Data>( srcPlug, key ), /* persistent =*/ true);
-	}
-
-	// Recurse
-
-	for( PlugIterator it( srcPlug ); !it.done(); ++it )
-	{
-		if( Plug *dstChildPlug = dstPlug->getChild<Plug>( (*it)->getName() ) )
-		{
-			transferEditedMetadata( it->get(), dstChildPlug );
-		}
-	}
-}
-
-void Reference::convertPersistentMetadata( Plug *plug ) const
-{
-	vector<InternedString> keys;
-	Metadata::registeredValues( plug, keys, /* instanceOnly = */ true, /* persistentOnly = */ true );
-	for( vector<InternedString>::const_iterator it = keys.begin(), eIt = keys.end(); it != eIt; ++it )
-	{
-		ConstDataPtr value = Metadata::value( plug, *it );
-		Metadata::registerValue( plug, *it, value, /* persistent = */ false );
-	}
 }

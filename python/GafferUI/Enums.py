@@ -34,7 +34,8 @@
 #
 ##########################################################################
 
-import IECore
+import enum
+
 import GafferUI
 
 from Qt import QtCore
@@ -44,7 +45,7 @@ __all__ = [ "HorizontalAlignment", "VerticalAlignment", "Edge", "ScrollMode" ]
 
 # HorizontalAlignment
 
-HorizontalAlignment = IECore.Enum.create( "None", "Left", "Right", "Center", "Justify" )
+HorizontalAlignment = enum.Enum( "HorizontalAlignment", [ "None_", "Left", "Right", "Center", "Justify" ] )
 
 @staticmethod
 def __horizontalFromQt( a ) :
@@ -59,7 +60,7 @@ def __horizontalFromQt( a ) :
 	elif a == QtCore.Qt.AlignJustify :
 		return HorizontalAlignment.AlignJustify
 
-	return HorizontalAlignment.None
+	return HorizontalAlignment.None_
 
 @staticmethod
 def __horizontalToQt( a ) :
@@ -80,7 +81,7 @@ HorizontalAlignment._toQt = __horizontalToQt
 
 # VerticalAlignment
 
-VerticalAlignment = IECore.Enum.create( "None", "Top", "Bottom", "Center" )
+VerticalAlignment = enum.Enum( "VerticalAlignment", [ "None_", "Top", "Bottom", "Center" ] )
 
 @staticmethod
 def __verticalFromQt( a ) :
@@ -93,7 +94,7 @@ def __verticalFromQt( a ) :
 	elif a == QtCore.Qt.AlignVCenter :
 		return VerticalAlignment.Center
 
-	return VerticalAlignment.None
+	return VerticalAlignment.None_
 
 @staticmethod
 def __verticalToQt( a ) :
@@ -112,11 +113,11 @@ VerticalAlignment._toQt = __verticalToQt
 
 # Edge
 
-Edge = IECore.Enum.create( "Top", "Bottom", "Left", "Right" )
+Edge = enum.Enum( "Edge", [ "Top", "Bottom", "Left", "Right" ] )
 
 # Scroll Mode
 
-ScrollMode = IECore.Enum.create( "Never", "Always", "Automatic" )
+ScrollMode = enum.Enum( "ScrollMode", [ "Never", "Always", "Automatic" ] )
 
 __modesToPolicies = {
 	ScrollMode.Never : QtCore.Qt.ScrollBarAlwaysOff,

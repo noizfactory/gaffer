@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_TEXT_H
-#define GAFFERIMAGE_TEXT_H
+#pragma once
 
 #include "GafferImage/Shape.h"
 
@@ -57,10 +56,10 @@ class GAFFERIMAGE_API Text : public Shape
 
 	public :
 
-		Text( const std::string &name=defaultName<Text>() );
+		explicit Text( const std::string &name=defaultName<Text>() );
 		~Text() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Text, TextTypeId, Shape );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Text, TextTypeId, Shape );
 
 		enum HorizontalAlignment
 		{
@@ -131,5 +130,3 @@ class GAFFERIMAGE_API Text : public Shape
 IE_CORE_DECLAREPTR( Text )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_TEXT_H

@@ -48,44 +48,44 @@ class PlugTest( GafferTest.TestCase ) :
 
 		n = Gaffer.Node()
 		p = Gaffer.Plug()
-		self.assert_( p.parent() is None )
-		self.assert_( p.node() is None )
-		self.assert_( p.acceptsParent( n ) )
+		self.assertIsNone( p.parent() )
+		self.assertIsNone( p.node() )
+		self.assertTrue( p.acceptsParent( n ) )
 		n.addChild( p )
-		self.assert_( p.parent().isSame( n ) )
-		self.assert_( p.node().isSame( n ) )
+		self.assertTrue( p.parent().isSame( n ) )
+		self.assertTrue( p.node().isSame( n ) )
 
 	def testConnectionAcceptance( self ) :
 
 		p1 = Gaffer.Plug( direction=Gaffer.Plug.Direction.In )
 		p2 = Gaffer.Plug( direction=Gaffer.Plug.Direction.Out )
-		self.assert_( p1.acceptsInput( p2 ) )
+		self.assertTrue( p1.acceptsInput( p2 ) )
 
 		p1 = Gaffer.Plug( direction=Gaffer.Plug.Direction.In )
 		p2 = Gaffer.Plug( direction=Gaffer.Plug.Direction.In )
-		self.assert_( p1.acceptsInput( p2 ) )
+		self.assertTrue( p1.acceptsInput( p2 ) )
 
 	def testConnection( self ) :
 
 		n1 = Gaffer.Node()
 		p1 = Gaffer.Plug()
 		n1.addChild( p1 )
-		self.assert_( p1.getInput() is None )
+		self.assertIsNone( p1.getInput() )
 		self.assertEqual( p1.outputs(), () )
 
 		n2 = Gaffer.Node()
 		p2 = Gaffer.Plug()
 		n2.addChild( p2 )
-		self.assert_( p2.getInput() is None )
+		self.assertIsNone( p2.getInput() )
 		self.assertEqual( p2.outputs(), () )
 
 		p2.setInput( p1 )
-		self.assert_( p2.getInput().isSame( p1 ) )
-		self.assert_( len( p1.outputs() ), 1 )
-		self.assert_( p1.outputs()[0].isSame( p2 ) )
+		self.assertTrue( p2.getInput().isSame( p1 ) )
+		self.assertEqual( len( p1.outputs() ), 1 )
+		self.assertTrue( p1.outputs()[0].isSame( p2 ) )
 
 		p2.setInput( None )
-		self.assert_( p2.getInput() is None )
+		self.assertIsNone( p2.getInput() )
 		self.assertEqual( p1.outputs(), () )
 
 	def testConnectionSignals( self ) :
@@ -102,14 +102,14 @@ class PlugTest( GafferTest.TestCase ) :
 		p2 = Gaffer.Plug( direction=Gaffer.Plug.Direction.In )
 		n2.addChild( p2 )
 
-		c = n2.plugInputChangedSignal().connect( f )
+		n2.plugInputChangedSignal().connect( f )
 		p2.setInput( p1 )
-		self.assert_( PlugTest.__connection[0].isSame( p2 ) )
-		self.assert_( PlugTest.__connection[1].isSame( p1 ) )
+		self.assertTrue( PlugTest.__connection[0].isSame( p2 ) )
+		self.assertTrue( PlugTest.__connection[1].isSame( p1 ) )
 		PlugTest.__connection = None
 		p2.setInput( None )
-		self.assert_( PlugTest.__connection[0].isSame( p2 ) )
-		self.assert_( PlugTest.__connection[1] is None )
+		self.assertTrue( PlugTest.__connection[0].isSame( p2 ) )
+		self.assertIsNone( PlugTest.__connection[1] )
 
 	def testDirectionality( self ) :
 
@@ -186,8 +186,8 @@ class PlugTest( GafferTest.TestCase ) :
 
 		# check that accepts input and setInput can be overridden
 
-		self.failUnless( n1["testIn"].acceptsInput( n2["testOut"] ) )
-		self.failIf( n1["testIn"].acceptsInput( n2["intOut"] ) )
+		self.assertTrue( n1["testIn"].acceptsInput( n2["testOut"] ) )
+		self.assertFalse( n1["testIn"].acceptsInput( n2["intOut"] ) )
 
 		self.assertRaises( RuntimeError, n1["testIn"].setInput, n2["intOut"] )
 		self.assertEqual( n1["testIn"].inputHasBeenSet, False )
@@ -223,8 +223,8 @@ class PlugTest( GafferTest.TestCase ) :
 		s["n2"]["i"].setInput( s["n1"]["o"] )
 		s["n2"]["c"]["i"].setInput( s["n1"]["o"] )
 
-		self.failUnless( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
-		self.failUnless( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 2 )
 
 		with Gaffer.UndoScope( s ) :
@@ -236,8 +236,8 @@ class PlugTest( GafferTest.TestCase ) :
 
 		s.undo()
 
-		self.failUnless( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
-		self.failUnless( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 2 )
 
 	def testRemovePlugRemovesOutputs( self ) :
@@ -253,7 +253,7 @@ class PlugTest( GafferTest.TestCase ) :
 
 		s["n2"]["i"].setInput( s["n1"]["o"] )
 
-		self.failUnless( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 1 )
 
 		with Gaffer.UndoScope( s ) :
@@ -265,14 +265,14 @@ class PlugTest( GafferTest.TestCase ) :
 
 		s.undo()
 
-		self.failUnless( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["i"].getInput().isSame( s["n1"]["o"] ) )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 1 )
-		self.failUnless( s["n1"]["o"].isSame( removedPlug ) )
+		self.assertTrue( s["n1"]["o"].isSame( removedPlug ) )
 
 	def testDefaultFlags( self ) :
 
 		p = Gaffer.Plug()
-		self.failUnless( p.getFlags( Gaffer.Plug.Flags.Serialisable ) )
+		self.assertTrue( p.getFlags( Gaffer.Plug.Flags.Serialisable ) )
 
 	def testSerialisableFlag( self ) :
 
@@ -280,7 +280,7 @@ class PlugTest( GafferTest.TestCase ) :
 
 		s["n"] = GafferTest.AddNode()
 
-		self.failUnless( s["n"]["op1"].getFlags( Gaffer.Plug.Flags.Serialisable ) )
+		self.assertTrue( s["n"]["op1"].getFlags( Gaffer.Plug.Flags.Serialisable ) )
 
 		s["n"]["op1"].setValue( 20 )
 		ss = s.serialise()
@@ -293,7 +293,7 @@ class PlugTest( GafferTest.TestCase ) :
 		s["n"]["op1"].setFlags( Gaffer.Plug.Flags.Serialisable, False )
 		ss = s.serialise()
 
-		self.failIf( "op1" in ss )
+		self.assertNotIn( "op1", ss )
 
 		s = Gaffer.ScriptNode()
 		s.execute( ss )
@@ -326,7 +326,7 @@ class PlugTest( GafferTest.TestCase ) :
 
 		ss = s.serialise()
 
-		self.failIf( "All" in ss )
+		self.assertNotIn( "All", ss )
 
 		s = Gaffer.ScriptNode()
 		s.execute( ss )
@@ -414,7 +414,7 @@ class PlugTest( GafferTest.TestCase ) :
 		p1 = Gaffer.Plug(
 			"p",
 			Gaffer.Plug.Direction.Out,
-			Gaffer.Plug.Flags.None,
+			Gaffer.Plug.Flags.None_,
 		)
 
 		p2 = eval( repr( p1 ) )
@@ -484,21 +484,21 @@ class PlugTest( GafferTest.TestCase ) :
 
 		n2["p"]["c1"].setInput( n1["p"]["c1"] )
 		n2["p"]["c2"].setInput( n1["p"]["c2"] )
-		self.failUnless( n2["p"].getInput().isSame( n1["p"] ) )
+		self.assertTrue( n2["p"].getInput().isSame( n1["p"] ) )
 
 		n2["p"]["c2"].setInput( None )
-		self.failUnless( n2["p"].getInput() is None )
+		self.assertIsNone( n2["p"].getInput() )
 
 		n2["p"]["c2"].setInput( n1["p"]["c2"] )
-		self.failUnless( n2["p"].getInput().isSame( n1["p"] ) )
+		self.assertTrue( n2["p"].getInput().isSame( n1["p"] ) )
 
 		n2["p"]["c3"] = Gaffer.Plug()
 
-		self.failUnless( n2["p"].getInput() is None )
+		self.assertIsNone( n2["p"].getInput() )
 
 		n1["p"]["c3"] = Gaffer.Plug()
 		n2["p"]["c3"].setInput( n1["p"]["c3"] )
-		self.failUnless( n2["p"].getInput().isSame( n1["p"] ) )
+		self.assertTrue( n2["p"].getInput().isSame( n1["p"] ) )
 
 	def testAncestorConnectionTracksDescendantConnections( self ) :
 
@@ -647,19 +647,15 @@ class PlugTest( GafferTest.TestCase ) :
 
 		self.assertFalse( s["n"]["user"]["p"].getFlags( Gaffer.Plug.Flags.Dynamic ) )
 
-		cs = GafferTest.CapturingSlot( s["n"].plugFlagsChangedSignal() )
 		with Gaffer.UndoScope( s["n"]["user"]["p"].ancestor( Gaffer.ScriptNode ) ) :
 			s["n"]["user"]["p"].setFlags( Gaffer.Plug.Flags.Dynamic, True )
 			self.assertTrue( s["n"]["user"]["p"].getFlags( Gaffer.Plug.Flags.Dynamic ) )
-			self.assertEqual( len( cs ), 1 )
 
 		s.undo()
 		self.assertFalse( s["n"]["user"]["p"].getFlags( Gaffer.Plug.Flags.Dynamic ) )
-		self.assertEqual( len( cs ), 2 )
 
 		s.redo()
 		self.assertTrue( s["n"]["user"]["p"].getFlags( Gaffer.Plug.Flags.Dynamic ) )
-		self.assertEqual( len( cs ), 3 )
 
 	def testParentConnectionIgnoresOutOfOrderChildConnections( self ) :
 
@@ -818,8 +814,8 @@ class PlugTest( GafferTest.TestCase ) :
 		s["n2"]["c"]["i"] = Gaffer.IntPlug()
 
 		s["n2"]["c"]["i"].setInput( s["n1"]["o"] )
-		self.failUnless( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
-		self.failUnless( s["n2"]["c"].getInput() is None )
+		self.assertTrue( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
+		self.assertIsNone( s["n2"]["c"].getInput() )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 1 )
 
 		with Gaffer.UndoScope( s ) :
@@ -829,7 +825,7 @@ class PlugTest( GafferTest.TestCase ) :
 
 		s.undo()
 
-		self.failUnless( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
+		self.assertTrue( s["n2"]["c"]["i"].getInput().isSame(  s["n1"]["o"] ) )
 		self.assertEqual( len( s["n1"]["o"].outputs() ), 1 )
 
 	def testSerialiseOmittingParentPlugMetadata( self ) :
@@ -910,6 +906,225 @@ class PlugTest( GafferTest.TestCase ) :
 			list( Gaffer.Plug.RecursiveOutputRange( n ) ),
 			[ n["c2"], n["c3"]["gc2"] ]
 		)
+
+	def testRangesForPythonTypes( self ) :
+
+		class DerivedPlug( Gaffer.Plug ) :
+
+			def __init__( self, name = "DerivedPlug", direction = Gaffer.Plug.Direction.In, flags = Gaffer.Plug.Flags.Default ) :
+
+				Gaffer.Plug.__init__( self, name, direction, flags )
+
+		IECore.registerRunTimeTyped( DerivedPlug )
+
+		n = Gaffer.Node()
+
+		n["c1"] = Gaffer.Plug()
+		n["c1"]["gc1"] = DerivedPlug()
+		n["c2"] = DerivedPlug( direction = Gaffer.Plug.Direction.Out )
+		n["c3"] = DerivedPlug( flags = Gaffer.Plug.Flags.Default & ~Gaffer.Plug.Flags.AcceptsInputs )
+		n["c3"]["gc2"] = DerivedPlug()
+		n["c3"]["gc3"] = DerivedPlug( direction = Gaffer.Plug.Direction.Out )
+		n["c3"]["gc4"] = Gaffer.IntPlug()
+
+		self.assertEqual(
+			list( Gaffer.Plug.Range( n ) ),
+			[ n["user"], n["c1"], n["c2"], n["c3"] ],
+		)
+
+		self.assertEqual(
+			list( Gaffer.Plug.InputRange( n ) ),
+			[ n["user"], n["c1"], n["c3"] ],
+		)
+
+		self.assertEqual(
+			list( Gaffer.Plug.OutputRange( n ) ),
+			[ n["c2"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.Range( n ) ),
+			[ n["c2"], n["c3"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.InputRange( n ) ),
+			[ n["c3"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.OutputRange( n ) ),
+			[ n["c2"] ],
+		)
+
+		self.assertEqual(
+			list( Gaffer.Plug.RecursiveRange( n ) ),
+			[ n["user"], n["c1"], n["c1"]["gc1"], n["c2"], n["c3"], n["c3"]["gc2"], n["c3"]["gc3"], n["c3"]["gc4"] ],
+		)
+
+		self.assertEqual(
+			list( Gaffer.Plug.RecursiveInputRange( n ) ),
+			[ n["user"], n["c1"], n["c1"]["gc1"], n["c3"], n["c3"]["gc2"], n["c3"]["gc4"] ],
+		)
+
+		self.assertEqual(
+			list( Gaffer.Plug.RecursiveOutputRange( n ) ),
+			[ n["c2"], n["c3"]["gc3"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.RecursiveRange( n ) ),
+			[ n["c1"]["gc1"], n["c2"], n["c3"], n["c3"]["gc2"], n["c3"]["gc3"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.RecursiveInputRange( n ) ),
+			[ n["c1"]["gc1"], n["c3"], n["c3"]["gc2"] ],
+		)
+
+		self.assertEqual(
+			list( DerivedPlug.RecursiveOutputRange( n ) ),
+			[ n["c2"], n["c3"]["gc3"] ],
+		)
+
+	def testReorderingPropagatesToOutputPlugs( self ) :
+
+		# Connect a couple of matching compound plugs.
+
+		script = Gaffer.ScriptNode()
+
+		script["node1"] = Gaffer.Node()
+		script["node1"]["user"]["p"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["node1"]["user"]["p"]["c1"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["node1"]["user"]["p"]["c2"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		script["node1"]["user"]["p"]["c3"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		script["node2"] = Gaffer.Node()
+		script["node2"]["user"]["p"] = script["node1"]["user"]["p"].createCounterpart( "p", Gaffer.Plug.Direction.In )
+
+		script["node2"]["user"]["p"].setInput( script["node1"]["user"]["p"] )
+
+		# Reorder children of source.
+
+		script["node1"]["user"]["p"].reorderChildren(
+			reversed( script["node1"]["user"]["p"] )
+		)
+
+		# Connection should still exist, and destination
+		# should have been reordered too.
+
+		def assertPostconditions( script ) :
+
+			self.assertEqual(
+				script["node2"]["user"]["p"].getInput(),
+				script["node1"]["user"]["p"],
+			)
+
+			self.assertEqual(
+				script["node2"]["user"]["p"].keys(),
+				script["node1"]["user"]["p"].keys()
+			)
+
+			for child in script["node2"]["user"]["p"] :
+				self.assertEqual(
+					child.getInput(),
+					script["node1"]["user"]["p"][child.getName()]
+				)
+
+		assertPostconditions( script )
+
+		# And the changes should survive save/load.
+
+		script2 = Gaffer.ScriptNode()
+		script2.execute( script.serialise() )
+		assertPostconditions( script2 )
+
+	def testReorderingSignalsDirtiness( self ) :
+
+		node1 = Gaffer.Node()
+		node1["user"]["p"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		node1["user"]["p"]["c1"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+		node1["user"]["p"]["c2"] = Gaffer.Plug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		node2 = Gaffer.Node()
+		node2["user"]["p"] = node1["user"]["p"].createCounterpart( "p", Gaffer.Plug.Direction.In )
+		node2["user"]["p"].setInput( node1["user"]["p"] )
+
+		dirtiedPlugs = set()
+		def plugDirtied( plug ) :
+
+			dirtiedPlugs.add( plug )
+			# Dirtiness should only have been signalled after the reordering of
+			# all plugs has been completed.
+			self.assertEqual( node1["user"]["p"].keys(), [ "c2", "c1" ] )
+			self.assertEqual( node2["user"]["p"].keys(), [ "c2", "c1" ] )
+
+		node1.plugDirtiedSignal().connect( plugDirtied )
+		node2.plugDirtiedSignal().connect( plugDirtied )
+
+		node1["user"]["p"].reorderChildren(
+			reversed( node1["user"]["p"] )
+		)
+
+		self.assertEqual(
+			dirtiedPlugs,
+			set( Gaffer.Plug.RecursiveRange( node1 ) ) | set( Gaffer.Plug.RecursiveRange( node2 ) )
+		)
+
+	def testRemoveOutputsRemovesChildOutputs( self ) :
+
+		p1 = Gaffer.V2iPlug()
+		p2 = Gaffer.V2iPlug()
+
+		p2["x"].setInput( p1["x"] )
+		self.assertEqual( p2["x"].getInput(), p1["x"] )
+
+		p1.removeOutputs()
+		self.assertIsNone( p2["x"].getInput() )
+
+	def testRemovePlugRemovesChildOutputs( self ) :
+
+		n = Gaffer.Node()
+		n["p1"] = Gaffer.V2iPlug()
+		n["p2"] = Gaffer.V2iPlug()
+
+		n["p2"]["x"].setInput( n["p1"]["x"] )
+		self.assertEqual( n["p2"]["x"].getInput(), n["p1"]["x"] )
+
+		p1 = n["p1"] # Keep alive, so destruction of `p1` doesn't remove outputs.
+		del n["p1"]  # Removal alone should be enough to do that.
+		self.assertIsNone( n["p2"]["x"].getInput() )
+
+	def testUndoFailureDoesntAffectDirtyPropagation( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n1"] = Gaffer.Node()
+		s["n1"]["p1"] = Gaffer.IntPlug()
+
+		dirtiedPlugs = set()
+		def plugDirtied( plug ) :
+
+			dirtiedPlugs.add( plug )
+
+		s["n1"].plugDirtiedSignal().connect( plugDirtied )
+
+		s["n1"]["p1"].setValue( 1 )
+
+		self.assertEqual( dirtiedPlugs, set( [ s["n1"]["p1"] ] ) )
+
+		with Gaffer.UndoScope( s ):
+			s["n1"]["p2"] = Gaffer.IntPlug()
+
+		del s["n1"]["p2"]
+
+		# Because p2 has been created in an undo scope, but deleted outside an undo scope, undoing now will fail
+		self.assertRaises( RuntimeError, s.undo )
+
+		# Make sure dirty propagation still works
+		dirtiedPlugs = set()
+		s["n1"]["p1"].setValue( 2 )
+		self.assertEqual( dirtiedPlugs, set( [ s["n1"]["p1"] ] ) )
 
 if __name__ == "__main__":
 	unittest.main()

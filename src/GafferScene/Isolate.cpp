@@ -40,6 +40,7 @@
 #include "Gaffer/StringPlug.h"
 
 #include "boost/algorithm/string/predicate.hpp"
+#include "boost/container/static_vector.hpp"
 
 using namespace std;
 using namespace IECore;
@@ -53,8 +54,9 @@ using namespace GafferScene;
 namespace
 {
 
-InternedString g_lightsSetName( "__lights" );
-InternedString g_camerasSetName( "__cameras" );
+const InternedString g_lightsSetName( "__lights" );
+const InternedString g_lightFiltersSetName( "__lightFilters" );
+const InternedString g_camerasSetName( "__cameras" );
 
 } // namespace
 
@@ -65,30 +67,24 @@ struct Isolate::SetsToKeep
 	{
 		const ScenePlug *scene = isolate->inPlug();
 
-		for( int i = 0; i < 2; ++i )
+		if( isolate->keepLightsPlug()->getValue() )
 		{
-			const BoolPlug *p = i == 0 ? isolate->keepLightsPlug() : isolate->keepCamerasPlug();
-			if( p->getValue() )
-			{
-				m_setOwners[i] = scene->set( i == 0 ? g_lightsSetName : g_camerasSetName );
-				m_sets[i] = &(m_setOwners[i]->readable());
-			}
-			else
-			{
-				m_sets[i] = nullptr;
-			}
+			m_sets.push_back( scene->set( g_lightsSetName )->readable() );
+			m_sets.push_back( scene->set( g_lightFiltersSetName )->readable() );
+		}
+
+		if( isolate->keepCamerasPlug()->getValue() )
+		{
+			m_sets.push_back( scene->set( g_camerasSetName )->readable() );
 		}
 	}
 
 	unsigned match( const ScenePath &path ) const
 	{
 		unsigned result = IECore::PathMatcher::NoMatch;
-		for( int i = 0; i < 2; ++i )
+		for( const auto &set : m_sets )
 		{
-			if( m_sets[i] )
-			{
-				result |= m_sets[i]->match( path );
-			}
+			result |= set.match( path );
 		}
 
 		return result;
@@ -96,8 +92,7 @@ struct Isolate::SetsToKeep
 
 	private :
 
-		IECore::ConstPathMatcherDataPtr m_setOwners[2];
-		const PathMatcher *m_sets[2];
+		boost::container::static_vector<IECore::PathMatcher, 3> m_sets;
 
 };
 
@@ -105,7 +100,7 @@ struct Isolate::SetsToKeep
 // Isolate
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Isolate );
+GAFFER_NODE_DEFINE_TYPE( Isolate );
 
 size_t Isolate::g_firstPlugIndex = 0;
 
@@ -117,6 +112,8 @@ Isolate::Isolate( const std::string &name )
 	addChild( new BoolPlug( "keepLights" ) );
 	addChild( new BoolPlug( "keepCameras" ) );
 	addChild( new BoolPlug( "adjustBounds", Plug::In, false ) );
+
+	outPlug()->childBoundsPlug()->setFlags( Plug::AcceptsDependencyCycles, true );
 
 	// Direct pass-throughs
 	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
@@ -174,51 +171,45 @@ void Isolate::affects( const Gaffer::Plug *input, AffectedPlugsContainer &output
 {
 	FilteredSceneProcessor::affects( input, outputs );
 
-	const ScenePlug *in = inPlug();
-	if( input->parent<ScenePlug>() == in )
-	{
-		outputs.push_back( outPlug()->getChild<ValuePlug>( input->getName() ) );
-	}
-	else if( input == filterPlug() || input == fromPlug() || input == keepLightsPlug() || input == keepCamerasPlug() )
-	{
-		outputs.push_back( outPlug()->childNamesPlug() );
-		outputs.push_back( outPlug()->setPlug() );
-	}
-	else if( input == adjustBoundsPlug() )
+	const bool affectsSetsToKeep =
+		input == keepLightsPlug() ||
+		input == keepCamerasPlug() ||
+		input == inPlug()->setPlug()
+	;
+
+	const bool affectsMayPruneChildren =
+		input == fromPlug() ||
+		input == filterPlug() ||
+		affectsSetsToKeep
+	;
+
+	if(
+		input == adjustBoundsPlug() ||
+		affectsMayPruneChildren ||
+		input == outPlug()->childBoundsPlug() ||
+		input == inPlug()->boundPlug()
+	)
 	{
 		outputs.push_back( outPlug()->boundPlug() );
 	}
-}
 
-bool Isolate::acceptsInput( const Gaffer::Plug *plug, const Gaffer::Plug *inputPlug ) const
-{
-	if( !FilteredSceneProcessor::acceptsInput( plug, inputPlug ) )
+	if(
+		affectsMayPruneChildren ||
+		input == inPlug()->childNamesPlug() ||
+		input == filterPlug()
+	)
 	{
-		return false;
+		outputs.push_back( outPlug()->childNamesPlug() );
 	}
 
-	if( plug == filterPlug() )
+	if(
+		affectsSetsToKeep ||
+		input == fromPlug() ||
+		input == filterPlug()
+	)
 	{
-		if(
-			filterPlug()->sceneAffectsMatch( inPlug(), inPlug()->boundPlug() ) ||
-			filterPlug()->sceneAffectsMatch( inPlug(), inPlug()->transformPlug() ) ||
-			filterPlug()->sceneAffectsMatch( inPlug(), inPlug()->attributesPlug() ) ||
-			filterPlug()->sceneAffectsMatch( inPlug(), inPlug()->objectPlug() ) ||
-			filterPlug()->sceneAffectsMatch( inPlug(), inPlug()->childNamesPlug() )
-		)
-		{
-			// We make a single call to filterHash() in hashSet(), to account for
-			// the fact that the filter is used in remapping sets. This wouldn't
-			// work for filter types which actually vary based on data within the
-			// scene hierarchy, because then multiple calls would be necessary.
-			// We could make more calls here, but that would be expensive.
-			/// \todo In an ideal world we'd be able to compute a hash for the
-			/// filter across a whole hierarchy.
-			return false;
-		}
+		outputs.push_back( outPlug()->setPlug() );
 	}
-
-	return true;
 }
 
 void Isolate::hashBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
@@ -226,7 +217,7 @@ void Isolate::hashBound( const ScenePath &path, const Gaffer::Context *context, 
 	const SetsToKeep setsToKeep( this );
 	if( adjustBoundsPlug()->getValue() && mayPruneChildren( path, context, setsToKeep ) )
 	{
-		h = hashOfTransformedChildBounds( path, outPlug() );
+		h = outPlug()->childBoundsPlug()->hash();
 		return;
 	}
 
@@ -239,7 +230,7 @@ Imath::Box3f Isolate::computeBound( const ScenePath &path, const Gaffer::Context
 	const SetsToKeep setsToKeep( this );
 	if( adjustBoundsPlug()->getValue() && mayPruneChildren( path, context, setsToKeep ) )
 	{
-		return unionOfTransformedChildBounds( path, outPlug() );
+		return outPlug()->childBoundsPlug()->getValue();
 	}
 
 	return inPlug()->boundPlug()->getValue();
@@ -270,7 +261,7 @@ void Isolate::hashChildNames( const ScenePath &path, const Gaffer::Context *cont
 			const unsigned m = setsToKeep.match( childPath );
 			if( m == IECore::PathMatcher::NoMatch )
 			{
-				sceneScope.set( ScenePlug::scenePathContextName, childPath );
+				sceneScope.set( ScenePlug::scenePathContextName, &childPath );
 				filterPlug()->hash( h );
 			}
 			else
@@ -309,7 +300,7 @@ IECore::ConstInternedStringVectorDataPtr Isolate::computeChildNames( const Scene
 			unsigned m = setsToKeep.match( childPath );
 			if( m == IECore::PathMatcher::NoMatch )
 			{
-				sceneScope.set( ScenePlug::scenePathContextName, childPath );
+				sceneScope.set( ScenePlug::scenePathContextName, &childPath );
 				m |= filterPlug()->getValue();
 			}
 			if( m != IECore::PathMatcher::NoMatch )
@@ -332,7 +323,7 @@ void Isolate::hashSet( const IECore::InternedString &setName, const Gaffer::Cont
 	const bool keepLights = keepLightsPlug()->getValue();
 	const bool keepCameras = keepCamerasPlug()->getValue();
 	if(
-		( setName == g_lightsSetName && keepLights ) ||
+		( ( setName == g_lightsSetName || setName == g_lightFiltersSetName ) && keepLights ) ||
 		( setName == g_camerasSetName && keepCameras )
 	)
 	{
@@ -353,20 +344,23 @@ void Isolate::hashSet( const IECore::InternedString &setName, const Gaffer::Cont
 		h.append( inPlug()->setHash( g_camerasSetName ) );
 	}
 
-	// The sets themselves do not depend on the "scene:path"
-	// context entry - the whole point is that they're global.
-	// However, the PathFilter is dependent on scene:path, so
-	// we must remove the path before hashing in the filter in
-	// case we're computed from multiple contexts with different
-	// paths (from a SetFilter for instance). If we didn't do this,
-	// our different hashes would lead to huge numbers of redundant
-	// calls to computeSet() and a huge overhead in recomputing
-	// the same sets repeatedly.
-	//
-	// See further comments in acceptsInput()
 	FilterPlug::SceneScope sceneScope( context, inPlug() );
-	sceneScope.remove( ScenePlug::scenePathContextName );
+
+	// The filter does not depend on which set we're evaluating, remove it
+	// so we don't make separate cache entries.
 	sceneScope.remove( ScenePlug::setNameContextName );
+
+	// We need to get a hash representing the affects of the filter over
+	// the whole scene, which we currently get by hashing the filterPlug
+	// with no path in the context. It actually shouldn't be necessary to
+	// remove it here, because the path should never be in the context when
+	// evalauting a set - but we remove it to ensure that we're getting
+	// the correct hash. Since this could probably only happen if someone
+	// implements a custom C++ node incorrectly, in the future, it might be
+	// reasonable to just throw an exception if the path is in the context
+	// ( perhaps this could be caught in SceneNode::hash ).
+	sceneScope.remove( ScenePlug::scenePathContextName );
+
 	filterPlug()->hash( h );
 }
 
@@ -374,7 +368,7 @@ IECore::ConstPathMatcherDataPtr Isolate::computeSet( const IECore::InternedStrin
 {
 	ConstPathMatcherDataPtr inputSetData = inPlug()->setPlug()->getValue();
 	if(
-		( setName == g_lightsSetName && keepLightsPlug()->getValue() ) ||
+		( ( setName == g_lightsSetName || setName == g_lightFiltersSetName ) && keepLightsPlug()->getValue() ) ||
 		( setName == g_camerasSetName && keepCamerasPlug()->getValue() )
 	)
 	{
@@ -400,7 +394,7 @@ IECore::ConstPathMatcherDataPtr Isolate::computeSet( const IECore::InternedStrin
 
 	for( PathMatcher::RawIterator pIt = inputSet.begin(), peIt = inputSet.end(); pIt != peIt; )
 	{
-		sceneScope.set( ScenePlug::scenePathContextName, *pIt );
+		sceneScope.set( ScenePlug::scenePathContextName, &(*pIt) );
 		const int m = filterPlug()->getValue() | setsToKeep.match( *pIt );
 		if( m & ( IECore::PathMatcher::ExactMatch | IECore::PathMatcher::AncestorMatch ) )
 		{

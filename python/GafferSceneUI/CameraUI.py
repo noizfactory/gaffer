@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 ##########################################################################
 #
 #  Copyright (c) 2014, Image Engine Design Inc. All rights reserved.
@@ -339,6 +337,58 @@ plugsMetadata = {
 
 	],
 
+	"renderSettingOverrides.*" : [
+
+		"nameValuePlugPlugValueWidget:ignoreNamePlug", True,
+
+	],
+
+	"visualiserAttributes" : [
+
+			"description",
+			"""
+			Attributes that affect the visualisation of this camera in the Viewer.
+			""",
+
+			"layout:section", "Visualisation",
+			"compoundDataPlugValueWidget:editable", False,
+
+	],
+
+	"visualiserAttributes.*" : [
+
+		"nameValuePlugPlugValueWidget:ignoreNamePlug", True,
+
+	],
+
+	"visualiserAttributes.scale" : [
+
+			"description",
+			"""
+			Scales non-geometric visualisations in the viewport to make them
+			easier to work with.
+			""",
+
+	],
+
+	"visualiserAttributes.frustum" : [
+
+			"description",
+			"""
+			Controls whether the camera draws a visualisation of its frustum.
+			"""
+
+	],
+
+	"visualiserAttributes.frustum.value" : [
+
+			"preset:Off", "off",
+			"preset:When Selected", "whenSelected",
+			"preset:On", "on",
+
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget"
+	]
+
 }
 
 __sourceMetadata = GafferSceneUI.StandardOptionsUI.plugsMetadata
@@ -443,4 +493,4 @@ def __nodeEditorToolMenu( nodeEditor, node, menuDefinition ) :
 
 		)
 
-__nodeEditorToolMenuConnection = GafferUI.NodeEditor.toolMenuSignal().connect( __nodeEditorToolMenu )
+GafferUI.NodeEditor.toolMenuSignal().connect( __nodeEditorToolMenu )

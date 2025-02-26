@@ -45,9 +45,10 @@
 #include "Gaffer/ScriptNode.h"
 #include "Gaffer/UndoScope.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferUI;
 using namespace GafferScene;
@@ -68,7 +69,9 @@ class ShaderPlugAdder : public PlugAdder
 		{
 			plugsParent->childAddedSignal().connect( boost::bind( &ShaderPlugAdder::childAdded, this ) );
 			plugsParent->childRemovedSignal().connect( boost::bind( &ShaderPlugAdder::childRemoved, this ) );
-			Metadata::plugValueChangedSignal().connect( boost::bind( &ShaderPlugAdder::plugMetadataChanged, this, ::_1, ::_2, ::_3, ::_4 ) );
+			Metadata::plugValueChangedSignal( plugsParent->ancestor<Node>() ).connect(
+				boost::bind( &ShaderPlugAdder::plugMetadataChanged, this, ::_1, ::_2 )
+			);
 
 			buttonReleaseSignal().connect( boost::bind( &ShaderPlugAdder::buttonRelease, this, ::_2 ) );
 
@@ -123,7 +126,7 @@ class ShaderPlugAdder : public PlugAdder
 		{
 			vector<Plug *> result;
 
-			for( PlugIterator it( m_plugsParent.get() ); !it.done(); ++it )
+			for( Plug::Iterator it( m_plugsParent.get() ); !it.done(); ++it )
 			{
 				Plug *plug = it->get();
 				if( !plug->getFlags( Plug::AcceptsInputs ) )
@@ -171,9 +174,9 @@ class ShaderPlugAdder : public PlugAdder
 			updateVisibility();
 		}
 
-		void plugMetadataChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug )
+		void plugMetadataChanged( const Gaffer::Plug *plug, IECore::InternedString key )
 		{
-			if( MetadataAlgo::childAffectedByChange( m_plugsParent.get(), nodeTypeId, plugPath, plug ) )
+			if( plug->parent() == m_plugsParent )
 			{
 				if( key == g_visibleKey || key == g_noduleTypeKey )
 				{
@@ -191,7 +194,7 @@ struct Registration
 
 	Registration()
 	{
-		NoduleLayout::registerCustomGadget( "GafferSceneUI.ShaderUI.PlugAdder", boost::bind( &create, ::_1 ) );
+		NoduleLayout::registerCustomGadget( "GafferSceneUI.ShaderUI.PlugAdder", &create );
 	}
 
 	private :
@@ -206,4 +209,3 @@ struct Registration
 Registration g_registration;
 
 } // namespace
-

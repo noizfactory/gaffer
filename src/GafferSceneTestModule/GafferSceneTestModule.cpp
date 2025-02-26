@@ -41,6 +41,7 @@
 #include "GafferSceneTest/CompoundObjectSource.h"
 #include "GafferSceneTest/ScenePlugTest.h"
 #include "GafferSceneTest/TestLight.h"
+#include "GafferSceneTest/TestLightFilter.h"
 #include "GafferSceneTest/TestShader.h"
 #include "GafferSceneTest/TraverseScene.h"
 
@@ -66,7 +67,10 @@ BOOST_PYTHON_MODULE( _GafferSceneTest )
 
 	GafferBindings::DependencyNodeClass<CompoundObjectSource>();
 	GafferBindings::NodeClass<TestShader>();
-	GafferBindings::NodeClass<TestLight>();
+	GafferBindings::NodeClass<TestLight>()
+		.def( "loadShader", &TestLight::loadShader )
+	;
+	GafferBindings::NodeClass<TestLightFilter>();
 
 	def( "traverseScene", &traverseSceneWrapper );
 	def( "connectTraverseSceneToPlugDirtiedSignal", &connectTraverseSceneToPlugDirtiedSignal );

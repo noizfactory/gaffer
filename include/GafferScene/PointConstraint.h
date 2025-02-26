@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_POINTCONSTRAINT_H
-#define GAFFERSCENE_POINTCONSTRAINT_H
+#pragma once
 
 #include "GafferScene/Constraint.h"
 
@@ -47,13 +46,10 @@ class GAFFERSCENE_API PointConstraint : public Constraint
 
 	public :
 
-		PointConstraint( const std::string &name=defaultName<PointConstraint>() );
+		explicit PointConstraint( const std::string &name=defaultName<PointConstraint>() );
 		~PointConstraint() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::PointConstraint, PointConstraintTypeId, Constraint );
-
-		Gaffer::V3fPlug *offsetPlug();
-		const Gaffer::V3fPlug *offsetPlug() const;
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::PointConstraint, PointConstraintTypeId, Constraint );
 
 		Gaffer::BoolPlug *xEnabledPlug();
 		const Gaffer::BoolPlug *xEnabledPlug() const;
@@ -63,6 +59,9 @@ class GAFFERSCENE_API PointConstraint : public Constraint
 
 		Gaffer::BoolPlug *zEnabledPlug();
 		const Gaffer::BoolPlug *zEnabledPlug() const;
+
+		Gaffer::V3fPlug *offsetPlug();
+		const Gaffer::V3fPlug *offsetPlug() const;
 
 	protected :
 
@@ -79,5 +78,3 @@ class GAFFERSCENE_API PointConstraint : public Constraint
 IE_CORE_DECLAREPTR( PointConstraint )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_POINTCONSTRAINT_H

@@ -55,7 +55,7 @@ def __pointerChanged() :
 			application.restoreOverrideCursor()
 			__cursorOverridden = False
 	else :
-		pixmap = GafferUI.Image._qtPixmapFromImagePrimitive( pointer.image() )
+		pixmap = GafferUI.Image._qtPixmapFromFile( pointer.fileName() )
 		cursor = QtGui.QCursor( pixmap, pointer.hotspot().x, pointer.hotspot().y )
 		if __cursorOverridden :
 			application.changeOverrideCursor( cursor )
@@ -63,4 +63,4 @@ def __pointerChanged() :
 			application.setOverrideCursor( cursor )
 			__cursorOverridden = True
 
-__changedConnection = GafferUI.Pointer.changedSignal().connect( __pointerChanged )
+GafferUI.Pointer.changedSignal().connect( __pointerChanged )

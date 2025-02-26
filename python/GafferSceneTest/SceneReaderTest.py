@@ -34,14 +34,18 @@
 #
 ##########################################################################
 
-import os
+import pathlib
 import unittest
+import inspect
 import imath
+
+import pxr.Usd
 
 import IECore
 import IECoreScene
 
 import Gaffer
+import GafferTest
 import GafferScene
 import GafferSceneTest
 
@@ -51,11 +55,11 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 		GafferSceneTest.SceneTestCase.setUp( self )
 
-		self.__testFile = self.temporaryDirectory() + "/test.scc"
+		self.__testFile = self.temporaryDirectory() / "test.scc"
 
 	def testFileRefreshProblem( self ) :
 
-		sc = IECoreScene.SceneCache( self.__testFile, IECore.IndexedIO.OpenMode.Write )
+		sc = IECoreScene.SceneCache( str( self.__testFile ), IECore.IndexedIO.OpenMode.Write )
 
 		t = sc.createChild( "1" )
 		t.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
@@ -74,7 +78,7 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 		del scene
 
-		sc = IECoreScene.SceneCache( self.__testFile, IECore.IndexedIO.OpenMode.Write )
+		sc = IECoreScene.SceneCache( str( self.__testFile ), IECore.IndexedIO.OpenMode.Write )
 
 		t = sc.createChild( "transform" )
 		t.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
@@ -95,7 +99,7 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testRead( self ) :
 
-		sc = IECoreScene.SceneCache( self.__testFile, IECore.IndexedIO.OpenMode.Write )
+		sc = IECoreScene.SceneCache( str( self.__testFile ), IECore.IndexedIO.OpenMode.Write )
 
 		t = sc.createChild( "transform" )
 		t.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
@@ -120,7 +124,7 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def writeAnimatedSCC( self ) :
 
-		scene = IECoreScene.SceneCache( self.__testFile, IECore.IndexedIO.OpenMode.Write )
+		scene = IECoreScene.SceneCache( str( self.__testFile ), IECore.IndexedIO.OpenMode.Write )
 
 		time = 0
 		sc1 = scene.createChild( str( 1 ) )
@@ -186,7 +190,7 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testEnabled( self ) :
 
-		sc = IECoreScene.SceneCache( self.__testFile, IECore.IndexedIO.OpenMode.Write )
+		sc = IECoreScene.SceneCache( str( self.__testFile ), IECore.IndexedIO.OpenMode.Write )
 
 		t = sc.createChild( "transform" )
 		t.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
@@ -224,7 +228,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testChildNamesHash( self ) :
 
-		s = IECoreScene.SceneCache( "/tmp/test.scc", IECore.IndexedIO.OpenMode.Write )
+		filePath = self.temporaryDirectory() / "test.scc"
+		s = IECoreScene.SceneCache( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 		sphereGroup = s.createChild( "sphereGroup" )
 		sphereGroup.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
 		sphereGroup.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 2, 0, 0 ) ) ), 1.0 )
@@ -234,8 +239,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 		del s, sphereGroup, sphere
 
 		s = GafferScene.SceneReader()
-		s["fileName"].setValue( "/tmp/test.scc" )
-		s["refreshCount"].setValue( self.uniqueInt( "/tmp/test.scc" ) ) # account for our changing of file contents between tests
+		s["fileName"].setValue( filePath )
+		s["refreshCount"].setValue( self.uniqueInt( filePath ) ) # account for our changing of file contents between tests
 
 		t = Gaffer.TimeWarp()
 		t.setup( GafferScene.ScenePlug() )
@@ -249,7 +254,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testStaticHashes( self ) :
 
-		s = IECoreScene.SceneCache( "/tmp/test.scc", IECore.IndexedIO.OpenMode.Write )
+		filePath = self.temporaryDirectory() / "test.scc"
+		s = IECoreScene.SceneCache( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 
 		movingGroup = s.createChild( "movingGroup" )
 		movingGroup.writeTransform( IECore.M44dData( imath.M44d().translate( imath.V3d( 1, 0, 0 ) ) ), 0.0 )
@@ -268,8 +274,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 		del s, movingGroup, deformingSphere, staticGroup, staticSphere
 
 		s = GafferScene.SceneReader()
-		s["fileName"].setValue( "/tmp/test.scc" )
-		s["refreshCount"].setValue( self.uniqueInt( "/tmp/test.scc" ) ) # account for our changing of file contents between tests
+		s["fileName"].setValue( filePath )
+		s["refreshCount"].setValue( self.uniqueInt( filePath ) ) # account for our changing of file contents between tests
 
 		t = Gaffer.TimeWarp()
 		t.setup( GafferScene.ScenePlug() )
@@ -314,7 +320,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testTagFilteringWholeScene( self ) :
 
-		s = IECoreScene.SceneCache( "/tmp/test.scc", IECore.IndexedIO.OpenMode.Write )
+		filePath = self.temporaryDirectory() / "test.scc"
+		s = IECoreScene.SceneCache( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 
 		sphereGroup = s.createChild( "sphereGroup" )
 		sphereGroup.writeTags( [ "chrome" ] )
@@ -331,19 +338,19 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 		# these are all loading everything, although each with
 		# different filters.
 
-		refreshCount = self.uniqueInt( "/tmp/test.scc" )
+		refreshCount = self.uniqueInt( filePath )
 
 		s1 = GafferScene.SceneReader()
-		s1["fileName"].setValue( "/tmp/test.scc" )
+		s1["fileName"].setValue( filePath )
 		s1["refreshCount"].setValue( refreshCount )
 
 		s2 = GafferScene.SceneReader()
-		s2["fileName"].setValue( "/tmp/test.scc" )
+		s2["fileName"].setValue( filePath )
 		s2["refreshCount"].setValue( refreshCount )
 		s2["tags"].setValue( "chrome wood" )
 
 		s3 = GafferScene.SceneReader()
-		s3["fileName"].setValue( "/tmp/test.scc" )
+		s3["fileName"].setValue( filePath )
 		s3["refreshCount"].setValue( refreshCount )
 		s3["tags"].setValue( "chrome something" )
 
@@ -359,7 +366,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testTagFilteringPartialScene( self ) :
 
-		s = IECoreScene.SceneCache( "/tmp/test.scc", IECore.IndexedIO.OpenMode.Write )
+		filePath = self.temporaryDirectory() / "test.scc"
+		s = IECoreScene.SceneCache( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 
 		sphereGroup = s.createChild( "sphereGroup" )
 		sphereGroup.writeTags( [ "chrome" ] )
@@ -373,25 +381,25 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 		del s, sphereGroup, sphere, planeGroup, plane
 
-		refreshCount = self.uniqueInt( "/tmp/test.scc" )
+		refreshCount = self.uniqueInt( filePath )
 
 		# this one will load everything
 
 		s1 = GafferScene.SceneReader()
-		s1["fileName"].setValue( "/tmp/test.scc" )
+		s1["fileName"].setValue( filePath )
 		s1["refreshCount"].setValue( refreshCount )
 
 		# this one should load just the sphere
 
 		s2 = GafferScene.SceneReader()
-		s2["fileName"].setValue( "/tmp/test.scc" )
+		s2["fileName"].setValue( filePath )
 		s2["refreshCount"].setValue( refreshCount )
 		s2["tags"].setValue( "chrome" )
 
 		# this one should load just the plane
 
 		s3 = GafferScene.SceneReader()
-		s3["fileName"].setValue( "/tmp/test.scc" )
+		s3["fileName"].setValue( filePath )
 		s3["refreshCount"].setValue( refreshCount )
 		s3["tags"].setValue( "wood" )
 
@@ -426,7 +434,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 
 	def testTagsAsSets( self ) :
 
-		s = IECoreScene.SceneCache( "/tmp/test.scc", IECore.IndexedIO.OpenMode.Write )
+		filePath = self.temporaryDirectory() / "test.scc"
+		s = IECoreScene.SceneCache( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 
 		sphereGroup = s.createChild( "sphereGroup" )
 		sphereGroup.writeTags( [ "chrome" ] )
@@ -441,8 +450,8 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 		del s, sphereGroup, sphere, planeGroup, plane
 
 		s = GafferScene.SceneReader()
-		s["fileName"].setValue( "/tmp/test.scc" )
-		s["refreshCount"].setValue( self.uniqueInt( "/tmp/test.scc" ) ) # account for our changing of file contents between tests
+		s["fileName"].setValue( filePath )
+		s["refreshCount"].setValue( self.uniqueInt( filePath ) ) # account for our changing of file contents between tests
 
 		self.assertEqual(
 			set( [ str( ss ) for ss in s["out"]["setNames"].getValue() ] ),
@@ -499,13 +508,13 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 	def testAlembic( self ) :
 
 		r = GafferScene.SceneReader()
-		r["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/cube.abc" )
+		r["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "cube.abc" )
 		self.assertSceneValid( r["out"] )
 
 	def testTransform( self ) :
 
 		r = GafferScene.SceneReader()
-		r["fileName"].setValue( os.path.dirname( __file__ ) + "/alembicFiles/groupedPlane.abc" )
+		r["fileName"].setValue( pathlib.Path( __file__ ).parent / "alembicFiles" / "groupedPlane.abc" )
 		self.assertEqual( r["out"].transform( "/group" ), imath.M44f() )
 
 		r["transform"]["translate"].setValue( imath.V3f( 1, 2, 3 ) )
@@ -515,9 +524,9 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 	def testAlembicThreading( self ) :
 
 		mesh = IECoreScene.MeshPrimitive.createPlane( imath.Box2f( imath.V2f( -1 ), imath.V2f( 1 ) ) )
-		fileName = self.temporaryDirectory() + "/test.abc"
+		filePath = self.temporaryDirectory() / "test.abc"
 
-		root = IECoreScene.SceneInterface.create( fileName, IECore.IndexedIO.OpenMode.Write )
+		root = IECoreScene.SceneInterface.create( str( filePath ), IECore.IndexedIO.OpenMode.Write )
 		root.writeBound( imath.Box3d( mesh.bound() ), 0 )
 		for i in range( 0, 1000 ) :
 			child = root.createChild( str( i ) )
@@ -527,11 +536,295 @@ class SceneReaderTest( GafferSceneTest.SceneTestCase ) :
 		del root, child
 
 		sceneReader = GafferScene.SceneReader()
-		sceneReader["fileName"].setValue( fileName )
+		sceneReader["fileName"].setValue( filePath )
 
 		for i in range( 0, 20 ) :
 			sceneReader["refreshCount"].setValue( sceneReader["refreshCount"].getValue() + 1 )
 			GafferSceneTest.traverseScene( sceneReader["out"] )
+
+	def testGlobalHashesUseFileNameValue( self ) :
+
+		# This models a situation where a complex asset-managed reader uses a
+		# fileName expression which depends on the frame only in specific
+		# circumstances. In the cases that it doesn't actually use the frame in
+		# computing the filename, we want that to be reflected in the hash for
+		# global scene properties, so that we don't do unnecessary recomputation
+		# from frame to frame.
+
+		script = Gaffer.ScriptNode()
+		script["reader"] = GafferScene.SceneReader()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			frame = context.getFrame()
+			if False :
+				parent["reader"]["fileName"] = "test.{}.abc".format( int( frame ) )
+			else :
+				parent["reader"]["fileName"] = "test.abc"
+			"""
+		) )
+
+		with Gaffer.Context() as c :
+
+			c.setFrame( 1 )
+			globalsHash = script["reader"]["out"].globalsHash()
+			setNamesHash = script["reader"]["out"].setNamesHash()
+			setHash = script["reader"]["out"].setHash( "test" )
+
+			c.setFrame( 2 )
+			self.assertEqual(
+				script["reader"]["out"].globalsHash(),
+				globalsHash
+			)
+			self.assertEqual(
+				script["reader"]["out"].setNamesHash(),
+				setNamesHash
+			)
+			self.assertEqual(
+				script["reader"]["out"].setHash( "test" ),
+				setHash
+			)
+
+	def testNullAttributes( self ) :
+
+		s = GafferScene.SceneReader()
+		s["fileName"].setValue( "${GAFFER_ROOT}/python/GafferSceneTest/usdFiles/unsupportedAttribute.usda" )
+
+		# At the time of writing, `IECoreUSD` advertises custom attributes via
+		# `USDScene::attributeNames()` even if it can't load them, and then it
+		# returns `nullptr` from `USDScene::readAttribute()`. Make sure we are
+		# robust to this.
+
+		with IECore.CapturingMessageHandler() as mh :
+			attributes = s["out"].attributes( "/sphere" )
+
+		self.assertEqual( len( attributes ), 0 )
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Warning )
+		self.assertEqual( mh.messages[0].message, 'Failed to load attribute "test:double4" at location "/sphere"' )
+
+	def testImplicitUSDDefaultLights( self ) :
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setValue( "${GAFFER_ROOT}/python/GafferSceneTest/usdFiles/sphereLight.usda" )
+
+		self.assertIn( "defaultLights", reader["out"].setNames() )
+		self.assertEqual( reader["out"].set( "defaultLights" ).value, IECore.PathMatcher( [ "/SpotLight23" ] ) )
+
+	def testExplicitUSDDefaultLights( self ) :
+
+		light1 = GafferSceneTest.TestLight()
+		light1["name"].setValue( "light1" )
+		light1.loadShader( "SphereLight" ) # USDScene requires valid USD light type
+		light1["parameters"]["intensity"] = Gaffer.FloatPlug( defaultValue = 1 ) # USD expects float, not colour
+		light1["defaultLight"].setValue( False )
+
+		light2 = GafferSceneTest.TestLight()
+		light2.loadShader( "SphereLight" )
+		light2["parameters"]["intensity"] = Gaffer.FloatPlug( defaultValue = 1 )
+		light2["name"].setValue( "light2" )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( light1["out"] )
+		group["in"][1].setInput( light2["out"] )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( group["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.usda" )
+		writer["task"].execute()
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setInput( writer["fileName"] )
+
+		self.assertIn( "defaultLights", reader["out"].setNames() )
+		self.assertEqual( reader["out"].set( "defaultLights" ).value, IECore.PathMatcher( [ "/group/light2" ] ) )
+
+	def testReadSets( self ) :
+
+		plane = GafferScene.Plane()
+		plane["sets"].setValue( "A B C" )
+
+		sphere = GafferScene.Sphere()
+		sphere["sets"].setValue( "B C D" )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( plane["out"] )
+		group["in"][1].setInput( sphere["out"] )
+
+		writer = GafferScene.SceneWriter()
+		writer["in"].setInput( group["out"] )
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setInput( writer["fileName"] )
+
+		for extension in IECoreScene.SceneInterface.supportedExtensions() :
+
+			if extension in { "abc", "usdz", "vdb" } :
+				# - `IECoreAlembic::AlembicScene::writeSet()` hasn't been implemented properly for
+				#   the root item yet.
+				# - `IECoreUSD::USDScene` can read `usdz`, but not write it.
+				# - `IECoreVDB::VDBScene` hasn't implemented sets or tags at all.
+				continue
+
+			writer["fileName"].setValue( self.temporaryDirectory() / f"test.{extension}" )
+			writer["task"].execute()
+
+			for setName in writer["in"].setNames() :
+				self.assertIn( setName, reader["out"].setNames() )
+				self.assertEqual( reader["out"].set( setName ), writer["in"].set( setName ) )
+
+	def __createInstancedComposition( self, numInstances, numInstanceChildren ) :
+
+		instanceFileName = self.temporaryDirectory() / "instance.usd"
+		stage = pxr.Usd.Stage.CreateNew( str( instanceFileName ) )
+		pxr.UsdGeom.Xform.Define( stage, "/root/group" )
+		for i in range( 0, numInstanceChildren ) :
+			pxr.UsdGeom.Sphere.Define( stage, f"/root/group/sphere{i}" )
+		stage.GetRootLayer().Save()
+		del stage
+
+		compositionFileName = self.temporaryDirectory() / "composition.usd"
+		stage = pxr.Usd.Stage.CreateNew( str( compositionFileName ) )
+		for i in range( 0, numInstances ) :
+			instance = stage.DefinePrim( f"/instance{i}" )
+			instance.GetReferences().AddReference( str( instanceFileName ), "/root" )
+			instance.SetInstanceable( True )
+		stage.GetRootLayer().Save()
+
+		return compositionFileName
+
+	def testUSDInstanceBoundsHash( self ) :
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setValue( self.__createInstancedComposition( 2, 10 ) )
+
+		# We want the hash for the bounds to be shared between instances, so
+		# that we can avoid repeated redundant computations.
+		self.assertEqual(
+			sceneReader["out"].boundHash( "/instance0/group" ),
+			sceneReader["out"].boundHash( "/instance1/group" )
+		)
+
+	@GafferTest.TestRunner.PerformanceTestMethod( repeat = 1 )
+	def testUSDInstanceBoundsPerformance( self ) :
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setValue( self.__createInstancedComposition( 1000, 100 ) )
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			sceneReader["out"].bound( "/" )
+
+	@GafferTest.TestRunner.PerformanceTestMethod( repeat = 1 )
+	def testUSDEmptySetsPerformance( self ) :
+
+		# This creates a node graph where the SceneReader will be asked to load
+		# sets that it doesn't provide, because it is connected in to a Group
+		# where other inputs _are_ providing sets. If we're not smart about it,
+		# this can cause us to recurse the entire USD stage trying to load a set
+		# that isn't even in `SceneReader.out.setNames`.
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setValue( self.__createInstancedComposition( 1000, 100 ) )
+
+		cube = GafferScene.Cube()
+		cube["sets"].setValue( "setA setB setC setD setE setF" )
+
+		light = GafferSceneTest.TestLight()
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sceneReader["out"] )
+		group["in"][1].setInput( cube["out"] )
+		group["in"][2].setInput( light["out"] )
+
+		self.assertTrue(
+			{ "setA", "setB", "setC", "defaultLights" }.issubset(
+				{ str( n ) for n in group["out"].setNames() }
+			)
+		)
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			for name in group["out"].setNames() :
+				group["out"].set( name )
+
+	def testUSDTimeCodeAccuracy( self ) :
+
+		# Write a sample on all integer frames up to 100000.
+
+		fileName = self.temporaryDirectory() / "test.usda"
+		stage = pxr.Usd.Stage.CreateNew( str( fileName ) )
+		stage.SetTimeCodesPerSecond( 24 )
+		stage.SetFramesPerSecond( 24 )
+
+		sphere = pxr.UsdGeom.Sphere.Define( stage, "/sphere" )
+		visibility = sphere.CreateVisibilityAttr()
+
+		frames = range( 0, 100000 )
+		for frame in frames :
+			visibility.Set( "inherited" if frame % 2 else "invisible", frame )
+
+		stage.GetRootLayer().Save()
+
+		# Check that we can read every sample accurately. Any inaccuracy
+		# mapping from Gaffer's frame to USD timecode will put us on the wrong
+		# sample. We are deliberately testing with a non-interpolable type so
+		# that interpolation won't mask the problem by being _almost_ right.
+
+		sceneReader = GafferScene.SceneReader()
+		sceneReader["fileName"].setValue( fileName )
+
+		with Gaffer.Context() as c :
+			for frame in frames :
+				c.setFrame( frame )
+				self.assertEqual(
+					sceneReader["out"].attributes( "/sphere" )["scene:visible"].value,
+					True if frame % 2 else False
+				)
+
+	def testContextSanitisation( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["reader"] = GafferScene.SceneReader()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			parent["reader"]["fileName"] = "${GAFFER_ROOT}/python/GafferSceneTest/usdFiles/sphereLight.usda"
+			parent["reader"]["tags"] = ""
+			parent["reader"]["refreshCount"] = 0
+			"""
+		) )
+
+		with Gaffer.ContextMonitor( script["expression"] ) as contextMonitor :
+
+			GafferSceneTest.traverseScene( script["reader"]["out"] )
+
+			self.assertNotIn( "scene:path", contextMonitor.combinedStatistics().variableNames() )
+			self.assertNotIn( "scene:setName", contextMonitor.combinedStatistics().variableNames() )
+
+			self.assertIn( "defaultLights", script["reader"]["out"].setNames() )
+
+			self.assertNotIn( "scene:path", contextMonitor.combinedStatistics().variableNames() )
+			self.assertNotIn( "scene:setName", contextMonitor.combinedStatistics().variableNames() )
+
+			script["reader"]["out"].set( "defaultLights" )
+			script["reader"]["out"].globals()
+
+			self.assertNotIn( "scene:path", contextMonitor.combinedStatistics().variableNames() )
+			self.assertNotIn( "scene:setName", contextMonitor.combinedStatistics().variableNames() )
+
+	def testEmptyUSDVolumeField( self ) :
+
+		reader = GafferScene.SceneReader()
+		reader["fileName"].setValue( pathlib.Path( __file__ ).parent / "usdFiles" / "volumeWithEmptyField.usda" )
+
+		self.assertEqual( reader["out"].childNames( "/" ), IECore.InternedStringVectorData( [ "volume" ] ) )
+
+		with IECore.CapturingMessageHandler() as mh :
+			self.assertEqual( reader["out"].object( "/volume" ), IECore.NullObject() )
+
+		self.assertEqual( len( mh.messages ), 1 )
+		self.assertEqual( mh.messages[0].message, 'No file found for "/volume"' )
 
 if __name__ == "__main__":
 	unittest.main()

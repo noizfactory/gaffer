@@ -39,16 +39,16 @@
 
 #include "GafferCortex/CompoundParameterHandler.h"
 
-#include "Gaffer/BlockedConnection.h"
 #include "Gaffer/NumericPlug.h"
 #include "Gaffer/StringPlug.h"
 
 #include "IECore/MessageHandler.h"
 #include "IECore/ParameterisedInterface.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
 
+using namespace boost::placeholders;
 using namespace GafferCortex;
 
 template<typename BaseType>
@@ -73,7 +73,7 @@ ParameterisedHolder<BaseType>::~ParameterisedHolder()
 template<typename BaseType>
 void ParameterisedHolder<BaseType>::setParameterised( IECore::RunTimeTypedPtr parameterised, bool keepExistingValues )
 {
-	Gaffer::BlockedConnection connectionBlocker( m_plugSetConnection );
+	Gaffer::Signals::BlockedConnection connectionBlocker( m_plugSetConnection );
 
 	IECore::ParameterisedInterface *interface = dynamic_cast<IECore::ParameterisedInterface *>( parameterised.get() );
 	if( !interface )
@@ -202,7 +202,7 @@ void ParameterisedHolder<BaseType>::plugSet( Gaffer::Plug *plug )
 
 	if( parameterHandler )
 	{
-		Gaffer::BlockedConnection connectionBlocker( m_plugSetConnection );
+		Gaffer::Signals::BlockedConnection connectionBlocker( m_plugSetConnection );
 		parameterChanged( parameterProvider, parameterHandler->parameter() );
 	}
 }
@@ -231,7 +231,7 @@ ParameterisedHolder<BaseType>::ParameterModificationContext::~ParameterModificat
 		std::string error;
 		try
 		{
-			Gaffer::BlockedConnection connectionBlocker( m_parameterisedHolder->m_plugSetConnection );
+			Gaffer::Signals::BlockedConnection connectionBlocker( m_parameterisedHolder->m_plugSetConnection );
 			m_parameterisedHolder->m_parameterHandler->setupPlug( m_parameterisedHolder.get() );
 			m_parameterisedHolder->m_parameterHandler->setPlugValue();
 		}

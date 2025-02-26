@@ -13,13 +13,13 @@ When lighting a scene, you will sometimes need to selectively control whether a 
 
 ## Mechanics of light linking ##
 
-From the light side of things, by default, each light is a member of a set named **"defaultLights"**, and will cast light on every object in the scene. Each light's node has a _Default Light_ plug, which is checked by default. If unchecked, the light is removed from "defaultLights", and, from then on, will only illuminate objects that are expressly linked to it.
+From the light side of things, by default, each light is a member of a set named **"defaultLights"**, and will cast light on every object in the scene. Each light's node has a Default Light plug, which is checked by default. If unchecked, the light is removed from "defaultLights", and, from then on, will only illuminate objects that are expressly linked to it.
 
 ![](images/interfaceDefaultLightPlug.png "The Default Light plug of a light")
 
 From the object side of things, by default, an object is lit by all lights belonging to the "defaultLights" set. To bring about any other behaviour, such as having the object only lit by one light, a `linkedLights` attribute must be added to the object's location in the hierarchy, and the attribute must specify one or more lights, or sets of lights. The `linkedLights` attribute follows standard [inheritance rules for attributes](../../../AnatomyOfAScene/index.html#attributes) in the hierarchy, so if the object doesn't have the `linkedLights` attribute, but one of its ancestors does, it will inherit the attribute.
 
-```eval_rst
+```{eval-rst}
 .. figure:: images/interfaceLinkedLightsAttribute.png
     :scale: 100%
     :alt: The linkedLights attribute of an object as it appears in the Scene Inspector.
@@ -30,17 +30,17 @@ From the object side of things, by default, an object is lit by all lights belon
 
 ## Instructions ##
 
-In a graph, in order to actually link a light to an object, you must connect a StandardAttributes node downstream of the object, filter for the object's location, and then add a set expression to the _Linked Lights_ plug.
+In a graph, in order to actually link a light to an object, you must connect a StandardAttributes node downstream of the object, filter for the object's location, and then add a set expression to the Linked Lights plug.
 
 ![](images/interfaceLightLinkSetupGraphEditor.png "A StandardAttributes node downstream of an object node")
 
 ![](images/interfaceLinkedLightsPlug.png "The Linked Lights plug of an object")
 
-Once the _Linked Lights_ plug is toggled on, the `linkedLights` attribute is added to the object's location. The value of the _Linked Lights_ plug is a [set expression](../../Reference/ScriptingReference/SetExpressions/index.md), which can consist of individual light locations, set names, or both. We will cover how to filter for both types below.
+Once the Linked Lights plug is toggled on, the `linkedLights` attribute is added to the object's location. The value of the Linked Lights plug is a [set expression](../../Reference/ScriptingReference/SetExpressions/index.md), which can consist of individual light locations, set names, or both. We will cover how to filter for both types below.
 
 > Important :
-> The _Linked Lights_ plug is an exclusive list. If you toggle the plug and leave the list blank, the object will not be illuminated by any lights **at all**. 
-> In order to link a particular light **in addition to** all default lights to an object, you must include `defaultLights` in the set expression, for example `"defaultLights /group/light"`.
+> The Linked Lights plug is an exclusive list. If you toggle the plug and leave the list blank, the object will not be illuminated by any lights **at all**.
+> In order to link a particular light **in addition to** all default lights to an object, you must include `defaultLights` in the set expression, for example `defaultLights /group/light`.
 
 
 ### Linking by location ###
@@ -57,7 +57,7 @@ To link a light by location, simply add the light's full location to the set exp
 
 In setups with more than a few lights, managing a set expression with multiple light locations is prone to user error, and tedious to maintain. That's why it's usually better to link objects to one or more sets containing lights, as the term _set expression_ suggests. Put another way, you can perform **set**-centric light linking. The end result would still be the same, in that specific objects are linked to specific lights.
 
-A light can be added to any number of custom sets using the _Sets_ plug on the light's node, or a separate Set node. Custom sets are separate and do not affect the "defaultLights" set.
+A light can be added to any number of custom sets using the Sets plug on the light's node, or a separate Set node. Custom sets are separate and do not affect the "defaultLights" set.
 
 ![](images/interfaceLightSetGraphEditor.png "A Set node downstream of a light node in the Graph Editor")
 
@@ -93,30 +93,22 @@ Let's consider a possible light link setup for this scene, with the goal of achi
 
 ### Lights ###
 
-```eval_rst
-=============================== =============================== ===============================
-Location                        `Default Light` plug value      Special light sets
-=============================== =============================== ===============================
-/lights/sky                     :code:`True`
-/lights/moon                    :code:`True`
-/lights/eyes                    :code:`False`                   "lights:eyes"
-/lights/logo                    :code:`False`                   "lights:logo"
-=============================== =============================== ===============================
-```
+Location     | Default Light plug value  | Special light sets
+-------------|---------------------------|-------------------
+/lights/sky  | `True`                    |
+/lights/moon | `True`                    |
+/lights/eyes | `False`                   | "lights:eyes"
+/lights/logo | `False`                   | "lights:logo"
 
 
 ### Objects ###
 
-```eval_rst
-============================================================== ===============================
-Location                                                       `Linked Lights` expression
-============================================================== ===============================
-/assets/...                                                    –
-/assets/GAFFERBOT/[etc]/L_eyeLens001_REN                       :code:`defaultLights lights:eyes`
-/assets/GAFFERBOT/[etc]/R_eyeLens001_REN                       :code:`defaultLights lights:eyes`
-/assets/GAFFERBOT/[etc]/C_torso009_REN                         :code:`defaultLights lights:logo`
-============================================================== ===============================
-```
+Location                                 | `Linked Lights` expression
+-----------------------------------------|---------------------------
+/assets/...                              | -
+/assets/GAFFERBOT/[etc]/L_eyeLens001_REN | `defaultLights lights:eyes`
+/assets/GAFFERBOT/[etc]/R_eyeLens001_REN | `defaultLights lights:eyes`
+/assets/GAFFERBOT/[etc]/C_torso009_REN   | `defaultLights lights:logo`
 
 
 ### Results ###
@@ -125,26 +117,18 @@ The above set expressions link the special lights and sets. The eyes are linked 
 
 ![](images/exampleGaffyAttacksResults.png "The resulting render of the example scenario with the correct light links")
 
-```eval_rst
-=============================== ==============================================================
-Set name                        Set members
-=============================== ==============================================================
-"defaultLights"                 /lights/sky /lights/moon
-"lights:eyes"                   /lights/eyes
-"lights:logo"                   /lights/logo
-=============================== ==============================================================
-```
+Set name        | Set members
+----------------|------------
+"defaultLights" | /lights/sky /lights/moon
+"lights:eyes"   | /lights/eyes
+"lights:logo"   | /lights/logo
 
-```eval_rst
-============================================================== ===============================
-Object                                                         Linked lights
-============================================================== ===============================
-/assets/...                                                    –
-/assets/GAFFERBOT/[etc]/L_eyeLens001_REN                       /lights/sky /lights/moon /lights/eyes
-/assets/GAFFERBOT/[etc]/R_eyeLens001_REN                       /lights/sky /lights/moon /lights/eye
-/assets/GAFFERBOT/[etc]/C_torso009_REN                         /lights/sky /lights/moon /lights/logo
-============================================================== ===============================
-```
+Object                                   |Linked lights
+-----------------------------------------|---------------
+/assets/...                              | –
+/assets/GAFFERBOT/[etc]/L_eyeLens001_REN | /lights/sky /lights/moon /lights/eyes
+/assets/GAFFERBOT/[etc]/R_eyeLens001_REN | /lights/sky /lights/moon /lights/eye
+/assets/GAFFERBOT/[etc]/C_torso009_REN   | /lights/sky /lights/moon /lights/logo
 
 
 ## Example graphs ##

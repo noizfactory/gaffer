@@ -1,7 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2011-2012, John Haddon. All rights reserved.
-//  Copyright (c) 2011-2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2023, Cinesite VFX Ltd. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -35,91 +34,16 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-/// This file contains the implementation of TypedPlug. Rather than include it
-/// in a public header it is #included in TypedPlug.cpp,
-/// and the relevant template classes are explicitly instantiated there. This prevents
-/// a host of problems to do with the definition of the same symbols in multiple object
-/// files.
+#pragma once
 
 namespace Gaffer
 {
 
-template<class T>
-const IECore::RunTimeTyped::TypeDescription<TypedPlug<T> > TypedPlug<T>::g_typeDescription;
-
-template<class T>
-TypedPlug<T>::TypedPlug(
-	const std::string &name,
-	Direction direction,
-	const T &defaultValue,
-	unsigned flags
-)
-	:	ValuePlug( name, direction, new DataType( defaultValue ), flags )
+template<typename T>
+inline T TypedPlug<T>::getValue( const IECore::MurmurHash *precomputedHash ) const
 {
-}
-
-template<class T>
-TypedPlug<T>::~TypedPlug()
-{
-}
-
-template<class T>
-bool TypedPlug<T>::acceptsInput( const Plug *input ) const
-{
-	if( !ValuePlug::acceptsInput( input ) )
-	{
-		return false;
-	}
-	if( input )
-	{
-		return input->isInstanceOf( staticTypeId() );
-	}
-	return true;
-}
-
-template<class T>
-PlugPtr TypedPlug<T>::createCounterpart( const std::string &name, Direction direction ) const
-{
-	return new TypedPlug<T>( name, direction, defaultValue(), getFlags() );
-}
-
-template<class T>
-const T &TypedPlug<T>::defaultValue() const
-{
-	return static_cast<const DataType *>( defaultObjectValue() )->readable();
-}
-
-template<class T>
-void TypedPlug<T>::setValue( const T &value )
-{
-	setObjectValue( new DataType( value ) );
-}
-
-template<class T>
-T TypedPlug<T>::getValue( const IECore::MurmurHash *precomputedHash ) const
-{
-	IECore::ConstObjectPtr o = getObjectValue( precomputedHash );
-	return static_cast<const DataType *>( o.get() )->readable();
-}
-
-template<class T>
-void TypedPlug<T>::setFrom( const ValuePlug *other )
-{
-	const TypedPlug<T> *tOther = IECore::runTimeCast<const TypedPlug<T> >( other );
-	if( tOther )
-	{
-		setValue( tOther->getValue() );
-	}
-	else
-	{
-		throw IECore::Exception( "Unsupported plug type" );
-	}
-}
-
-template<class T>
-IECore::MurmurHash TypedPlug<T>::hash() const
-{
-	return ValuePlug::hash();
+	IECore::ConstObjectPtr owner;
+	return getObjectValue<DataType>( owner, precomputedHash )->readable();
 }
 
 } // namespace Gaffer

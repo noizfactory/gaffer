@@ -35,7 +35,10 @@
 #
 ##########################################################################
 
+import enum
 import math
+import re
+import operator
 
 import IECore
 
@@ -47,7 +50,7 @@ from Qt import QtGui
 ## \todo Fix bug when pressing up arrow with cursor to left of minus sign
 class NumericWidget( GafferUI.TextWidget ) :
 
-	ValueChangedReason = IECore.Enum.create( "Invalid", "SetValue", "DragBegin", "DragMove", "DragEnd", "Increment", "Edit" )
+	ValueChangedReason = enum.Enum( "ValueChangedReason", [ "Invalid", "SetValue", "DragBegin", "DragMove", "DragEnd", "Increment", "Edit", "InvalidEdit" ] )
 
 	def __init__( self, value, **kw ) :
 
@@ -56,16 +59,21 @@ class NumericWidget( GafferUI.TextWidget ) :
 		self.__dragValue = None
 		self.__dragStart = None
 
-		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
-		self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ), scoped = False )
-		self.dragBeginSignal().connect( Gaffer.WeakMethod( self.__dragBegin ), scoped = False )
-		self.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ), scoped = False )
-		self.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ), scoped = False )
-		self.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ), scoped = False )
-		self.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__editingFinished ), scoped = False )
+		self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
+		self.wheelSignal().connect( Gaffer.WeakMethod( self.__wheel ) )
+		self.buttonPressSignal().connect( Gaffer.WeakMethod( self.__buttonPress ) )
+		self.dragBeginSignal().connect( Gaffer.WeakMethod( self.__dragBegin ) )
+		self.dragEnterSignal().connect( Gaffer.WeakMethod( self.__dragEnter ) )
+		self.dragMoveSignal().connect( Gaffer.WeakMethod( self.__dragMove ) )
+		self.dragEndSignal().connect( Gaffer.WeakMethod( self.__dragEnd ) )
+		self.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__editingFinished ) )
+
+		self.setPreferredCharacterWidth( 10 )
 
 		self.__numericType = None
 		self.setValue( value )
+
+		self.__scrollWheelRotation = 0
 
 	def setValue( self, value ) :
 
@@ -73,7 +81,10 @@ class NumericWidget( GafferUI.TextWidget ) :
 
 	def getValue( self ) :
 
-		return self.__numericType( self.getText() )
+		# Call `fixup()` so that we can always return a valid value,
+		# even if the user is part way through entering an expression.
+		value = self._qtWidget().validator().fixup( self.getText() )
+		return self.__numericType( value )
 
 	## A signal emitted whenever the value has been changed and the user would expect
 	# to see that change reflected in whatever the field controls. Slots should have
@@ -83,7 +94,7 @@ class NumericWidget( GafferUI.TextWidget ) :
 		try :
 			return self.__valueChangedSignal
 		except AttributeError :
-			self.__valueChangedSignal = Gaffer.Signal2()
+			self.__valueChangedSignal = Gaffer.Signals.Signal2()
 
 		return self.__valueChangedSignal
 
@@ -133,9 +144,26 @@ class NumericWidget( GafferUI.TextWidget ) :
 
 		return False
 
+	def __wheel( self, widget, event ) :
+
+		assert( widget is self )
+
+		if not self.getEditable() or not self._qtWidget().hasFocus() or event.modifiers != GafferUI.ModifiableEvent.Modifiers.Control :
+			return False
+
+		self.__scrollWheelRotation += event.wheelRotation
+		if abs( self.__scrollWheelRotation ) >= 15.0 :
+			self.__incrementIndex( self.getCursorPosition(), int( math.copysign( 1, self.__scrollWheelRotation ) ) )
+			self.__scrollWheelRotation %= 15.0
+
+		return True
+
 	def __incrementIndex( self, index, increment ) :
 
 		text = self.getText()
+		if text == "" :
+			return
+
 		if '.' in text :
 			decimalIndex = text.find( "." )
 			if decimalIndex >= index :
@@ -195,8 +223,13 @@ class NumericWidget( GafferUI.TextWidget ) :
 		if event.modifiers != GafferUI.ModifiableEvent.Modifiers.Control and event.modifiers != GafferUI.ModifiableEvent.Modifiers.ShiftControl :
 			return False
 
-		self.__dragValue = self.getValue()
-		return True
+		try :
+			self.__dragValue = self.getValue()
+			return True
+		except :
+			# `getValue()` may fail if the field is empty,
+			# in which case we don't have a value to drag.
+			return False
 
 	def __dragBegin( self, widget, event ) :
 
@@ -247,40 +280,39 @@ class NumericWidget( GafferUI.TextWidget ) :
 
 		assert( widget is self )
 
+		reason = self.ValueChangedReason.Edit
+
 		# In __incrementIndex we temporarily pad with leading
 		# zeroes in order to achieve consistent editing. Revert
 		# back to our standard form now so we don't leave it in
 		# this state.
-		self.setText( self.__valueToString( self.getValue() ) )
+		try :
+			self.setText( self.__valueToString( self.getValue() ) )
+		except ValueError as e :
+			reason = self.ValueChangedReason.InvalidEdit
 
-		self.__emitValueChanged( self.ValueChangedReason.Edit )
+		self.__emitValueChanged( reason )
+
+		self.__scrollWheelRotation = 0.0
 
 	def __setValueInternal( self, value, reason ) :
 
 		# update our validator based on the type of the value
 		numericType = type( value )
-		assert( numericType is int or numericType is float )
+		assert( numericType in ( int, float ) )
 		if self.__numericType is not numericType :
 
 			self.__numericType = numericType
-
-			if self.__numericType is int :
-				validator = QtGui.QIntValidator( self._qtWidget() )
-			else :
-				validator = QtGui.QDoubleValidator( self._qtWidget() )
-				validator.setDecimals( 4 )
-				validator.setNotation( QtGui.QDoubleValidator.StandardNotation )
-
-			self._qtWidget().setValidator( validator )
+			self._qtWidget().setValidator( _ExpressionValidator( self._qtWidget(), self.__numericType ) )
 
 		# update our textual value
 		text = self.__valueToString( value )
 		dragBeginOrEnd = reason in ( self.ValueChangedReason.DragBegin, self.ValueChangedReason.DragEnd )
 
-		if text == self.getText() and not dragBeginOrEnd :
-			# early out if the text hasn't changed. we never early out if the reason is
-			# drag start or drag end, as we want to maintain matching pairs so things
-			# make sense to client code.
+		if self.getText() and self.__numericType( text ) == self.getValue() and not dragBeginOrEnd :
+			# early out if the value, after text formatting, hasn't changed. we never
+			# early out if the reason is drag start or drag end, as we want to maintain
+			# matching pairs so things make sense to client code.
 			return
 
 		self.setText( text )
@@ -294,3 +326,94 @@ class NumericWidget( GafferUI.TextWidget ) :
 			return
 
 		signal( self, reason )
+
+# A basic validator/evaluator that supports simple maths
+# operators [+-/*] along with standard number validation, eg:
+#   2 + 3
+#   4.4 / 2
+# Qt will call validate/fixup as part of the edit cycle.
+class _ExpressionValidator( QtGui.QValidator ) :
+
+	def __init__( self, parent, numericType ) :
+
+		QtGui.QValidator.__init__( self, parent )
+
+		self.__numericType = numericType
+		if self.__numericType is int :
+			operand = r"-?[0-9]*"
+		else :
+			operand = r"-?[0-9]*\.?[0-9]{0,4}"
+
+		# Captures `( operand1, operator, operand2 )``, with the latter
+		# two being optional. Note that the regex for the operands is
+		# deliberately loose and accepts incomplete text such as "", "-"
+		# and ".". This is dealt with in `validate()` and `fixup()`.
+		self.__expression = re.compile(
+			r"^\s*({operand})\s*(?:([-+*/%])\s*({operand}))?\s*$".format(
+				operand = operand
+			)
+		)
+
+	def fixup( self, text ) :
+
+		match = re.match( self.__expression, text )
+		try :
+			operand1 = self.__numericType( match.group( 1 ) )
+		except :
+			return text
+
+		try :
+			operand2 = self.__numericType( match.group( 3 ) )
+		except :
+			# Incomplete expression, return first number
+			return match.group( 1 )
+
+		# Evaluate expression
+
+		op = {
+			"/" : operator.floordiv if self.__numericType is int else operator.truediv,
+			"*" : operator.mul,
+			"+" : operator.add,
+			"-" : operator.sub,
+			"%" : operator.mod
+		}[match.group(2)]
+
+		try :
+			return str( op( operand1, operand2 ) )
+		except ZeroDivisionError :
+			return match.group( 1 )
+
+	def validate( self, text, pos ) :
+
+		# Work around https://bugreports.qt.io/browse/PYSIDE-106. Because
+		# that prevents `fixup()` from working, it stops Qt automatically
+		# fixing `Intermediate` input when editing finishes, which in turn stops
+		# `QLineEdit.editingFinished` from being emitted. We return `Acceptable`
+		# instead of `Intermediate` and then apply `fixup()` ourselves via
+		# `__editingFinished()` and `getValue()`.
+		## \todo Remove once we've moved to GafferHQ/dependencies 2.0.0, which
+		# contains the relevant PySide fix. Include a grace period for folks
+		# building with their own older dependencies.
+		Intermediate = QtGui.QValidator.Acceptable
+
+		match = re.match( self.__expression, text )
+		if match is None :
+			return QtGui.QValidator.Invalid, text, pos
+
+		# Check first operand
+		try :
+			self.__numericType( match.group( 1 ) )
+		except :
+			return (
+				Intermediate if not match.group( 2 ) else QtGui.QValidator.Invalid,
+				text, pos
+			)
+
+		# If operator is present, check second operand
+		if match.group( 2 ) :
+			try :
+				self.__numericType( match.group( 3 ) )
+			except :
+				return Intermediate, text, pos
+
+		return QtGui.QValidator.Acceptable, text, pos

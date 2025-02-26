@@ -34,7 +34,9 @@
 #
 ##########################################################################
 
-import os, sys, traceback
+import sys
+import traceback
+import pathlib
 
 import IECore
 
@@ -129,7 +131,7 @@ class dispatch( Gaffer.Application ) :
 
 				IECore.StringVectorParameter(
 					name = "settings",
-					description = "The values to be set on the nodes, dispatcher, or context. Values "
+					description = "The values to be set on the nodes, dispatcher, or Context. Values "
 						"should be in the format -nodeA.plugA value -nodeA.plugB value -nodeB.plugC value "
 						"-dispatcher.plugD value -LocalDispatcher.plugE value -context.entry value",
 					defaultValue = IECore.StringVectorData( [] ),
@@ -153,7 +155,7 @@ class dispatch( Gaffer.Application ) :
 		script = Gaffer.ScriptNode()
 
 		if args["script"].value :
-			script["fileName"].setValue( os.path.abspath( args["script"].value ) )
+			script["fileName"].setValue( pathlib.Path( args["script"].value ).absolute() )
 			try :
 				script.load( continueOnError = args["ignoreScriptLoadErrors"].value )
 			except Exception as exception :
@@ -184,7 +186,10 @@ class dispatch( Gaffer.Application ) :
 			return 1
 
 		if args["gui"].value and len(args["alternateDispatchers"]) :
-			dispatchers.extend( GafferDispatch.Dispatcher.createMatching( " ".join( args["alternateDispatchers"] ) ) )
+			pattern = " ".join( args[ "alternateDispatchers" ] )
+			for name in GafferDispatch.Dispatcher.registeredDispatchers() :
+				if name != dispatcherType and IECore.StringAlgo.matchMultiple( name, pattern ) :
+					dispatchers.append( GafferDispatch.Dispatcher.create( name ) )
 
 		dispatcherNames = {}
 		for dispatcher in dispatchers :
@@ -219,7 +224,7 @@ class dispatch( Gaffer.Application ) :
 			import GafferDispatchUI
 
 			self.__dialogue = GafferDispatchUI.DispatchDialogue( tasks, dispatchers, nodesToShow )
-			self.__dialogueClosedConnection = self.__dialogue.closedSignal().connect( Gaffer.WeakMethod( self.__dialogueClosed ) )
+			self.__dialogueClosedConnection = self.__dialogue.closedSignal().connect( Gaffer.WeakMethod( self.__dialogueClosed ), scoped = True )
 			self.__dialogue.setVisible( True )
 
 			GafferUI.EventLoop.mainEventLoop().start()
@@ -292,6 +297,17 @@ class dispatch( Gaffer.Application ) :
 		if not plug.settable() :
 			IECore.msg( IECore.Msg.Level.Error, "gaffer dispatch", "\"%s\" cannot be set." % identifier )
 			return 1
+
+		if isinstance( plug, Gaffer.CompoundDataPlug ) :
+			try :
+				## \todo: this eval isn't ideal. we should have a way of parsing values
+				# and setting them onto plugs.
+				plug.addMembers( eval( value ) )
+			except Exception as exception :
+				IECore.msg( IECore.Msg.Level.Error, "gaffer dispatch : setting \"%s\"" % identifier, str( exception ) )
+				return 1
+
+			return 0
 
 		try :
 			## \todo: this eval isn't ideal. we should have a way of parsing values

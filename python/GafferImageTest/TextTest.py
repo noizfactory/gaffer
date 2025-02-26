@@ -109,9 +109,39 @@ class TextTest( GafferImageTest.ImageTestCase ) :
 		text["transform"]["rotate"].setValue( 90 )
 
 		reader = GafferImage.ImageReader()
-		reader["fileName"].setValue( os.path.dirname( __file__ ) + "/images/text.exr" )
+		reader["fileName"].setValue( self.imagesPath() / "text.exr" )
 
 		self.assertImagesEqual( text["out"], reader["out"], ignoreMetadata = True, maxDifference = 0.001 )
+
+	def testArea( self ) :
+
+		text = GafferImage.Text()
+		text["text"].setValue( "a a a a a a a a" )
+		text["size"].setValue( imath.V2i( 20 ) )
+		text["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 100 ) ) )
+
+		self.assertEqual( text["out"].dataWindow(), imath.Box2i( imath.V2i( 1, 58 ), imath.V2i( 83, 92 ) ) )
+
+		text["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 200 ) ) )
+		self.assertEqual( text["out"].dataWindow(), imath.Box2i( imath.V2i( 1, 181 ), imath.V2i( 137, 192 ) ) )
+
+		text["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 5, 200 ) ) )
+		self.assertEqual( text["out"].dataWindow(), imath.Box2i( imath.V2i( 1, 20 ), imath.V2i( 11, 192 ) ) )
+
+		text["text"].setValue( "longWord\nlongWord\nlongWord" )
+		text["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 100 ) ) )
+
+		self.assertEqual( text["out"].dataWindow(), imath.Box2i( imath.V2i( 1, 31 ), imath.V2i( 95, 96 ) ) )
+
+		# If the text box is too short horizontally to fit a single word in, this doesn't affect anything,
+		# since we don't wrap individual words ( this test ensures that we don't add vertical space in
+		# this case, which wouldn't help fit the text in
+		shortText = GafferImage.Text()
+		shortText["text"].setValue( "longWord\nlongWord\nlongWord" )
+		shortText["size"].setValue( imath.V2i( 20 ) )
+		shortText["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 5, 100 ) ) )
+		shortText["text"].setValue( "longWord\nlongWord\nlongWord" )
+		self.assertImagesEqual( text["out"], shortText["out"], ignoreMetadata = True, maxDifference = 0.001 )
 
 	def testHorizontalAlignment( self ) :
 
@@ -154,6 +184,36 @@ class TextTest( GafferImageTest.ImageTestCase ) :
 		# and then must be rounded to pixel space to make the enclosing data window.
 		self.assertAlmostEqual( bottomDW.size().y, centerDW.size().y, delta = 1 )
 		self.assertAlmostEqual( centerDW.size().y, topDW.size().y, delta = 1 )
+
+	def testNonFlatThrows( self ) :
+
+		text = GafferImage.Text()
+		text["size"].setValue( imath.V2i( 20 ) )
+		text["area"].setValue( imath.Box2i( imath.V2i( 5 ), imath.V2i( 95 ) ) )
+
+		self.assertRaisesDeepNotSupported( text )
+
+	def testImagePlugs( self ) :
+
+		constant = GafferImage.Constant()
+		constant["format"].setValue( GafferImage.Format( imath.Box2i( imath.V2i( 0 ), imath.V2i( 512 ) ), 1 ) )
+		constant["color"].setValue( imath.Color4f( 0 ) )
+
+		text = GafferImage.Text()
+		text["in"].setInput( constant["out"] )
+
+		text["out"]["format"].getValue()
+		text["out"]["dataWindow"].getValue()
+		text["out"]["metadata"].getValue()
+		text["out"]["channelNames"].getValue()
+		self.assertFalse( text["out"]["deep"].getValue() )
+
+		c = Gaffer.Context( Gaffer.Context.current() )
+		c["image:channelName"] = "R"
+		c["image:tileOrigin"] = imath.V2i( 0 )
+
+		with c :
+			text["out"]["channelData"].getValue()
 
 	def testUnparenting( self ) :
 
@@ -204,6 +264,12 @@ class TextTest( GafferImageTest.ImageTestCase ) :
 		shadowTile = t["out"].channelData( "R", GafferImage.ImagePlug.tileOrigin( dataWindow.min() ) )
 
 		self.assertNotEqual( shadowTile, tile )
+
+	def testNoSerialisationOfInternalConnections( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["text"] = GafferImage.Text()
+		self.assertNotIn( "setInput", script.serialise() )
 
 if __name__ == "__main__":
 	unittest.main()

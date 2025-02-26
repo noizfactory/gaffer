@@ -35,10 +35,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_IMAGEPROCESSOR_H
-#define GAFFERIMAGE_IMAGEPROCESSOR_H
+#pragma once
 
 #include "GafferImage/ImageNode.h"
+
+#include <limits>
 
 namespace Gaffer
 {
@@ -59,15 +60,15 @@ class GAFFERIMAGE_API ImageProcessor : public ImageNode
 
 		/// Constructs with a single input ImagePlug named "in". Use inPlug()
 		/// to access this plug.
-		ImageProcessor( const std::string &name=defaultName<ImageProcessor>() );
+		explicit ImageProcessor( const std::string &name=defaultName<ImageProcessor>() );
 
 		/// Constructs with an ArrayPlug called "in". Use inPlug() as a
 		/// convenience for accessing the first child in the array, and use
 		/// inPlugs() to access the array itself.
-		ImageProcessor( const std::string &name, size_t minInputs, size_t maxInputs = Imath::limits<size_t>::max() );
+		ImageProcessor( const std::string &name, size_t minInputs, size_t maxInputs = std::numeric_limits<size_t>::max() );
 		~ImageProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ImageProcessor, ImageProcessorTypeId, ImageNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ImageProcessor, ImageProcessorTypeId, ImageNode );
 
 		/// Returns the primary image input. For nodes with multiple inputs
 		/// this will be the first child of the inPlugs() array. For nodes
@@ -100,5 +101,3 @@ class GAFFERIMAGE_API ImageProcessor : public ImageNode
 IE_CORE_DECLAREPTR( ImageProcessor )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_IMAGEPROCESSOR_H

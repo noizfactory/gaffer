@@ -49,13 +49,16 @@
 #include "Gaffer/StandardSet.h"
 #include "Gaffer/UndoScope.h"
 
-#include "OpenEXR/ImathBoxAlgo.h"
-#include "OpenEXR/ImathFun.h"
+#include "Imath/ImathBoxAlgo.h"
+#include "Imath/ImathFun.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/bind/placeholders.hpp"
 
+#include "fmt/format.h"
+
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace Gaffer;
 using namespace GafferUI;
@@ -78,7 +81,9 @@ StandardConnectionGadget::StandardConnectionGadget( GafferUI::NodulePtr srcNodul
 	dragMoveSignal().connect( boost::bind( &StandardConnectionGadget::dragMove, this, ::_2 ) );
 	dragEndSignal().connect( boost::bind( &StandardConnectionGadget::dragEnd, this, ::_2 ) );
 
-	Metadata::plugValueChangedSignal().connect( boost::bind( &StandardConnectionGadget::plugMetadataChanged, this, ::_1, ::_2, ::_3, ::_4 ) );
+	Metadata::plugValueChangedSignal( dstNodule->plug()->node() ).connect(
+		boost::bind( &StandardConnectionGadget::plugMetadataChanged, this, ::_1, ::_2 )
+	);
 
 	updateUserColor();
 }
@@ -91,6 +96,19 @@ void StandardConnectionGadget::setNodules( GafferUI::NodulePtr srcNodule, Gaffer
 {
 	ConnectionGadget::setNodules( srcNodule, dstNodule );
 	updateConnectionGeometry();
+
+	if( dstNodule->plug() != this->dstNodule()->plug() )
+	{
+		// Our metadata handling is only set up for our original destination
+		// nodule. The only apparent purpose of `setNodules()` seems to be to allow
+		// GraphGadget to respecify the _source_ nodule when it has been hidden
+		// or re-shown, so this is probably OK. Warn if this assumption
+		// proves false.
+		IECore::msg(
+			IECore::Msg::Warning, "StandardConnectionGadget::setNodules",
+			"Unexpected change of destination nodule"
+		);
+	}
 }
 
 const NodeGadget *StandardConnectionGadget::srcNodeGadget() const
@@ -263,7 +281,7 @@ void StandardConnectionGadget::updateDragEndPoint( const Imath::V3f position, co
 	{
 		throw IECore::Exception( "Not dragging" );
 	}
- 	requestRender();
+	dirty( DirtyType::Bound );
 }
 
 void StandardConnectionGadget::createConnection( Gaffer::Plug *endpoint )
@@ -299,7 +317,7 @@ void StandardConnectionGadget::createConnection( Gaffer::Plug *endpoint )
 	}
 }
 
-void StandardConnectionGadget::doRenderLayer( Layer layer, const Style *style ) const
+void StandardConnectionGadget::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
 	// Connections get rendered below NodeGadgets but over BackdropGadgets
 	if( layer != GraphLayer::Connections )
@@ -308,7 +326,7 @@ void StandardConnectionGadget::doRenderLayer( Layer layer, const Style *style ) 
 	}
 
 	const_cast<StandardConnectionGadget *>( this )->updateConnectionGeometry();
-	const Style::State state = highlighted() ? Style::HighlightedState : Style::NormalState;
+	const Style::State state = highlighted() ? Style::HighlightedState : ( m_active ? Style::NormalState : Style::DisabledState );
 
 	V3f minimisedSrcPos, minimisedSrcTangent;
 	minimisedPositionAndTangent( state == Style::HighlightedState, minimisedSrcPos, minimisedSrcTangent );
@@ -323,24 +341,44 @@ void StandardConnectionGadget::doRenderLayer( Layer layer, const Style *style ) 
 	}
 	else
 	{
-		style->renderConnection( minimisedSrcPos, minimisedSrcTangent, m_dstPos, m_dstTangent, state, m_userColor.get_ptr() );
+		style->renderConnection(
+			minimisedSrcPos, minimisedSrcTangent, m_dstPos, m_dstTangent,
+			state, m_userColor ? &m_userColor.value() : nullptr
+		);
 	}
 
 	if(m_addingConnection)
 	{
-		style->renderConnection( m_srcPos, m_srcTangent, m_dstPosOrig, m_dstTangentOrig, state, m_userColor.get_ptr() );
+		style->renderConnection(
+			m_srcPos, m_srcTangent, m_dstPosOrig, m_dstTangentOrig,
+			state, m_userColor ? &m_userColor.value() : nullptr
+		);
 	}
 
 	if( m_dotPreview )
 	{
 		Imath::Box2f bounds = Imath::Box2f( V2f( m_dotPreviewLocation.x, m_dotPreviewLocation.y ) );
-		style->renderNodeFrame(bounds, 1.0, state, m_userColor.get_ptr()  );
+		style->renderNodeFrame(
+			bounds, 1.0, state,
+			m_userColor ? &m_userColor.value() : nullptr
+		);
 	}
 }
 
-bool StandardConnectionGadget::hasLayer( Layer layer ) const
+unsigned StandardConnectionGadget::layerMask() const
 {
-	return layer == GraphLayer::Connections;
+	return (unsigned)GraphLayer::Connections;
+}
+
+Imath::Box3f StandardConnectionGadget::renderBound() const
+{
+	Box3f r = bound();
+
+	// Extend render bound to account for how the initial curve of the connection can stick out
+	// beyond the source point, plus the thickness of the connection line
+	r.min -= V3f( 2.5 );
+	r.max += V3f( 2.5 );
+	return r;
 }
 
 Imath::V3f StandardConnectionGadget::closestPoint( const Imath::V3f& p ) const
@@ -358,7 +396,7 @@ float StandardConnectionGadget::distanceToNodeGadget( const IECore::LineSegment3
 	const NodeGadget *nodeGadget = nodule ? nodule->ancestor<NodeGadget>() : nullptr;
 	if( !nodeGadget )
 	{
-		return Imath::limits<float>::max();
+		return std::numeric_limits<float>::max();
 	}
 
 	const M44f relativeTransform = fullTransform() * nodeGadget->fullTransform().inverse();
@@ -384,7 +422,7 @@ Gaffer::Plug::Direction StandardConnectionGadget::endAt( const IECore::LineSegme
 	// length of the connection, with some sensible minimum and
 	// maximum limits.
 	const float length = ( m_srcPos - m_dstPos ).length();
-	const float threshold = clamp( length / 4.0f, 2.5f, 25.0f );
+	const float threshold = Imath::clamp( length / 4.0f, 2.5f, 25.0f );
 
 	float dSrc = line.distanceTo( m_srcPos );
 	float dDst = line.distanceTo( m_dstPos );
@@ -442,11 +480,13 @@ bool StandardConnectionGadget::buttonPress( const ButtonEvent &event )
 			dot->inPlug()->setInput( srcNodule()->plug() );
 			dstNodule()->plug()->setInput( dot->outPlug() );
 
+			// Clear the previous selection.  Since we return false, the click will pass through to
+			// the newly created dot, adding it to the selection.
 			script->selection()->clear();
-			script->selection()->add( dot );
 		}
+
 		// If we are showing a preview for a potential Dot to be added, we don't
-		// want the user to move the connection away from under the preview. Users
+		// want the user to start a drag of the connection which is hidden under the preview. Users
 		// should leave preview state before dragging the noodle.
 		return false;
 	}
@@ -522,7 +562,7 @@ bool StandardConnectionGadget::dragEnd( const DragDropEvent &event )
 
 	m_dragEnd = Gaffer::Plug::Invalid;
 	m_addingConnection = false;
-	requestRender();
+	dirty( DirtyType::Render );
 	return true;
 }
 
@@ -579,9 +619,7 @@ std::string StandardConnectionGadget::getToolTip( const IECore::LineSegment3f &l
 	result = srcName + " -> " + dstName;
 	if( numSkippedDots )
 	{
-		result += boost::str(
-			boost::format( " (via %d dot%s)" ) % numSkippedDots % ( numSkippedDots > 1 ? "s" : "" )
-		);
+		result += fmt::format( " (via {} dot{})", numSkippedDots, numSkippedDots > 1 ? "s" : "" );
 	}
 	return result;
 }
@@ -604,7 +642,7 @@ bool StandardConnectionGadget::keyPressed( const KeyEvent &event )
 	if( event.modifiers & ButtonEvent::Control && srcNodule() )
 	{
 		m_dotPreview = true;
-		requestRender();
+		dirty( DirtyType::Render );
 		return true;
 	}
 	return false;
@@ -615,7 +653,7 @@ bool StandardConnectionGadget::keyReleased( const KeyEvent &event )
 	if( !(event.modifiers & ButtonEvent::Control) )
 	{
 		m_dotPreview = false;
-		requestRender();
+		dirty( DirtyType::Render );
 		return true;
 	}
 	return false;
@@ -645,7 +683,7 @@ void StandardConnectionGadget::enter( const ButtonEvent &event )
 	updateDotPreviewLocation( event );
 
 	m_hovering = endAt( event.line ) != Plug::Invalid;
-	requestRender();
+	dirty( DirtyType::Render );
 }
 
 bool StandardConnectionGadget::mouseMove( const ButtonEvent &event )
@@ -653,7 +691,7 @@ bool StandardConnectionGadget::mouseMove( const ButtonEvent &event )
 	updateDotPreviewLocation( event );
 
 	m_hovering = endAt( event.line ) != Plug::Invalid;
- 	requestRender();
+	dirty( DirtyType::Render );
 	return false;
 }
 
@@ -664,25 +702,25 @@ void StandardConnectionGadget::leave( const ButtonEvent &event )
 	m_dotPreview = false;
 
 	m_hovering = false;
-	requestRender();
+	dirty( DirtyType::Render );
 }
 
-void StandardConnectionGadget::plugMetadataChanged( IECore::TypeId nodeTypeId, const IECore::StringAlgo::MatchPattern &plugPath, IECore::InternedString key, const Gaffer::Plug *plug )
+void StandardConnectionGadget::plugMetadataChanged( const Gaffer::Plug *plug, IECore::InternedString key )
 {
-	if( key != g_colorKey || !MetadataAlgo::affectedByChange( dstNodule()->plug(), nodeTypeId, plugPath, plug ) )
+	if( key != g_colorKey || plug != dstNodule()->plug() )
 	{
 		return;
 	}
 
 	if( updateUserColor() )
 	{
-		requestRender();
+		dirty( DirtyType::Render );
 	}
 }
 
 bool StandardConnectionGadget::updateUserColor()
 {
-	boost::optional<Color3f> c;
+	std::optional<Color3f> c;
 	if( IECore::ConstColor3fDataPtr d = Metadata::value<IECore::Color3fData>( dstNodule()->plug(), g_colorKey ) )
 	{
 		c = d->readable();

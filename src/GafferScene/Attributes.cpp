@@ -37,29 +37,25 @@
 
 #include "GafferScene/Attributes.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/logic/tribool.hpp"
 
+using namespace boost::placeholders;
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Attributes );
+GAFFER_NODE_DEFINE_TYPE( Attributes );
 
 size_t Attributes::g_firstPlugIndex = 0;
 
 Attributes::Attributes( const std::string &name )
-	:	SceneElementProcessor( name )
+	:	AttributeProcessor( name, PathMatcher::EveryMatch )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new CompoundDataPlug( "attributes" ) );
 	addChild( new BoolPlug( "global", Plug::In, false ) );
-	addChild( new AtomicCompoundDataPlug( "extraAttributes", Plug::In, new IECore::CompoundData ) );
-
-	// Fast pass-throughs for the things we don't alter.
-	outPlug()->objectPlug()->setInput( inPlug()->objectPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
+	addChild( new CompoundObjectPlug( "extraAttributes", Plug::In, new IECore::CompoundObject ) );
 
 	// Connect to signals we use to manage pass-throughs for globals
 	// and attributes based on the value of globalPlug().
@@ -91,29 +87,29 @@ const Gaffer::BoolPlug *Attributes::globalPlug() const
 	return getChild<Gaffer::BoolPlug>( g_firstPlugIndex + 1 );
 }
 
-Gaffer::AtomicCompoundDataPlug *Attributes::extraAttributesPlug()
+Gaffer::CompoundObjectPlug *Attributes::extraAttributesPlug()
 {
-	return getChild<Gaffer::AtomicCompoundDataPlug>( g_firstPlugIndex + 2 );
+	return getChild<Gaffer::CompoundObjectPlug>( g_firstPlugIndex + 2 );
 }
 
-const Gaffer::AtomicCompoundDataPlug *Attributes::extraAttributesPlug() const
+const Gaffer::CompoundObjectPlug *Attributes::extraAttributesPlug() const
 {
-	return getChild<Gaffer::AtomicCompoundDataPlug>( g_firstPlugIndex + 2 );
+	return getChild<Gaffer::CompoundObjectPlug>( g_firstPlugIndex + 2 );
 }
 
 void Attributes::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
-	SceneElementProcessor::affects( input, outputs );
+	AttributeProcessor::affects( input, outputs );
 
-	if( attributesPlug()->isAncestorOf( input ) || input == globalPlug() || input == extraAttributesPlug() )
+	if(
+		input == globalPlug() ||
+		input == inPlug()->globalsPlug() ||
+		attributesPlug()->isAncestorOf( input ) ||
+		input == extraAttributesPlug()
+	)
 	{
 		// We can only affect a particular output if we haven't
 		// connected it as a pass-through in updateInternalConnections().
-		if( !outPlug()->attributesPlug()->getInput() )
-		{
-			outputs.push_back( outPlug()->attributesPlug() );
-		}
-
 		if( !outPlug()->globalsPlug()->getInput() )
 		{
 			outputs.push_back( outPlug()->globalsPlug() );
@@ -127,7 +123,7 @@ void Attributes::hashGlobals( const Gaffer::Context *context, const ScenePlug *p
 	if( globalPlug()->getValue() )
 	{
 		// We will modify the globals.
-		SceneElementProcessor::hashGlobals( context, parent, h );
+		AttributeProcessor::hashGlobals( context, parent, h );
 		inPlug()->globalsPlug()->hash( h );
 		attributesPlug()->hash( h );
 		extraAttributesPlug()->hash( h );
@@ -156,7 +152,7 @@ IECore::ConstCompoundObjectPtr Attributes::computeGlobals( const Gaffer::Context
 	result->members() = inputGlobals->members();
 
 	std::string name;
-	for( NameValuePlugIterator it( p ); !it.done(); ++it )
+	for( NameValuePlug::Iterator it( p ); !it.done(); ++it )
 	{
 		IECore::DataPtr d = p->memberDataAndName( it->get(), name );
 		if( d )
@@ -165,44 +161,54 @@ IECore::ConstCompoundObjectPtr Attributes::computeGlobals( const Gaffer::Context
 		}
 	}
 
-	IECore::ConstCompoundDataPtr extraAttributesData = extraAttributesPlug()->getValue();
-	const IECore::CompoundDataMap &extraAttributes = extraAttributesData->readable();
-	for( IECore::CompoundDataMap::const_iterator it = extraAttributes.begin(), eIt = extraAttributes.end(); it != eIt; ++it )
+	IECore::ConstCompoundObjectPtr extraAttributes = extraAttributesPlug()->getValue();
+	for( const auto &e : extraAttributes->members() )
 	{
-		result->members()["attribute:" + it->first.string()] = it->second.get();
+		result->members()["attribute:" + e.first.string()] = e.second;
 	}
 
 	return result;
 }
 
-bool Attributes::processesAttributes() const
+bool Attributes::affectsProcessedAttributes( const Gaffer::Plug *input ) const
 {
-	// Although the base class says that we should return a constant, it should
-	// be OK to return this because it's constant across the hierarchy.
-	return ( attributesPlug()->children().size() || !extraAttributesPlug()->isSetToDefault() ) && !globalPlug()->getValue();
+	if( outPlug()->attributesPlug()->getInput() )
+	{
+		// We've made a pass-through connection
+		return false;
+	}
+
+	return
+		AttributeProcessor::affectsProcessedAttributes( input ) ||
+		attributesPlug()->isAncestorOf( input ) ||
+		input == globalPlug() ||
+		input == extraAttributesPlug()
+	;
 }
 
 void Attributes::hashProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	attributesPlug()->hash( h );
-	extraAttributesPlug()->hash( h );
+	if( ( attributesPlug()->children().empty() && extraAttributesPlug()->isSetToDefault() ) || globalPlug()->getValue() )
+	{
+		h = inPlug()->attributesPlug()->hash();
+	}
+	else
+	{
+		AttributeProcessor::hashProcessedAttributes( path, context, h );
+		attributesPlug()->hash( h );
+		extraAttributesPlug()->hash( h );
+	}
 }
 
-IECore::ConstCompoundObjectPtr Attributes::computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, IECore::ConstCompoundObjectPtr inputAttributes ) const
+IECore::ConstCompoundObjectPtr Attributes::computeProcessedAttributes( const ScenePath &path, const Gaffer::Context *context, const IECore::CompoundObject *inputAttributes ) const
 {
 	const CompoundDataPlug *ap = attributesPlug();
-	IECore::ConstCompoundDataPtr extraAttributesData = extraAttributesPlug()->getValue();
-	const IECore::CompoundDataMap &extraAttributes = extraAttributesData->readable();
-
-	if( !ap->children().size() && extraAttributes.empty() )
+	IECore::ConstCompoundObjectPtr extraAttributes = extraAttributesPlug()->getValue();
+	if( !ap->children().size() && extraAttributes->members().empty() )
 	{
 		return inputAttributes;
 	}
 
-	/// \todo You might think that we wouldn't have to check this again
-	/// because the base class would have used processesAttributes()
-	/// to avoid even calling this function. But that isn't the case for
-	/// some reason.
 	if( globalPlug()->getValue() )
 	{
 		return inputAttributes;
@@ -216,10 +222,9 @@ IECore::ConstCompoundObjectPtr Attributes::computeProcessedAttributes( const Sce
 	result->members() = inputAttributes->members();
 
 	ap->fillCompoundObject( result->members() );
-
-	for( IECore::CompoundDataMap::const_iterator it = extraAttributes.begin(), eIt = extraAttributes.end(); it != eIt; ++it )
+	for( const auto &e : extraAttributes->members() )
 	{
-		result->members()[it->first] = it->second.get();
+		result->members()[e.first] = e.second;
 	}
 
 	return result;

@@ -54,6 +54,7 @@ Gaffer.Metadata.registerNode(
 
 	"nodeGadget:type", "GafferUI::AuxiliaryNodeGadget",
 	"auxiliaryNodeGadget:label", "a",
+	"nodeGadget:focusGadgetVisible", False,
 
 	plugs = {
 
@@ -72,6 +73,23 @@ Gaffer.Metadata.registerNode(
 
 )
 
+Gaffer.Metadata.registerValue( "Animation.Interpolation.Constant", "description", "Curve span has in key's value." )
+Gaffer.Metadata.registerValue( "Animation.Interpolation.ConstantNext", "description", "Curve span has out key's value." )
+Gaffer.Metadata.registerValue( "Animation.Interpolation.Linear", "description", "Curve span is linearly interpolated between values of in key and out key." )
+Gaffer.Metadata.registerValue( "Animation.Interpolation.Cubic", "description", "Curve span is smoothly interpolated between values of in key and out key using tangent slope." )
+Gaffer.Metadata.registerValue( "Animation.Interpolation.Bezier", "description", "Curve span is smoothly interpolated between values of in key and out key using tangent slope and scale." )
+
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.Constant", "description", "Curve is extended as a flat line." )
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.Linear", "description", "Curve is extended as a line with slope matching tangent in direction of extrapolation." )
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.Cycle", "description", "Curve is repeated indefinitely." )
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.CycleOffset", "description", "Curve is repeated indefinitely with each repetition offset in value to preserve continuity." )
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.CycleFlop", "description", "Curve is repeated indefinitely with each repetition mirrored in time." )
+Gaffer.Metadata.registerValue( "Animation.Extrapolation.CycleFlip", "description", "Curve is repeated indefinitely with each repetition inverted in value and offset to preserve continuity." )
+
+Gaffer.Metadata.registerValue( "Animation.TieMode.Manual", "description", "Tangent slope and scale can be independently adjusted." )
+Gaffer.Metadata.registerValue( "Animation.TieMode.Slope", "description", "Tangent slopes are kept equal." )
+Gaffer.Metadata.registerValue( "Animation.TieMode.Scale", "description", "Tangent slopes are kept equal and scales are kept proportional." )
+
 # PlugValueWidget popup menu for setting keys
 ##########################################################################
 
@@ -82,7 +100,10 @@ def __setKey( plug, context ) :
 
 	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
 		curve = Gaffer.Animation.acquire( plug )
-		curve.addKey( Gaffer.Animation.Key( context.getTime(), value ) )
+		if isinstance( plug, Gaffer.BoolPlug ) :
+			curve.addKey( Gaffer.Animation.Key( context.getTime(), value, Gaffer.Animation.Interpolation.Constant ) )
+		else :
+			curve.insertKey( context.getTime(), value )
 
 def __removeKey( plug, key ) :
 
@@ -90,13 +111,23 @@ def __removeKey( plug, key ) :
 		curve = Gaffer.Animation.acquire( plug )
 		curve.removeKey( key )
 
+def __setKeyInterpolation( plug, key, mode, unused ) :
+
+	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
+		key.setInterpolation( mode )
+
+def __setCurveExtrapolation( plug, curve, direction, mode, unused ) :
+
+	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
+		curve.setExtrapolation( direction, mode )
+
 def __popupMenu( menuDefinition, plugValueWidget ) :
 
 	plug = plugValueWidget.getPlug()
 	if not isinstance( plug, Gaffer.ValuePlug ) or not Gaffer.Animation.canAnimate( plug ) :
 		return
 
-	context = plugValueWidget.getContext()
+	context = plugValueWidget.context()
 
 	menuDefinition.prepend( "/AnimationDivider", { "divider" : True } )
 
@@ -121,6 +152,42 @@ def __popupMenu( menuDefinition, plugValueWidget ) :
 				"active" : previousKey is not None,
 			}
 		)
+
+		for direction in reversed( sorted( Gaffer.Animation.Direction.values.values() ) ) :
+			for mode in reversed( sorted( Gaffer.Animation.Extrapolation.values.values() ) ) :
+				menuDefinition.prepend(
+					"/Extrapolation/%s/%s" % ( direction.name, mode.name ),
+					{
+						"command" : functools.partial(
+							__setCurveExtrapolation,
+							plug,
+							curve,
+							direction,
+							mode
+						),
+						"active" : plugValueWidget._editable( canEditAnimation = True ),
+						"checkBox" : curve.getExtrapolation( direction ) == mode,
+						"description" : Gaffer.Metadata.value( "Animation.Extrapolation.%s" % mode.name, "description" ),
+					}
+				)
+
+		spanKey = curve.getKey( context.getTime() ) or previousKey
+		spanKeyOnThisFrame = spanKey is not None
+		for mode in reversed( sorted( Gaffer.Animation.Interpolation.values.values() ) ) :
+			menuDefinition.prepend(
+				"/Interpolation/%s" % ( mode.name ),
+				{
+					"command" : functools.partial(
+						__setKeyInterpolation,
+						plug,
+						spanKey,
+						mode
+					),
+					"active" : spanKeyOnThisFrame and plugValueWidget._editable( canEditAnimation = True ),
+					"checkBox" : spanKeyOnThisFrame and ( spanKey.getInterpolation() == mode ),
+					"description" : Gaffer.Metadata.value( "Animation.Interpolation.%s" % mode.name, "description" ),
+				}
+			)
 
 		closestKey = curve.closestKey( context.getTime() )
 		closestKeyOnThisFrame = closestKey is not None and math.fabs( context.getTime() - closestKey.getTime() ) * context.getFramesPerSecond() < 0.5
@@ -148,4 +215,4 @@ def __popupMenu( menuDefinition, plugValueWidget ) :
 		}
 	)
 
-__popupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu )

@@ -35,11 +35,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_DEPENDENCYNODEBINDING_H
-#define GAFFERBINDINGS_DEPENDENCYNODEBINDING_H
+#pragma once
 
 #include "boost/python.hpp"
 
+#include "GafferBindings/Export.h"
 #include "GafferBindings/NodeBinding.h"
 
 #include "Gaffer/Context.h"
@@ -64,8 +64,26 @@ class DependencyNodeClass : public NodeClass<T, TWrapper>
 
 };
 
+class GAFFERBINDINGS_API DependencyNodeWrapperBase
+{
+
+	protected :
+
+		DependencyNodeWrapperBase() : m_initialised( false ) {};
+		// Returns `true` once the Python `__init__()` method has
+		// completed.
+		bool initialised() const { return m_initialised; };
+
+	private :
+
+		// Friendship with the metaclass so it can set `m_initialised` for us.
+		friend PyObject *dependencyNodeMetaclassCall( PyObject *self, PyObject *args, PyObject *kw );
+		bool m_initialised;
+
+};
+
 template<typename WrappedType>
-class DependencyNodeWrapper : public NodeWrapper<WrappedType>
+class DependencyNodeWrapper : public NodeWrapper<WrappedType>, public DependencyNodeWrapperBase
 {
 	public :
 
@@ -75,20 +93,9 @@ class DependencyNodeWrapper : public NodeWrapper<WrappedType>
 		{
 		}
 
-		bool isInstanceOf( IECore::TypeId typeId ) const override
-		{
-			if( typeId == (IECore::TypeId)Gaffer::DependencyNodeTypeId )
-			{
-				// Correct for the slightly overzealous (but hugely beneficial)
-				// optimisation in NodeWrapper::isInstanceOf().
-				return true;
-			}
-			return NodeWrapper<WrappedType>::isInstanceOf( typeId );
-		}
-
 		void affects( const Gaffer::Plug *input, Gaffer::DependencyNode::AffectedPlugsContainer &outputs ) const override
 		{
-			if( this->isSubclassed() )
+			if( this->isSubclassed() && this->initialised() )
 			{
 				IECorePython::ScopedGILLock gilLock;
 				try
@@ -106,7 +113,7 @@ class DependencyNodeWrapper : public NodeWrapper<WrappedType>
 						return;
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -127,7 +134,7 @@ class DependencyNodeWrapper : public NodeWrapper<WrappedType>
 						return boost::python::extract<Gaffer::BoolPlug *>( f() );
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -157,7 +164,7 @@ class DependencyNodeWrapper : public NodeWrapper<WrappedType>
 						return value.get();
 					}
 				}
-				catch( const boost::python::error_already_set &e )
+				catch( const boost::python::error_already_set & )
 				{
 					IECorePython::ExceptionAlgo::translatePythonException();
 				}
@@ -176,5 +183,3 @@ class DependencyNodeWrapper : public NodeWrapper<WrappedType>
 } // namespace GafferBindings
 
 #include "GafferBindings/DependencyNodeBinding.inl"
-
-#endif // GAFFERBINDINGS_DEPENDENCYNODEBINDING_H

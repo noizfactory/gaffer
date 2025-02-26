@@ -49,8 +49,6 @@
 #include "Gaffer/Reference.h"
 #include "Gaffer/Metadata.h"
 
-#include "boost/format.hpp"
-
 using namespace boost::python;
 using namespace GafferBindings;
 using namespace Gaffer;
@@ -81,6 +79,12 @@ bool isSetToDefault( ValuePlug *plug )
 	// evaluation which decides to go back into python on another thread:
 	IECorePython::ScopedGILRelease r;
 	return plug->isSetToDefault();
+}
+
+void resetDefault( ValuePlug *plug )
+{
+	IECorePython::ScopedGILRelease r;
+	plug->resetDefault();
 }
 
 IECore::MurmurHash hash( ValuePlug *plug )
@@ -117,6 +121,8 @@ void GafferModule::bindValuePlug()
 		.def( "setFrom", setFrom )
 		.def( "setToDefault", setToDefault )
 		.def( "isSetToDefault", isSetToDefault )
+		.def( "resetDefault", resetDefault )
+		.def( "defaultHash", &ValuePlug::defaultHash )
 		.def( "hash", hash )
 		.def( "hash", hash2 )
 		.def( "getCacheMemoryLimit", &ValuePlug::getCacheMemoryLimit )
@@ -131,7 +137,22 @@ void GafferModule::bindValuePlug()
 		.staticmethod( "getHashCacheSizeLimit" )
 		.def( "setHashCacheSizeLimit", &ValuePlug::setHashCacheSizeLimit )
 		.staticmethod( "setHashCacheSizeLimit" )
+		.def( "hashCacheTotalUsage", &ValuePlug::hashCacheTotalUsage )
+		.staticmethod( "hashCacheTotalUsage" )
+		.def( "clearHashCache", &ValuePlug::clearHashCache, arg( "now" ) = false )
+		.staticmethod( "clearHashCache" )
+		.def( "getHashCacheMode", &ValuePlug::getHashCacheMode )
+		.staticmethod( "getHashCacheMode" )
+		.def( "setHashCacheMode", &ValuePlug::setHashCacheMode )
+		.staticmethod( "setHashCacheMode" )
+		.def( "dirtyCount", &ValuePlug::dirtyCount )
 		.def( "__repr__", &repr )
+	;
+
+	enum_<ValuePlug::HashCacheMode>( "HashCacheMode" )
+		.value( "Standard", ValuePlug::HashCacheMode::Standard )
+		.value( "Checked", ValuePlug::HashCacheMode::Checked )
+		.value( "Legacy", ValuePlug::HashCacheMode::Legacy )
 	;
 
 	enum_<ValuePlug::CachePolicy>( "CachePolicy" )
@@ -139,6 +160,7 @@ void GafferModule::bindValuePlug()
 		.value( "Standard", ValuePlug::CachePolicy::Standard )
 		.value( "TaskCollaboration", ValuePlug::CachePolicy::TaskCollaboration )
 		.value( "TaskIsolation", ValuePlug::CachePolicy::TaskIsolation )
+		.value( "Default", ValuePlug::CachePolicy::Default )
 		.value( "Legacy", ValuePlug::CachePolicy::Legacy )
 	;
 

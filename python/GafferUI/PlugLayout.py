@@ -40,6 +40,8 @@ import sys
 import functools
 import collections
 
+import IECore
+
 import Gaffer
 import GafferUI
 
@@ -52,8 +54,10 @@ from Qt import QtWidgets
 #	- "<layoutName>:index" controls ordering of plugs within the layout
 #	- "<layoutName>:section" places the plug in a named section of the layout
 #	- "<layoutName>:divider" specifies whether or not a plug should be followed by a divider
-#	- "<layoutName>:activator" the name of an activator to control editability
-#	- "<layoutName>:visibilityActivator" the name of an activator to control visibility
+#	- "<layoutName>:activator" the name of an activator to control editability,
+#	  or a boolean value to control it directly
+#	- "<layoutName>:visibilityActivator" the name of an activator to control visibility,
+#	  or a boolean value to control it directly
 #	- "<layoutName>:accessory" groups as an accessory to the previous widget
 #	- "<layoutName>:width" gives a specific width to the plug's widget
 #
@@ -86,9 +90,6 @@ from Qt import QtWidgets
 #
 class PlugLayout( GafferUI.Widget ) :
 
-	# We use this when we can't find a ScriptNode to provide the context.
-	__fallbackContext = Gaffer.Context()
-
 	def __init__( self, parent, orientation = GafferUI.ListContainer.Orientation.Vertical, layoutName = "layout", rootSection = "", embedded = False, **kw ) :
 
 		assert( isinstance( parent, ( Gaffer.Node, Gaffer.Plug ) ) )
@@ -102,23 +103,26 @@ class PlugLayout( GafferUI.Widget ) :
 		GafferUI.Widget.__init__( self, self.__layout, **kw )
 
 		self.__parent = parent
-		self.__readOnly = False
 		self.__layoutName = layoutName
 		# not to be confused with __rootSection, which holds an actual _Section object
 		self.__rootSectionName = rootSection
 
 		# we need to connect to the childAdded/childRemoved signals on
 		# the parent so we can update the ui when plugs are added and removed.
-		parent.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = False )
-		parent.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ), scoped = False )
+		parent.childAddedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
+		parent.childRemovedSignal().connect( Gaffer.WeakMethod( self.__childAddedOrRemoved ) )
 
 		# since our layout is driven by metadata, we must respond dynamically
 		# to changes in that metadata.
-		Gaffer.Metadata.plugValueChangedSignal().connect( Gaffer.WeakMethod( self.__plugMetadataChanged ), scoped = False )
+		Gaffer.Metadata.plugValueChangedSignal( self.__node() ).connect( Gaffer.WeakMethod( self.__plugMetadataChanged ) )
+		if isinstance( self.__parent, Gaffer.Node ) :
+			Gaffer.Metadata.nodeValueChangedSignal( self.__parent ).connect(
+				Gaffer.WeakMethod( self.__nodeMetadataChanged )
+			)
 
 		# and since our activations are driven by plug values, we must respond
 		# when the plugs are dirtied.
-		self.__node().plugDirtiedSignal().connect( Gaffer.WeakMethod( self.__plugDirtied ), scoped = False )
+		self.__node().plugDirtiedSignal().connect( Gaffer.WeakMethod( self.__plugDirtied ) )
 
 		# frequently events that trigger a ui update come in batches, so we
 		# perform the update lazily using a LazyMethod. the dirty variables
@@ -132,47 +136,21 @@ class PlugLayout( GafferUI.Widget ) :
 		self.__widgets = {}
 		self.__rootSection = _Section( self.__parent )
 
-		# set up an appropriate default context in which to view the plugs.
-		scriptNode = self.__node() if isinstance( self.__node(), Gaffer.ScriptNode ) else self.__node().scriptNode()
-		self.setContext( scriptNode.context() if scriptNode is not None else self.__fallbackContext )
+		# Set up an appropriate context in which to view the plugs.
+		self.__contextTracker = GafferUI.ContextTracker.acquireForFocus( parent )
+		self.__contextTracker.changedSignal( parent ).connect( Gaffer.WeakMethod( self.__contextChanged ) )
 
-		# schedule our first update, which will take place when we become
-		# visible for the first time.
-		self.__updateLazily()
+		# Build the layout
+		self.__update()
 
-	def getReadOnly( self ) :
+	def context( self ) :
 
-		return self.__readOnly
-
-	def setReadOnly( self, readOnly ) :
-
- 		if readOnly == self.getReadOnly() :
- 			return
-
- 		self.__readOnly = readOnly
-		for widget in self.__widgets.values() :
-			self.__applyReadOnly( widget, self.__readOnly )
-
-	def getContext( self ) :
-
-		return self.__context
-
-	def setContext( self, context ) :
-
-		self.__context = context
-		self.__contextChangedConnection = self.__context.changedSignal().connect( Gaffer.WeakMethod( self.__contextChanged ) )
-
-		for widget in self.__widgets.values() :
-			self.__applyContext( widget, context )
+		return self.__contextTracker.context( self.__parent )
 
 	## Returns a PlugValueWidget representing the specified child plug.
-	# Because the layout is built lazily on demand, this might return None due
-	# to the user not having opened up the ui - in this case lazy=False may
-	# be passed to force the creation of the ui.
-	def plugValueWidget( self, childPlug, lazy=True ) :
+	def plugValueWidget( self, childPlug ) :
 
-		if not lazy :
-			self.__updateLazily.flush( self )
+		self.__updateLazily.flush( self )
 
 		w = self.__widgets.get( childPlug, None )
 		if w is None :
@@ -183,13 +161,9 @@ class PlugLayout( GafferUI.Widget ) :
 			return w.plugValueWidget()
 
 	## Returns the custom widget registered with the specified name.
-	# Because the layout is built lazily on demand, this might return None due
-	# to the user not having opened up the ui - in this case lazy=False may
-	# be passed to force the creation of the ui.
-	def customWidget( self, name, lazy=True ) :
+	def customWidget( self, name ) :
 
-		if not lazy :
-			self.__updateLazily.flush( self )
+		self.__updateLazily.flush( self )
 
 		return self.__widgets.get( name )
 
@@ -205,7 +179,7 @@ class PlugLayout( GafferUI.Widget ) :
 			sectionName = ".".join( sectionPath )
 			d[sectionName] = 1
 
-		return d.keys()
+		return list( d.keys() )
 
 	## Returns the child plugs of the parent in the order in which they
 	# will be laid out, based on "<layoutName>:index" Metadata entries. If
@@ -229,7 +203,7 @@ class PlugLayout( GafferUI.Widget ) :
 		for itemAndIndex in itemsAndIndices :
 			index = cls.__staticItemMetadataValue( itemAndIndex[1], "index", parent, layoutName )
 			if index is not None :
-				index = index if index >= 0 else sys.maxint + index
+				index = index if index >= 0 else sys.maxsize + index
 				itemAndIndex[0] = index
 
 		itemsAndIndices.sort( key = lambda x : x[0] )
@@ -300,6 +274,8 @@ class PlugLayout( GafferUI.Widget ) :
 				self.__widgets[item] = widget
 			else :
 				widget = self.__widgets[item]
+				if self.__itemMetadataValue( item, "width" ) :
+					widget._qtWidget().setFixedWidth( self.__itemMetadataValue( item, "width" ) )
 
 			if widget is None :
 				continue
@@ -326,25 +302,39 @@ class PlugLayout( GafferUI.Widget ) :
 
 	def __updateActivations( self ) :
 
-		with self.getContext() :
+		with self.context() :
 			# Must scope the context when getting activators, because they are typically
 			# computed from the plug values, and may therefore trigger a compute.
 			activators = self.__metadataValue( self.__parent, self.__layoutName + ":activators" ) or {}
 
 		activators = { k : v.value for k, v in activators.items() } # convert CompoundData of BoolData to dict of booleans
 
-		def active( activatorName ) :
+		def active( activatorMetadata ) :
 
-			result = True
-			if activatorName :
+			if activatorMetadata is None or activatorMetadata == "" :
+				return True
+			elif isinstance( activatorMetadata, bool ) :
+				return activatorMetadata
+			else :
+				assert( isinstance( activatorMetadata, str ) )
+				activatorName = activatorMetadata
 				result = activators.get( activatorName )
 				if result is None :
-					with self.getContext() :
-						result = self.__metadataValue( self.__parent, self.__layoutName + ":activator:" + activatorName )
+					with self.context() :
+						metadataName = self.__layoutName + ":activator:" + activatorName
+						result = self.__metadataValue( self.__parent, metadataName )
+						if isinstance( result, str ) :
+							localsAndGlobals = { "parent" : self.__parent }
+							result = eval( result, localsAndGlobals, localsAndGlobals )
+						if result is None and metadataName not in Gaffer.Metadata.registeredValues( self.__parent ) :
+							IECore.msg(
+								IECore.Msg.Level.Warning, "PlugLayout",
+								"Activator metadata `{}` not registered".format( metadataName )
+							)
 					result = result if result is not None else False
 					activators[activatorName] = result
 
-			return result
+				return result
 
 		for item, widget in self.__widgets.items() :
 			if widget is not None :
@@ -353,14 +343,43 @@ class PlugLayout( GafferUI.Widget ) :
 
 	def __updateSummariesWalk( self, section ) :
 
-		with self.getContext() :
+		with self.context() :
 			# Must scope the context because summaries are typically
 			# generated from plug values, and may therefore trigger
 			# a compute.
-			section.summary = self.__metadataValue( self.__parent, self.__layoutName + ":section:" + section.fullName + ":summary" ) or ""
+			try :
+				section.summary = self.__metadataValue( self.__parent, self.__layoutName + ":section:" + section.fullName + ":summary" ) or ""
+			except Gaffer.ProcessException :
+				section.summary = "<img src={}>".format( Gaffer.rootPath() / "graphics" / "errorSmall.png" )
+
+		section.valuesChanged = False
 
 		for subsection in section.subsections.values() :
 			self.__updateSummariesWalk( subsection )
+			# If one of our subsections has changed, we don't need to
+			# check any of our own plugs, we just propagate the flag.
+			if subsection.valuesChanged :
+				section.valuesChanged = True
+
+		if not section.valuesChanged :
+			# Check our own widgets, this is a little icky, the alternative
+			# would be to iterate our items, reverse engineer the section
+			# then update that, but this allows us to early-out much sooner.
+			for widget in section.widgets :
+				if self.__widgetPlugValuesChanged( widget ) :
+					section.valuesChanged = True
+					break
+
+	@staticmethod
+	def __widgetPlugValuesChanged( widget ) :
+
+		plugs = []
+		if isinstance( widget, GafferUI.PlugWidget ) :
+			widget = widget.plugValueWidget()
+		if hasattr( widget, 'getPlugs' ) :
+			plugs = widget.getPlugs()
+
+		return any( GafferUI.LabelPlugValueWidget._hasUserValue( p ) for p in plugs )
 
 	def __import( self, path ) :
 
@@ -371,20 +390,29 @@ class PlugLayout( GafferUI.Widget ) :
 
 		return result
 
- 	def __createPlugWidget( self, plug ) :
+	def __setWidthFromMetadata( self, widget, item ) :
+
+		width = self.__itemMetadataValue( item, "width" )
+		if width is not None :
+			widget._qtWidget().setFixedWidth( width )
+
+		minimumWidth = self.__itemMetadataValue( item, "minimumWidth" )
+		if minimumWidth is not None :
+			widget._qtWidget().setMinimumWidth( minimumWidth )
+
+		if widget._qtWidget().layout() is not None and ( width is not None or minimumWidth is not None ) :
+			widget._qtWidget().layout().setSizeConstraint( QtWidgets.QLayout.SetDefaultConstraint )
+
+	def __createPlugWidget( self, plug ) :
 
 		result = GafferUI.PlugValueWidget.create( plug )
 		if result is None :
 			return result
 
-		width = self.__itemMetadataValue( plug, "width" )
-		if width is not None :
-			result._qtWidget().setFixedWidth( width )
-			if result._qtWidget().layout() is not None :
-				result._qtWidget().layout().setSizeConstraint( QtWidgets.QLayout.SetDefaultConstraint )
+		self.__setWidthFromMetadata( result, plug )
 
 		if isinstance( result, GafferUI.PlugValueWidget ) and not result.hasLabel() and self.__itemMetadataValue( plug, "label" ) != "" :
- 			result = GafferUI.PlugWidget( result )
+			result = GafferUI.PlugWidget( result )
 			if self.__layout.orientation() == GafferUI.ListContainer.Orientation.Horizontal :
 				# undo the annoying fixed size the PlugWidget has applied
 				# to the label.
@@ -393,22 +421,24 @@ class PlugLayout( GafferUI.Widget ) :
 				QWIDGETSIZE_MAX = 16777215 # qt #define not exposed by PyQt or PySide
 				result.labelPlugValueWidget().label()._qtWidget().setFixedWidth( QWIDGETSIZE_MAX )
 
-		self.__applyReadOnly( result, self.getReadOnly() )
-		self.__applyContext( result, self.getContext() )
-
 		# Store the metadata value that controlled the type created, so we can compare to it
 		# in the future to determine if we can reuse the widget.
 		result.__plugValueWidgetType = Gaffer.Metadata.value( plug, "plugValueWidget:type" )
 
- 		return result
+		return result
 
 	def __createCustomWidget( self, name ) :
 
 		widgetType = self.__itemMetadataValue( name, "widgetType" )
-		widgetClass = self.__import( widgetType )
+		try :
+			widgetClass = self.__import( widgetType )
+			result = widgetClass( self.__parent )
+			self.__setWidthFromMetadata( result, name )
+		except Exception as e :
+			message = "Could not create custom widget \"{}\" : {}".format( name, str( e ) )
+			IECore.msg( IECore.Msg.Level.Error, "GafferUI.PlugLayout", message )
 
-		result = widgetClass( self.__parent )
-		self.__applyContext( result, self.getContext() )
+			result = _MissingCustomWidget( self.__parent, message )
 
 		return result
 
@@ -463,64 +493,52 @@ class PlugLayout( GafferUI.Widget ) :
 		# we do a lazy update so we can batch up several changes into one.
 		# upheaval is over.
 		self.__layoutDirty = True
+		self.__activationsDirty = True
 		self.__updateLazily()
 
-	def __applyReadOnly( self, widget, readOnly ) :
+	def __plugMetadataChanged( self, plug, key, reason ) :
 
-		if widget is None :
-			return
+		if plug.parent() == self.__parent :
+			if key in (
+				"divider",
+				self.__layoutName + ":divider",
+				self.__layoutName + ":index",
+				self.__layoutName + ":section",
+				self.__layoutName + ":accessory",
+				self.__layoutName + ":width",
+				"plugValueWidget:type"
+			) :
+				# We often see sequences of several metadata changes, so
+				# we schedule a lazy update to batch them into one UI update.
+				self.__layoutDirty = True
+				self.__updateLazily()
+		elif plug == self.__parent :
+			self.__parentMetadataChanged( key )
 
-		if hasattr( widget, "setReadOnly" ) :
-			widget.setReadOnly( readOnly )
-		elif isinstance(  widget, GafferUI.PlugWidget ) :
-			widget.labelPlugValueWidget().setReadOnly( readOnly )
-			widget.plugValueWidget().setReadOnly( readOnly )
-		elif hasattr( widget, "plugValueWidget" ) :
-			widget.plugValueWidget().setReadOnly( readOnly )
+	def __nodeMetadataChanged( self, node, key, reason ) :
 
-	def __applyContext( self, widget, context ) :
+		assert( node == self.__parent )
+		self.__parentMetadataChanged( key )
 
-		if hasattr( widget, "setContext" ) :
-			widget.setContext( context )
-		elif isinstance(  widget, GafferUI.PlugWidget ) :
-			widget.labelPlugValueWidget().setContext( context )
-			widget.plugValueWidget().setContext( context )
-		elif hasattr( widget, "plugValueWidget" ) :
-			widget.plugValueWidget().setContext( context )
+	def __parentMetadataChanged( self, key ) :
 
-	def __plugMetadataChanged( self, nodeTypeId, plugPath, key, plug ) :
-
-		parentAffected = isinstance( self.__parent, Gaffer.Plug ) and Gaffer.MetadataAlgo.affectedByChange( self.__parent, nodeTypeId, plugPath, plug )
-		childAffected = Gaffer.MetadataAlgo.childAffectedByChange( self.__parent, nodeTypeId, plugPath, plug )
-		if not parentAffected and not childAffected :
-			return
-
-		if key in (
-			"divider",
-			self.__layoutName + ":divider",
-			self.__layoutName + ":index",
-			self.__layoutName + ":section",
-			self.__layoutName + ":accessory",
-			"plugValueWidget:type"
-		) :
-			# we often see sequences of several metadata changes - so
-			# we schedule a lazy update to batch them into one ui update.
-			self.__layoutDirty = True
-			self.__updateLazily()
-		elif re.match( self.__layoutName + ":section:.*:summary", key ) :
+		if re.match( self.__layoutName + ":section:.*:summary", key ) :
 			self.__summariesDirty = True
+			self.__updateLazily()
+		elif re.match( self.__layoutName + ":customWidget:.*", key ) :
+			self.__layoutDirty = True
 			self.__updateLazily()
 
 	def __plugDirtied( self, plug ) :
 
-		if not self.visible() or plug.direction() != plug.Direction.In :
+		if plug.direction() != plug.Direction.In :
 			return
 
 		self.__activationsDirty = True
 		self.__summariesDirty = True
 		self.__updateLazily()
 
-	def __contextChanged( self, context, name ) :
+	def __contextChanged( self, contextTracker ) :
 
 		self.__activationsDirty = True
 		self.__summariesDirty = True
@@ -564,6 +582,7 @@ class _Section( object ) :
 		self.widgets = []
 		self.subsections = collections.OrderedDict()
 		self.summary = ""
+		self.valuesChanged = False
 
 	def saveState( self, name, value ) :
 
@@ -594,6 +613,8 @@ class _Layout( GafferUI.Widget ) :
 
 		return self.__orientation
 
+	# Returns `True` if the layout contains any visible widgets,
+	# `False` otherwise.
 	def update( self, section ) :
 
 		raise NotImplementedError
@@ -632,12 +653,13 @@ class _TabLayout( _Layout ) :
 			existingTabs[self.__tabbedContainer.getLabel( tab )] = tab
 
 		updatedTabs = collections.OrderedDict()
+		updatedTabVisibilities = []
 		for name, subsection in section.subsections.items() :
 			tab = existingTabs.get( name )
 			if tab is None :
 				# Use scroll bars only when the TabLayout is not embedded
 				if self.__embedded :
-					tab = GafferUI.Frame( borderWidth = 0, borderStyle = GafferUI.Frame.BorderStyle.None )
+					tab = GafferUI.Frame( borderWidth = 0, borderStyle = GafferUI.Frame.BorderStyle.None_ )
 				else :
 					tab = GafferUI.ScrolledContainer( borderWidth = 8 )
 					if self.orientation() == GafferUI.ListContainer.Orientation.Vertical :
@@ -646,16 +668,17 @@ class _TabLayout( _Layout ) :
 						tab.setVerticalMode( GafferUI.ScrollMode.Never )
 
 				tab.setChild( _CollapsibleLayout( self.orientation() ) )
-			tab.getChild().update( subsection )
+			updatedTabVisibilities.append( tab.getChild().update( subsection ) )
 			updatedTabs[name] = tab
 
 		if existingTabs.keys() != updatedTabs.keys() :
-			with Gaffer.BlockedConnection( self.__currentTabChangedConnection ) :
+			with Gaffer.Signals.BlockedConnection( self.__currentTabChangedConnection ) :
 				del self.__tabbedContainer[:]
 				for name, tab in updatedTabs.items() :
 					self.__tabbedContainer.append( tab, label = name )
 
 		for index, subsection in enumerate( section.subsections.values() ) :
+			self.__tabbedContainer.setTabVisible( self.__tabbedContainer[index], updatedTabVisibilities[index] )
 			## \todo Consider how/if we should add a public tooltip API to TabbedContainer.
 			self.__tabbedContainer._qtWidget().setTabToolTip( index, subsection.summary )
 
@@ -664,8 +687,13 @@ class _TabLayout( _Layout ) :
 			if currentTabIndex < len( self.__tabbedContainer ) :
 				self.__tabbedContainer.setCurrent( self.__tabbedContainer[currentTabIndex] )
 
-		self.__widgetsColumn.setVisible( len( section.widgets ) )
-		self.__tabbedContainer.setVisible( len( self.__tabbedContainer ) )
+		haveVisibleWidgets = any( w.getVisible() for w in self.__widgetsColumn )
+		haveVisibleTabs = any( self.__tabbedContainer.getTabVisible( t ) for t in self.__tabbedContainer )
+
+		self.__widgetsColumn.setVisible( haveVisibleWidgets )
+		self.__tabbedContainer.setVisible( haveVisibleTabs )
+
+		return haveVisibleWidgets or haveVisibleTabs
 
 	def __currentTabChanged( self, tabbedContainer, currentTab ) :
 
@@ -708,21 +736,43 @@ class _CollapsibleLayout( _Layout ) :
 					collapsible.setCollapsed( False )
 
 				collapsible.stateChangedSignal().connect(
-					functools.partial( Gaffer.WeakMethod( self.__collapsibleStateChanged ), subsection = subsection ),
-					scoped = False
+					functools.partial( Gaffer.WeakMethod( self.__collapsibleStateChanged ), subsection = subsection )
 				)
 
 				self.__collapsibles[name] = collapsible
 
-			collapsible.getChild().update( subsection )
+			collapsible.setVisible(
+				collapsible.getChild().update( subsection )
+			)
+
 			collapsible.getCornerWidget().setText(
 				"<small>" + "&nbsp;( " + subsection.summary + " )</small>" if subsection.summary else ""
 			)
+
+			currentValueChanged = collapsible._qtWidget().property( "gafferValueChanged" )
+			if subsection.valuesChanged != currentValueChanged :
+				collapsible._qtWidget().setProperty( "gafferValueChanged", GafferUI._Variant.toVariant( subsection.valuesChanged ) )
+				collapsible._repolish()
 
 			widgets.append( collapsible )
 
 		self.__column[:] = widgets
 
+		return any( w.getVisible() for w in self.__column )
+
 	def __collapsibleStateChanged( self, collapsible, subsection ) :
 
 		subsection.saveState( "collapsed", collapsible.getCollapsed() )
+
+class _MissingCustomWidget( GafferUI.Widget ) :
+
+	def __init__( self, parent, warning, **kw ) :
+
+		self.__image = GafferUI.Image( "warningSmall.png" )
+		self.__warning = warning
+
+		GafferUI.Widget.__init__( self, self.__image, **kw )
+
+	def getToolTip( self ) :
+
+		return self.__warning

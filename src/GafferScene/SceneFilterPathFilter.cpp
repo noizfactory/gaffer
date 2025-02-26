@@ -42,8 +42,9 @@
 
 #include "Gaffer/Context.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace GafferScene;
 
 SceneFilterPathFilter::SceneFilterPathFilter( FilterPtr sceneFilter, IECore::CompoundDataPtr userData )
@@ -102,7 +103,7 @@ struct SceneFilterPathFilter::Remove
 
 };
 
-void SceneFilterPathFilter::doFilter( std::vector<Gaffer::PathPtr> &paths ) const
+void SceneFilterPathFilter::doFilter( std::vector<Gaffer::PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 	paths.erase(
 		std::remove_if(

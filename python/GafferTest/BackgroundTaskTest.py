@@ -35,7 +35,6 @@
 ##########################################################################
 
 import functools
-import thread
 import threading
 import time
 
@@ -69,7 +68,8 @@ class BackgroundTaskTest( GafferTest.TestCase ) :
 		s = Gaffer.ScriptNode()
 		s["n"] = GafferTest.AddNode()
 		c = s["n"].plugSetSignal().connect(
-			lambda plug : operations.append( "set" )
+			lambda plug : operations.append( "set" ),
+			scoped = True
 		)
 
 		def f( canceller ) :
@@ -105,7 +105,8 @@ class BackgroundTaskTest( GafferTest.TestCase ) :
 					IECore.Canceller.check( canceller )
 
 		c = s["n"].plugSetSignal().connect(
-			lambda plug : operations.append( "undo" )
+			lambda plug : operations.append( "undo" ),
+			scoped = True
 		)
 		t = Gaffer.BackgroundTask( s["n"]["sum"], f )
 		time.sleep( 0.01 ) # Give task a chance to start before we cancel it
@@ -115,7 +116,8 @@ class BackgroundTaskTest( GafferTest.TestCase ) :
 
 		del operations[:]
 		c = s["n"].plugSetSignal().connect(
-			lambda plug : operations.append( "redo" )
+			lambda plug : operations.append( "redo" ),
+			scoped = True
 		)
 		t = Gaffer.BackgroundTask( s["n"]["sum"], f )
 		time.sleep( 0.01 ) # Give task a chance to start before we cancel it
@@ -232,6 +234,26 @@ class BackgroundTaskTest( GafferTest.TestCase ) :
 		self.assertGreaterEqual( time.time(), startTime + 0.2 )
 
 		t.cancelAndWait()
+
+	def testDestroyWhileRunning( self ) :
+
+		started = threading.Event()
+
+		def f( canceller ) :
+
+			started.set()
+			while True :
+				IECore.Canceller.check( canceller )
+
+		# Start task and wait for it to be running
+		task = Gaffer.BackgroundTask( None, f )
+		started.wait()
+
+		# Destroy task. This will cancel it via `canceller`,
+		# and wait for it to return. If we don't release the
+		# GIL while doing that then it'll never be able to
+		# check for cancellation, and we'll deadlock.
+		del task
 
 if __name__ == "__main__":
 	unittest.main()

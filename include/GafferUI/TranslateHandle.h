@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_TRANSLATEHANDLE_H
-#define GAFFERUI_TRANSLATEHANDLE_H
+#pragma once
 
 #include "GafferUI/Handle.h"
 
@@ -48,7 +47,7 @@ class GAFFERUI_API TranslateHandle : public Handle
 
 	public :
 
-		TranslateHandle( Style::Axes axes );
+		explicit TranslateHandle( Style::Axes axes );
 		~TranslateHandle() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::TranslateHandle, TranslateHandleTypeId, Handle );
@@ -67,7 +66,7 @@ class GAFFERUI_API TranslateHandle : public Handle
 		// > The use of a non-zero raster scale may make it appear
 		// > that a handle has no scaling applied, but that scaling
 		// > will still affect the results of `translation()`.
-		Imath::V3f translation( const DragDropEvent &event ) const;
+		Imath::V3f translation( const DragDropEvent &event );
 
 	protected :
 
@@ -84,9 +83,4 @@ class GAFFERUI_API TranslateHandle : public Handle
 
 IE_CORE_DECLAREPTR( TranslateHandle )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<TranslateHandle> > TranslateHandleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<TranslateHandle> > RecursiveTranslateHandleIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_TRANSLATEHANDLE_H

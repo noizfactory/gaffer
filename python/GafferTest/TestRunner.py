@@ -40,6 +40,7 @@ import json
 import time
 import collections
 
+import IECore
 import Gaffer
 
 # TestRunner capable of measuring performance of certain
@@ -56,10 +57,42 @@ class TestRunner( unittest.TextTestRunner ) :
 
 		self.__previousResultsFile = previousResultsFile
 
+	# Decorator used to assign categories to tests. Usage :
+	#
+	# ```
+	# @GafferTest.TestRunner.CategorisedTestMethod( { "category1", "category2" } )
+	# def testFoo( self ) :
+	# ```
+	#
+	# Tests may then be filtered by category in `gaffer test` :
+	#
+	# ```
+	# # Only run tests in category1
+	# gaffer test -category category1
+	# # Run all tests except those in category2
+	# gaffer test -excludedCategories category2
+	# ```
+	class CategorisedTestMethod( object ) :
+
+		def __init__( self, categories = [] ) :
+
+			self.__categories = set( categories )
+
+		# Called to return the decorated method
+		def __call__( self, method ) :
+
+			c = getattr( method, "categories", set() )
+			c.update( self.__categories )
+			method.categories = c
+
+			return method
+
 	# Decorator used to annotate tests which measure performance.
-	class PerformanceTestMethod( object ) :
+	class PerformanceTestMethod( CategorisedTestMethod ) :
 
 		def __init__( self, repeat = 3, acceptableDifference = 0.01 ) :
+
+			TestRunner.CategorisedTestMethod.__init__( self, { "performance" } )
 
 			self.__repeat = repeat
 			self.__acceptableDifference = acceptableDifference
@@ -67,12 +100,15 @@ class TestRunner( unittest.TextTestRunner ) :
 		# Called to return the decorated method.
 		def __call__( self, method ) :
 
+			method = TestRunner.CategorisedTestMethod.__call__( self, method )
+
 			@functools.wraps( method )
 			def wrapper( *args, **kw ) :
 
 				timings = []
 				for i in range( 0, self.__repeat ) :
 					Gaffer.ValuePlug.clearCache() # Put each iteration on an equal footing
+					Gaffer.ValuePlug.clearHashCache()
 					TestRunner.PerformanceScope._total = None
 					t = time.time()
 					result = method( *args, **kw )
@@ -93,8 +129,6 @@ class TestRunner( unittest.TextTestRunner ) :
 
 				return result
 
-			wrapper.performanceTestMethod = True
-
 			return wrapper
 
 	# Context manager used to time only specific blocks
@@ -103,14 +137,24 @@ class TestRunner( unittest.TextTestRunner ) :
 
 		# Protected to allow access by PerformanceTestMethod.
 		_total = None
+		__numIterations = None
 
 		def __enter__( self ) :
 
 			self.__startTime = time.time()
+			return self
+
+		# Use when the test internally runs the critical sections multiple times
+		def setNumIterations( self, iterations ):
+
+			self.__numIterations = iterations
 
 		def __exit__( self, type, value, traceBack ) :
 
 			t = time.time() - self.__startTime
+			if self.__numIterations:
+				t = t / self.__numIterations
+
 			if TestRunner.PerformanceScope._total is not None :
 				TestRunner.PerformanceScope._total += t
 			else :
@@ -122,20 +166,48 @@ class TestRunner( unittest.TextTestRunner ) :
 		result.writePerformance()
 		return result
 
-	# Adds a skip decorator to all non-performance-related tests.
+	# Returns the set of all test categories in a TestSuite or TestCase.
 	@staticmethod
-	def filterPerformanceTests( test ) :
+	def categories( test ) :
+
+		result = set()
+		if isinstance( test, unittest.TestSuite ) :
+			for t in test :
+				result.update( TestRunner.categories( t ) )
+		elif isinstance( test, unittest.TestCase ) :
+			testMethod = getattr( test, test._testMethodName )
+			result.update( getattr( testMethod, "categories", [] ) )
+
+		return result
+
+	@staticmethod
+	def filterCategories( test, inclusions = "*", exclusions = "" ) :
 
 		if isinstance( test, unittest.TestSuite ) :
 			for t in test :
-				TestRunner.filterPerformanceTests( t )
+				TestRunner.filterCategories( t, inclusions, exclusions )
 		elif isinstance( test, unittest.TestCase ) :
 			testMethod = getattr( test, test._testMethodName )
-			if not getattr( testMethod, "performanceTestMethod", False  ) :
+			## \todo Remove `standard` fallback (breaking change).
+			categories = getattr( testMethod, "categories", { "standard" } )
+			if not any( IECore.StringAlgo.matchMultiple( c, inclusions ) for c in categories ) :
 				setattr(
 					test, test._testMethodName,
-					unittest.skip( "Not a performance test" )( testMethod )
+					unittest.skip( f"Categories not included by `{inclusions}`" )( testMethod )
 				)
+			elif any( IECore.StringAlgo.matchMultiple( c, exclusions ) for c in categories ) :
+				setattr(
+					test, test._testMethodName,
+					unittest.skip( f"Categories excluded by `{exclusions}`" )( testMethod )
+				)
+
+	## \todo Remove (breaking change)
+	@staticmethod
+	def filterTestCategory( test, category ) :
+		if category == "":
+			return
+
+		return TestRunner.filterCategories( inclusions = category )
 
 	def _makeResult( self ) :
 
@@ -153,7 +225,7 @@ class TestRunner( unittest.TextTestRunner ) :
 			self.__results = collections.OrderedDict()
 
 			if previousResultsFile :
-				with open( previousResultsFile ) as f :
+				with open( previousResultsFile, encoding = "utf-8" ) as f :
 					self.__previousResults = json.load( f )
 			else :
 				self.__previousResults = {}
@@ -164,7 +236,7 @@ class TestRunner( unittest.TextTestRunner ) :
 
 		def save( self, fileName ) :
 
-			with open( fileName, "w" ) as f :
+			with open( fileName, "w", encoding = "utf-8" ) as f :
 				json.dump( self.__results, f, indent = 4 )
 
 		def writePerformance( self ) :
@@ -195,16 +267,20 @@ class TestRunner( unittest.TextTestRunner ) :
 			unittest.TextTestResult.addSuccess( self, test )
 
 			timings = getattr( test, "timings", None )
-			if timings and test.previousTimings :
-				new = min( timings )
-				old = min( test.previousTimings )
-				reduction = 100 * (old-new)/old
-				if reduction > 2 :
-					self.__performanceImprovements.append(
-						"- {test} : was {old:.2f}s now {new:.2f}s ({reduction:.0f}% reduction)".format(
-							test = str( test), old = old, new = new, reduction = reduction
+			if timings :
+				if self.showAll :
+					self.stream.write( "    Times : " + ", ".join( f"{t:.3g}s" for t in timings ) + "\n" )
+					self.stream.write( "    Best  : " + "{:.3g}s".format( min( timings ) ) + "\n" )
+				if test.previousTimings :
+					new = min( timings )
+					old = min( test.previousTimings )
+					reduction = 100 * (old-new)/old
+					if reduction > 2 :
+						self.__performanceImprovements.append(
+							"- {test} : was {old:.2f}s now {new:.2f}s ({reduction:.0f}% reduction)".format(
+								test = str( test), old = old, new = new, reduction = reduction
+							)
 						)
-					)
 
 			self.__addResult( test, "success" )
 

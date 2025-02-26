@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_VTUNEMONITOR_H
-#define GAFFER_VTUNEMONITOR_H
+#pragma once
 
 #ifdef GAFFER_VTUNE
 
@@ -50,7 +49,7 @@ class GAFFER_API VTuneMonitor : public Monitor
 
 	public :
 
-		VTuneMonitor( bool monitorHashProcess = false );
+		explicit VTuneMonitor( bool monitorHashProcess = false );
 		~VTuneMonitor() override;
 
 		IE_CORE_DECLAREMEMBERPTR( VTuneMonitor )
@@ -71,4 +70,3 @@ IE_CORE_DECLAREPTR( VTuneMonitor )
 } // namespace Gaffer
 
 #endif // GAFFER_VTUNE
-#endif // GAFFER_VTUNEMONITOR_H

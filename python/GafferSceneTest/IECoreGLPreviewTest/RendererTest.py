@@ -34,7 +34,6 @@
 #
 ##########################################################################
 
-import os
 import unittest
 import imath
 
@@ -81,7 +80,7 @@ class RendererTest( GafferTest.TestCase ) :
 	def testPrimVars( self ) :
 
 		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create( "OpenGL" )
-		renderer.output( "test", IECoreScene.Output( self.temporaryDirectory() + "/testPrimVars.exr", "exr", "rgba", {} ) )
+		renderer.output( "test", IECoreScene.Output( str( self.temporaryDirectory() / "testPrimVars.exr" ), "exr", "rgba", {} ) )
 
 		fragmentSource = """
 		uniform float red;
@@ -140,7 +139,7 @@ class RendererTest( GafferTest.TestCase ) :
 
 		renderer.render()
 
-		image = IECore.Reader.create(  self.temporaryDirectory() + "/testPrimVars.exr" ).read()
+		image = IECore.Reader.create( str( self.temporaryDirectory() / "testPrimVars.exr" ) ).read()
 		dimensions = image.dataWindow.size() + imath.V2i( 1 )
 		index = dimensions.x * int( dimensions.y * 0.5 )
 		self.assertEqual( image["R"][index], 0 )
@@ -160,7 +159,7 @@ class RendererTest( GafferTest.TestCase ) :
 	def testShaderParameters( self ) :
 
 		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create( "OpenGL" )
-		renderer.output( "test", IECoreScene.Output( self.temporaryDirectory() + "/testShaderParameters.exr", "exr", "rgba", {} ) )
+		renderer.output( "test", IECoreScene.Output( str( self.temporaryDirectory() / "testShaderParameters.exr" ), "exr", "rgba", {} ) )
 
 		fragmentSource = """
 		uniform vec3 colorValue;
@@ -225,6 +224,26 @@ class RendererTest( GafferTest.TestCase ) :
 		)
 
 		del o
+
+	def testTransforms( self ) :
+
+		renderer = GafferScene.Private.IECoreScenePreview.Renderer.create(
+			"OpenGL",
+			GafferScene.Private.IECoreScenePreview.Renderer.RenderType.Interactive
+		)
+
+		cube = IECoreScene.MeshPrimitive.createBox( imath.Box3f( imath.V3f( -1 ), imath.V3f( 9 ) ) )
+
+		o = renderer.object(
+			"/cube",
+			cube,
+			renderer.attributes( IECore.CompoundObject() )
+		)
+		o.transform(
+			imath.M44f().scale( imath.V3f( 0 ) )
+		)
+
+		renderer.render()
 
 if __name__ == "__main__":
 	unittest.main()

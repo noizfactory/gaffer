@@ -56,38 +56,20 @@
 
 #include "IECore/MessageHandler.h"
 
+#include "boost/algorithm/string/classification.hpp"
+#include "boost/algorithm/string/find_iterator.hpp"
 #include "boost/algorithm/string/replace.hpp"
 #include "boost/lexical_cast.hpp"
 #include "boost/regex.hpp"
 
-#include <memory>
+#include "fmt/format.h"
 
+#include <memory>
+#include <regex>
+
+using namespace boost;
 using namespace Gaffer;
 using namespace GafferBindings;
-
-//////////////////////////////////////////////////////////////////////////
-// Access to Python AST
-//////////////////////////////////////////////////////////////////////////
-
-extern "C"
-{
-// essential to include this last, since it defines macros which
-// clash with other headers.
-#include "Python-ast.h"
-};
-
-namespace boost {
-namespace python {
-
-// Specialisation to allow use of handle<PyCodeObject>
-template<>
-struct base_type_traits<PyCodeObject>
-{
-	typedef PyObject type;
-};
-
-} // namespace python
-} // namespace boost
 
 //////////////////////////////////////////////////////////////////////////
 // Serialisation
@@ -98,74 +80,76 @@ namespace
 
 const std::string formattedErrorContext( int lineNumber, const std::string &context )
 {
-	return boost::str(
-		boost::format( "Line %d%s%s" ) %
-			lineNumber %
-			(!context.empty() ? " of " : "") %
-			context
+	return fmt::format( "Line {}{}{}",
+		lineNumber, !context.empty() ? " of " : "",
+		context
 	);
 }
 
-// Execute the script one top level statement at a time,
-// reporting errors that occur, but otherwise continuing
-// with execution.
-bool tolerantExec( const char *pythonScript, boost::python::object globals, boost::python::object locals, const std::string &context )
+const std::regex g_blockStartRegex( R"(^if[ \t(])" );
+const std::regex g_blockContinuationRegex( R"(^[ \t]+)" );
+
+// Execute the script one line at a time, reporting errors that occur,
+// but otherwise continuing with execution.
+bool tolerantExec( const std::string &pythonScript, boost::python::object globals, boost::python::object locals, const std::string &context )
 {
-	// The python parsing framework uses an arena to simplify memory allocation,
-	// which is handy for us, since we're going to manipulate the AST a little.
-	std::unique_ptr<PyArena, decltype( &PyArena_Free )> arena( PyArena_New(), PyArena_Free );
-
-	// Parse the whole script, getting an abstract syntax tree for a
-	// module which would execute everything.
-	mod_ty mod = PyParser_ASTFromString(
-		pythonScript,
-		"<string>",
-		Py_file_input,
-		nullptr,
-		arena.get()
-	);
-
-	if( !mod )
-	{
-		int lineNumber = 0;
-		std::string message = IECorePython::ExceptionAlgo::formatPythonException( /* withTraceback = */ false, &lineNumber );
-		IECore::msg( IECore::Msg::Error, formattedErrorContext( lineNumber, context ), message );
-		return false;
-	}
-
-	assert( mod->kind == Module_kind );
-
-	// Loop over the top-level statements in the module body,
-	// executing one at a time.
 	bool result = false;
-	int numStatements = asdl_seq_LEN( mod->v.Module.body );
-	for( int i=0; i<numStatements; ++i )
+	int lineNumber = 0;
+
+	const IECore::Canceller *canceller = Context::current()->canceller();
+
+	auto it = make_split_iterator( pythonScript, token_finder( is_any_of( "\n" ) ) );
+	while( it != split_iterator<std::string::const_iterator>() )
 	{
-		// Make a new module containing just this one statement.
-		asdl_seq *newBody = asdl_seq_new( 1, arena.get() );
-		asdl_seq_SET( newBody, 0, asdl_seq_GET( mod->v.Module.body, i ) );
-		mod_ty newModule = Module(
-			newBody,
-			arena.get()
-		);
+		IECore::Canceller::check( canceller );
 
-		// Compile it.
-		boost::python::handle<PyCodeObject> code( PyAST_Compile( newModule, "<string>", nullptr, arena.get() ) );
+		std::string toExecute( it->begin(), it->end() );
+		++it; ++lineNumber;
 
-		// And execute it.
-		boost::python::handle<> v( boost::python::allow_null(
-			PyEval_EvalCode(
-				code.get(),
-				globals.ptr(),
-				locals.ptr()
-			)
-		) );
-
-		// Report any errors.
-		if( v == nullptr)
+		// Our serialisations have always been in a form that can be executed
+		// line-by-line. But certain third parties have used custom serialisers
+		// that output multi-line `if` statements that must be executed in a
+		// single call. Here we detect them and group them together.
+		//
+		// Notes :
+		//
+		// - Historically, we used a Python C AST API to support _any_ compound
+		//   statements here. But that is [no longer available](9d15bd21c4049d89118faf3ac27d01c5799b8264),
+		//   and using the `ast` module instead would be a significant performance
+		//   regression.
+		// - While using Python as our serialisation format is great from an
+		//   educational and reuse perspective, it has never been good from a
+		//   performance perspective. A likely future direction is to constrain
+		//   the serialisation syntax further such that it is still valid
+		//   Python, but we can parse and execute the majority of it directly in C++
+		//   for improvement performance.
+		// - We are therefore deliberately supporting only the absolute minimum of syntax
+		//   needed for the legacy third-party serialisations here, to give us
+		//   more flexibility in optimising the parsing in future.
+		if( std::regex_search( toExecute, g_blockStartRegex )  )
 		{
-			int lineNumber = 0;
-			std::string message = IECorePython::ExceptionAlgo::formatPythonException( /* withTraceback = */ false, &lineNumber );
+			while( it != split_iterator<std::string::const_iterator>() )
+			{
+				const std::string line( it->begin(), it->end() );
+				if( std::regex_search( line, g_blockContinuationRegex ) )
+				{
+					toExecute += "\n" + line;
+					++it; ++lineNumber;
+				}
+				else
+				{
+					break;
+				}
+			}
+		}
+
+		try
+		{
+			exec( toExecute.c_str(), globals, locals );
+		}
+		catch( const boost::python::error_already_set & )
+		{
+			const std::string message = IECorePython::ExceptionAlgo::formatPythonException( /* withTraceback = */ false );
 			IECore::msg( IECore::Msg::Error, formattedErrorContext( lineNumber, context ), message );
 			result = true;
 		}
@@ -183,7 +167,7 @@ boost::python::object executionDict( ScriptNodePtr script, NodePtr parent )
 {
 	boost::python::dict result;
 
-	boost::python::object builtIn = boost::python::import( "__builtin__" );
+	boost::python::object builtIn = boost::python::import( "builtins" );
 	result["__builtins__"] = builtIn;
 
 	boost::python::object gafferModule = boost::python::import( "Gaffer" );
@@ -226,7 +210,7 @@ std::string serialise( const Node *parent, const Set *filter )
 		Serialisation serialisation( parent, "parent", filter );
 		result = serialisation.result();
 	}
-	catch( boost::python::error_already_set &e )
+	catch( boost::python::error_already_set & )
 	{
 		IECorePython::ExceptionAlgo::translatePythonException();
 	}
@@ -307,7 +291,7 @@ bool execute( ScriptNode *script, const std::string &serialisation, Node *parent
 			{
 				exec( toExecute.c_str(), e, e );
 			}
-			catch( boost::python::error_already_set &e )
+			catch( boost::python::error_already_set & )
 			{
 				int lineNumber = 0;
 				std::string message = IECorePython::ExceptionAlgo::formatPythonException( /* withTraceback = */ false, &lineNumber );
@@ -316,10 +300,10 @@ bool execute( ScriptNode *script, const std::string &serialisation, Node *parent
 		}
 		else
 		{
-			result = tolerantExec( toExecute.c_str(), e, e, context );
+			result = tolerantExec( toExecute, e, e, context );
 		}
 	}
-	catch( boost::python::error_already_set &e )
+	catch( boost::python::error_already_set & )
 	{
 		IECorePython::ExceptionAlgo::translatePythonException();
 	}
@@ -366,17 +350,6 @@ class ScriptNodeWrapper : public NodeWrapper<ScriptNode>
 		{
 		}
 
-		bool isInstanceOf( IECore::TypeId typeId ) const override
-		{
-			if( typeId == (IECore::TypeId)Gaffer::ScriptNodeTypeId )
-			{
-				// Correct for the slightly overzealous (but hugely beneficial)
-				// optimisation in NodeWrapper::isInstanceOf().
-				return true;
-			}
-			return NodeWrapper<ScriptNode>::isInstanceOf( typeId );
-		}
-
 };
 
 ContextPtr context( ScriptNode &s )
@@ -392,6 +365,22 @@ ApplicationRootPtr applicationRoot( ScriptNode &s )
 StandardSetPtr selection( ScriptNode &s )
 {
 	return s.selection();
+}
+
+SetPtr focusSet( ScriptNode &s )
+{
+	return s.focusSet();
+}
+
+void setFocus( ScriptNode &s, Node *node )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	s.setFocus( node );
+}
+
+NodePtr getFocus( ScriptNode &s )
+{
+	return s.getFocus();
 }
 
 void undo( ScriptNode &s )
@@ -430,7 +419,7 @@ bool executeWrapper( ScriptNode &s, const std::string &serialisation, Node *pare
 	return s.execute( serialisation, parent, continueOnError );
 }
 
-bool executeFile( ScriptNode &s, const std::string &fileName, Node *parent, bool continueOnError )
+bool executeFile( ScriptNode &s, const std::filesystem::path &fileName, Node *parent, bool continueOnError )
 {
 	IECorePython::ScopedGILRelease r;
 	return s.executeFile( fileName, parent, continueOnError );
@@ -448,7 +437,7 @@ void save( ScriptNode &s )
 	s.save();
 }
 
-bool importFile( ScriptNode &s, const std::string &fileName, Node *parent, bool continueOnError )
+bool importFile( ScriptNode &s, const std::filesystem::path &fileName, Node *parent, bool continueOnError )
 {
 	IECorePython::ScopedGILRelease r;
 	return s.importFile( fileName, parent, continueOnError );
@@ -457,17 +446,16 @@ bool importFile( ScriptNode &s, const std::string &fileName, Node *parent, bool 
 struct ActionSlotCaller
 {
 
-	boost::signals::detail::unusable operator()( boost::python::object slot, ScriptNodePtr script, ConstActionPtr action, Action::Stage stage )
+	void operator()( boost::python::object slot, ScriptNodePtr script, ConstActionPtr action, Action::Stage stage )
 	{
 		try
 		{
 			slot( script, boost::const_pointer_cast<Action>( action ), stage );
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 
 };
@@ -475,28 +463,52 @@ struct ActionSlotCaller
 struct UndoAddedSlotCaller
 {
 
-	boost::signals::detail::unusable operator()( boost::python::object slot, ScriptNodePtr script )
+	void operator()( boost::python::object slot, ScriptNodePtr script )
 	{
 		try
 		{
 			slot( script );
 		}
-		catch( const boost::python::error_already_set &e )
+		catch( const boost::python::error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 
 };
+
+struct FocusChangedSlotCaller
+{
+
+	void operator()( boost::python::object slot, ScriptNodePtr script, NodePtr node )
+	{
+		try
+		{
+			slot( script, node );
+		}
+		catch( const boost::python::error_already_set & )
+		{
+			IECorePython::ExceptionAlgo::translatePythonException();
+		}
+	}
+
+};
+
 
 } // namespace
 
 void GafferModule::bindScriptNode()
 {
+
+	GraphComponentClass<ScriptContainer>();
+
 	boost::python::scope s = NodeClass<ScriptNode, ScriptNodeWrapper>()
 		.def( "applicationRoot", &applicationRoot )
 		.def( "selection", &selection )
+		.def( "setFocus", &setFocus )
+		.def( "getFocus", &getFocus )
+		.def( "focusChangedSignal", &ScriptNode::focusChangedSignal, boost::python::return_internal_reference<1>() )
+		.def( "focusSet", &focusSet )
 		.def( "undoAvailable", &ScriptNode::undoAvailable )
 		.def( "undo", &undo )
 		.def( "redoAvailable", &ScriptNode::redoAvailable )
@@ -521,5 +533,6 @@ void GafferModule::bindScriptNode()
 
 	SignalClass<ScriptNode::ActionSignal, DefaultSignalCaller<ScriptNode::ActionSignal>, ActionSlotCaller>( "ActionSignal" );
 	SignalClass<ScriptNode::UndoAddedSignal, DefaultSignalCaller<ScriptNode::UndoAddedSignal>, UndoAddedSlotCaller>( "UndoAddedSignal" );
+	SignalClass<ScriptNode::FocusChangedSignal, DefaultSignalCaller<ScriptNode::FocusChangedSignal>, FocusChangedSlotCaller>( "FocusChangedSignal" );
 
 }

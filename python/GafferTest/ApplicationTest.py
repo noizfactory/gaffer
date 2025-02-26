@@ -36,7 +36,8 @@
 
 import os
 import time
-import subprocess32 as subprocess
+import subprocess
+import unittest
 
 import IECore
 import Gaffer
@@ -55,25 +56,37 @@ class ApplicationTest( GafferTest.TestCase ) :
 
 	def testWrapperDoesntDuplicatePaths( self ) :
 
-		output = subprocess.check_output( [ "gaffer", "env", "env" ] )
-		externalEnv = {}
-		for line in output.split( '\n' ) :
-			partition = line.partition( "=" )
-			externalEnv[partition[0]] = partition[2]
+		for v in ["GAFFER_STARTUP_PATHS", "GAFFER_APP_PATHS"] :
+			value = subprocess.check_output( [ str( Gaffer.executablePath() ), "env", "python", "-c", "import os; print(os.environ['{}'])".format( v ) ], universal_newlines = True )
+			self.assertEqual( value.strip(), os.environ[v] )
 
-		self.assertEqual( externalEnv["GAFFER_STARTUP_PATHS"], os.environ["GAFFER_STARTUP_PATHS"] )
-		self.assertEqual( externalEnv["GAFFER_APP_PATHS"], os.environ["GAFFER_APP_PATHS"] )
-
+	@unittest.skipIf( os.name == "nt", "Process name is not controllable on Windows.")
 	def testProcessName( self ) :
 
-		process = subprocess.Popen( [ "gaffer", "env", "sleep", "100" ] )
-		time.sleep( 1 )
-		command = subprocess.check_output( [ "ps", "-p", str( process.pid ), "-o", "command=" ] ).strip()
-		name = subprocess.check_output( [ "ps", "-p", str( process.pid ), "-o", "comm=" ] ).strip()
-		process.kill()
+		process = subprocess.Popen( [ str( Gaffer.executablePath() ), "env", "sleep", "100" ] )
+		try :
+			startTime = time.time()
+			while True :
+				time.sleep( 0.1 )
+				command = subprocess.check_output( [ "ps", "-p", str( process.pid ), "-o", "command=" ], universal_newlines = True ).strip()
+				name = subprocess.check_output( [ "ps", "-p", str( process.pid ), "-o", "comm=" ], universal_newlines = True ).strip()
+				try :
+					self.assertEqual( command, "gaffer env sleep 100" )
+					self.assertEqual( name, "gaffer" )
 
-		self.assertEqual( command, "gaffer env sleep 100" )
-		self.assertEqual( name, "gaffer" )
+				except self.failureException :
+					# It can take some time for gaffer to change its own process name, which varies
+					# based on the host's performance.
+					# For that reason, we check until 3 seconds have passed before giving up.
+					if time.time() - startTime > 3.0 :
+						raise
+
+				else :
+					break
+
+		finally :
+			process.kill()
+
 
 if __name__ == "__main__":
 	unittest.main()

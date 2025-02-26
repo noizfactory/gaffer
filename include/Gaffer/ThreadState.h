@@ -34,10 +34,10 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_THREADSTATE_H
-#define GAFFER_THREADSTATE_H
+#pragma once
 
 #include "Gaffer/Export.h"
+#include "Gaffer/Plug.h"
 
 #include "IECore/RefCounted.h"
 
@@ -59,7 +59,7 @@ IE_CORE_FORWARDDECLARE( Monitor );
 /// Context and Monitor classes. The exception to this is when using
 /// task-based TBB algorithms, in which case it is necessary to manually
 /// transfer the current ThreadState from the calling code to the tasks
-/// running on it's behalf. For example :
+/// running on its behalf. For example :
 ///
 /// ```
 /// const ThreadState &threadState = ThreadState::current();
@@ -81,7 +81,7 @@ class GAFFER_API ThreadState
 		/// no active monitors, and a default constructed Context.
 		ThreadState();
 
-		class Scope : public boost::noncopyable
+		class GAFFER_API Scope : public boost::noncopyable
 		{
 
 			public :
@@ -116,6 +116,9 @@ class GAFFER_API ThreadState
 
 		static const ThreadState &current();
 
+		const Context *context() const { return m_context; }
+		const Process *process() const { return m_process; }
+
 	private :
 
 		friend class Process;
@@ -127,6 +130,7 @@ class GAFFER_API ThreadState
 		const Context *m_context;
 		const Process *m_process;
 		const MonitorSet *m_monitors;
+		bool m_mightForceMonitoring;
 
 		static const MonitorSet g_defaultMonitors;
 		static const ThreadState g_defaultState;
@@ -134,5 +138,3 @@ class GAFFER_API ThreadState
 };
 
 } // namespace Gaffer
-
-#endif // GAFFER_THREADSTATE_H

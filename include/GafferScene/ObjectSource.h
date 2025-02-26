@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_OBJECTSOURCE_H
-#define GAFFERSCENE_OBJECTSOURCE_H
+#pragma once
 
 #include "GafferScene/SceneNode.h"
 
@@ -58,7 +57,7 @@ class GAFFERSCENE_API ObjectSource : public SceneNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::ObjectSource, ObjectSourceTypeId, SceneNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::ObjectSource, ObjectSourceTypeId, SceneNode );
 
 		~ObjectSource() override;
 
@@ -109,6 +108,7 @@ class GAFFERSCENE_API ObjectSource : public SceneNode
 
 	private :
 
+		IECore::InternedString validatedName() const;
 		bool setNameValid( const IECore::InternedString &setName ) const;
 
 		static size_t g_firstPlugIndex;
@@ -118,5 +118,3 @@ class GAFFERSCENE_API ObjectSource : public SceneNode
 IE_CORE_DECLAREPTR( ObjectSource );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_OBJECTSOURCE_H

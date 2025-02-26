@@ -63,6 +63,18 @@ Gaffer.Metadata.registerNode(
 			remain the same as the input.
 			""",
 
+			"plugValueWidget:type", "GafferImageUI.ChannelPlugValueWidget",
+
+		],
+
+		"ignoreMissingAlpha" : [
+
+			"description",
+			"""
+			If set, this node will do nothing if the specified `alphaChannel`
+			is not found, instead of throwing an error.
+			""",
+
 		],
 
 	}

@@ -51,7 +51,7 @@ using namespace Gaffer;
 using namespace GafferScene;
 using namespace GafferArnold;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ArnoldMeshLight );
+GAFFER_NODE_DEFINE_TYPE( ArnoldMeshLight );
 
 ArnoldMeshLight::ArnoldMeshLight( const std::string &name )
 	:	GafferScene::FilteredSceneProcessor( name, IECore::PathMatcher::NoMatch )
@@ -67,9 +67,13 @@ ArnoldMeshLight::ArnoldMeshLight( const std::string &name )
 	ArnoldAttributesPtr attributes = new ArnoldAttributes( "__attributes" );
 	attributes->inPlug()->setInput( inPlug() );
 	attributes->filterPlug()->setInput( filterPlug() );
-	for( NameValuePlugIterator it( attributes->attributesPlug() ); !it.done(); ++it )
+	for( NameValuePlug::Iterator it( attributes->attributesPlug() ); !it.done(); ++it )
 	{
-		if( boost::ends_with( (*it)->getName().string(), "Visibility" ) && (*it)->getName() != "cameraVisibility" )
+		if(
+			boost::ends_with( (*it)->getName().string(), "Visibility" ) &&
+			(*it)->getName().string().find( "AutoBump" ) == std::string::npos &&
+			(*it)->getName() != "cameraVisibility"
+		)
 		{
 			(*it)->enabledPlug()->setValue( true );
 			(*it)->valuePlug<BoolPlug>()->setValue( false );
@@ -91,7 +95,7 @@ ArnoldMeshLight::ArnoldMeshLight( const std::string &name )
 
 	PlugPtr parametersPlug = shader->parametersPlug()->createCounterpart( "parameters", Plug::In );
 	addChild( parametersPlug );
-	for( PlugIterator srcIt( parametersPlug.get() ), dstIt( shader->parametersPlug() ); !srcIt.done(); ++srcIt, ++dstIt )
+	for( Plug::Iterator srcIt( parametersPlug.get() ), dstIt( shader->parametersPlug() ); !srcIt.done(); ++srcIt, ++dstIt )
 	{
 		(*dstIt)->setInput( *srcIt );
 		// We don't need the parameters to be dynamic, because we create the

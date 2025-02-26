@@ -46,18 +46,21 @@
 #include "IECore/InternedString.h"
 #include "IECore/StringAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
+
+#include "fmt/format.h"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-typedef boost::tokenizer<boost::char_separator<char> > Tokenizer;
+using Tokenizer = boost::tokenizer<boost::char_separator<char> >;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SceneReader );
+GAFFER_NODE_DEFINE_TYPE( SceneReader );
 
 //////////////////////////////////////////////////////////////////////////
 // SceneReader implementation
@@ -65,7 +68,94 @@ GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( SceneReader );
 
 size_t SceneReader::g_firstPlugIndex = 0;
 
-static IECore::BoolDataPtr g_trueBoolData = new IECore::BoolData( true );
+namespace
+{
+
+IECore::ConstBoolDataPtr g_trueBoolData = new IECore::BoolData( true );
+const InternedString g_lights( "__lights" );
+const InternedString g_defaultLights( "defaultLights" );
+
+bool shouldEmulateDefaultLightsSet( const IECoreScene::SceneInterface *scene, const vector<InternedString> &setNames )
+{
+	// When loading a USD file that wasn't authored by Gaffer, there will be no `defaultLights`
+	// set, because USD uses a different mechanism for light linking. In this case, we want to
+	// put all the lights in the `defaultLights` set because having everything linked is typically
+	// better than having nothing linked. We do that by loading the `__lights` set in its place.
+	//
+	// When a `defaultLights` set has been authored explicitly, presumably because the file was
+	// written from Gaffer, we prefer that to any automatic behaviour. This allows us to round-trip
+	// light linking within Gaffer itself.
+	return
+		!strcmp( scene->typeName(), "USDScene" ) &&
+		std::find( setNames.begin(), setNames.end(), g_defaultLights ) == setNames.end() &&
+		std::find( setNames.begin(), setNames.end(), g_lights ) != setNames.end()
+	;
+}
+
+double timeAsDouble( const Context *context )
+{
+	// The SceneInterface expects time as a `double` in seconds, but Gaffer's
+	// primary representation is a `float` frame number. We need to take care
+	// with this conversion, particularly with respect to USDScene and USD's own
+	// representation for time.
+	//
+	// USD uses `double` UsdTimeCode values to store time, with an arbitrary
+	// mapping between timecode, frames and seconds being specified by the
+	// `framesPerSecond` and `timeCodesPerSecond` stage metadata (also
+	// `double`). One common setup is to set `timeCodesPerSecond ==
+	// framesPerSecond` so that timecodes are equivalent to frame numbers. In
+	// this case we should be able to do an exact mapping from Gaffer's frame
+	// number to USD's timecode, by converting to seconds here and then multiplying
+	// by `timeCodesPerSecond` inside the USDScene implementation. But this is
+	// only lossless if we perform the division here at double precision, rather
+	// than use `Context::getTime()` which operates only with float precision.
+	//
+	/// \todo Reconsider Gaffer's time representation. Perhaps we should simply
+	/// move to `double` for storing `frame` and `framesPerSecond`?
+	return static_cast<double>( context->getFrame() ) / static_cast<double>( context->getFramesPerSecond() );
+}
+
+ValuePlug::CachePolicy cachePolicyFromEnv( const char *name )
+{
+	if( const char *cp = getenv( name ) )
+	{
+		IECore::msg(
+			IECore::Msg::Info, "SceneReader", fmt::format( "{} is set to {}.", name, cp )
+		);
+
+		if( !strcmp( cp, "Standard" ) )
+		{
+			return ValuePlug::CachePolicy::Standard;
+		}
+		else if( !strcmp( cp, "TaskCollaboration" ) )
+		{
+			return ValuePlug::CachePolicy::TaskCollaboration;
+		}
+		else if( !strcmp( cp, "TaskIsolation" ) )
+		{
+			return ValuePlug::CachePolicy::TaskIsolation;
+		}
+		else if( !strcmp( cp, "Legacy" ) || !strcmp( cp, "Default" ) )
+		{
+			return ValuePlug::CachePolicy::Default;
+		}
+		else
+		{
+			IECore::msg(
+				IECore::Msg::Warning, "SceneReader",
+				fmt::format( "Invalid value \"{}\" for {}. Must be Standard, TaskCollaboration, TaskIsolation or Legacy.", cp, name )
+			);
+		}
+	}
+
+	return ValuePlug::CachePolicy::Default;
+}
+
+const ValuePlug::CachePolicy g_objectCachePolicy = cachePolicyFromEnv( "GAFFERSCENE_SCENEREADER_OBJECT_CACHEPOLICY" );
+const ValuePlug::CachePolicy g_setNamesCachePolicy = cachePolicyFromEnv( "GAFFERSCENE_SCENEREADER_SETNAMES_CACHEPOLICY" );
+const ValuePlug::CachePolicy g_setCachePolicy = cachePolicyFromEnv( "GAFFERSCENE_SCENEREADER_SET_CACHEPOLICY" );
+
+} // namespace
 
 SceneReader::SceneReader( const std::string &name )
 	:	SceneNode( name )
@@ -75,6 +165,8 @@ SceneReader::SceneReader( const std::string &name )
 	addChild( new IntPlug( "refreshCount" ) );
 	addChild( new StringPlug( "tags" ) );
 	addChild( new TransformPlug( "transform" ) );
+
+	outPlug()->childBoundsPlug()->setFlags( Plug::AcceptsDependencyCycles, true );
 	plugSetSignal().connect( boost::bind( &SceneReader::plugSet, this, ::_1 ) );
 }
 
@@ -126,26 +218,37 @@ void SceneReader::affects( const Gaffer::Plug *input, AffectedPlugsContainer &ou
 {
 	SceneNode::affects( input, outputs );
 
-	if( input == fileNamePlug() || input == refreshCountPlug() )
+	const bool affectsScene = input == fileNamePlug() || input == refreshCountPlug();
+
+	if(
+		affectsScene ||
+		input == outPlug()->childBoundsPlug() ||
+		transformPlug()->isAncestorOf( input )
+	)
 	{
 		outputs.push_back( outPlug()->boundPlug() );
+	}
+
+	if( affectsScene || transformPlug()->isAncestorOf( input ) )
+	{
 		outputs.push_back( outPlug()->transformPlug() );
-		outputs.push_back( outPlug()->attributesPlug() );
-		outputs.push_back( outPlug()->objectPlug() );
+	}
+
+	if( affectsScene || input == tagsPlug() )
+	{
 		outputs.push_back( outPlug()->childNamesPlug() );
-		// deliberately not adding globalsPlug(), since we don't
-		// load those from file.
-		outputs.push_back( outPlug()->setNamesPlug() );
+	}
+
+	if( affectsScene || input == outPlug()->setNamesPlug() )
+	{
 		outputs.push_back( outPlug()->setPlug() );
 	}
-	else if( input == tagsPlug() )
+
+	if( affectsScene )
 	{
-		outputs.push_back( outPlug()->childNamesPlug() );
-	}
-	else if( transformPlug()->isAncestorOf( input ) )
-	{
-		outputs.push_back( outPlug()->transformPlug() );
-		outputs.push_back( outPlug()->boundPlug() );
+		outputs.push_back( outPlug()->attributesPlug() );
+		outputs.push_back( outPlug()->objectPlug() );
+		outputs.push_back( outPlug()->setNamesPlug() );
 	}
 }
 
@@ -155,26 +258,58 @@ size_t SceneReader::supportedExtensions( std::vector<std::string> &extensions )
 	return extensions.size();
 }
 
+Gaffer::ValuePlug::CachePolicy SceneReader::computeCachePolicy( const Gaffer::ValuePlug *output ) const
+{
+	/// \todo Determine ideal cache policies and change default for when policy isn't
+	/// specified by the environment. Consider doing this for other children of `outPlug()` too, but
+	/// bear in mind that `CachePolicy::Standard` is not a good idea for `boundPlug()`. Because
+	/// `computeBound()` forwards to `parent->childBoundsPlug()->getValue()` and that uses
+	/// TaskCollaboration, we want to allow as many threads through as possible.
+	if( output == outPlug()->objectPlug() )
+	{
+		return g_objectCachePolicy;
+	}
+	else if( output == outPlug()->setPlug() )
+	{
+		return g_setCachePolicy;
+	}
+	else if( output == outPlug()->setNamesPlug() )
+	{
+		return g_setNamesCachePolicy;
+	}
+
+	return SceneNode::computeCachePolicy( output );
+}
+
 void SceneReader::hashBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
 	SceneNode::hashBound( path, context, parent, h );
 
-	ConstSceneInterfacePtr s = scene( path );
+	int refreshCount = 0;
+	ConstSceneInterfacePtr s = scene( path, context, &refreshCount );
 	if( !s )
 	{
 		return;
 	}
 
-	refreshCountPlug()->hash( h );
+	h.append( refreshCount );
 
 	if( s->hasBound() )
 	{
-		s->hash( SceneInterface::BoundHash, context->getTime(), h );
+		s->hash( SceneInterface::BoundHash, timeAsDouble( context ), h );
 	}
 	else
 	{
-		fileNamePlug()->hash( h );
-		h.append( &path.front(), path.size() );
+		// Deliberately not using `childBoundsPlug()->hash()`
+		// here because `HierarchyHash` also uniquely identifies the
+		// result, and is quicker to compute (at least in all current
+		// SceneInterface implementations). In current implementations,
+		// `HierarchyHash` is equivalent to hashing `fileName` and `path`
+		// but with one big improvement : USDScene and LinkedScene can
+		// account for scenegraph instancing and save us from repeating
+		// the bounding box computation for _every_ instance. This is
+		// a _big_ performance win for complex scenes.
+		s->hash( SceneInterface::HierarchyHash, context->getTime(), h );
 	}
 
 	if( path.size() == 0 )
@@ -185,7 +320,7 @@ void SceneReader::hashBound( const ScenePath &path, const Gaffer::Context *conte
 
 Imath::Box3f SceneReader::computeBound( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	ConstSceneInterfacePtr s = scene( path, context );
 	if( !s )
 	{
 		return Box3f();
@@ -194,7 +329,7 @@ Imath::Box3f SceneReader::computeBound( const ScenePath &path, const Gaffer::Con
 	Box3f result;
 	if( s->hasBound() )
 	{
-		const Box3d b = s->readBound( context->getTime() );
+		const Box3d b = s->readBound( timeAsDouble( context ) );
 		if( b.isEmpty() )
 		{
 			return Box3f();
@@ -203,7 +338,7 @@ Imath::Box3f SceneReader::computeBound( const ScenePath &path, const Gaffer::Con
 	}
 	else
 	{
-		result = unionOfTransformedChildBounds( path, parent );
+		result = parent->childBoundsPlug()->getValue();
 	}
 
 	if( path.size() == 0 && !result.isEmpty() )
@@ -218,14 +353,15 @@ void SceneReader::hashTransform( const ScenePath &path, const Gaffer::Context *c
 {
 	SceneNode::hashTransform( path, context, parent, h );
 
-	ConstSceneInterfacePtr s = scene( path );
+	int refreshCount = 0;
+	ConstSceneInterfacePtr s = scene( path, context, &refreshCount );
 	if( !s )
 	{
 		return;
 	}
 
-	refreshCountPlug()->hash( h );
-	s->hash( SceneInterface::TransformHash, context->getTime(), h );
+	h.append( refreshCount );
+	s->hash( SceneInterface::TransformHash, timeAsDouble( context ), h );
 
 	if( path.size() == 1 )
 	{
@@ -235,13 +371,13 @@ void SceneReader::hashTransform( const ScenePath &path, const Gaffer::Context *c
 
 Imath::M44f SceneReader::computeTransform( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	ConstSceneInterfacePtr s = scene( path, context );
 	if( !s )
 	{
 		return M44f();
 	}
 
-	const M44d t = s->readTransformAsMatrix( context->getTime() );
+	const M44d t = s->readTransformAsMatrix( timeAsDouble( context ) );
 	M44f result = M44f(
 		t[0][0], t[0][1], t[0][2], t[0][3],
 		t[1][0], t[1][1], t[1][2], t[1][3],
@@ -258,7 +394,8 @@ Imath::M44f SceneReader::computeTransform( const ScenePath &path, const Gaffer::
 
 void SceneReader::hashAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	int refreshCount = 0;
+	ConstSceneInterfacePtr s = scene( path, context, &refreshCount );
 	if( !s )
 	{
 		h = parent->attributesPlug()->defaultValue()->Object::hash();
@@ -267,13 +404,13 @@ void SceneReader::hashAttributes( const ScenePath &path, const Gaffer::Context *
 
 	SceneNode::hashAttributes( path, context, parent, h );
 
-	refreshCountPlug()->hash( h );
-	s->hash( SceneInterface::AttributesHash, context->getTime(), h );
+	h.append( refreshCount );
+	s->hash( SceneInterface::AttributesHash, timeAsDouble( context ), h );
 }
 
 IECore::ConstCompoundObjectPtr SceneReader::computeAttributes( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	ConstSceneInterfacePtr s = scene( path, context );
 	if( !s )
 	{
 		return parent->attributesPlug()->defaultValue();
@@ -297,9 +434,23 @@ IECore::ConstCompoundObjectPtr SceneReader::computeAttributes( const ScenePath &
 			continue;
 		}
 
-		// the const cast is ok, because we're only using it to put the object into a CompoundObject that will
-		// be treated as forever const after being returned from this function.
-		result->members()[ std::string( *it ) ] = boost::const_pointer_cast<Object>( s->readAttribute( *it, context->getTime() ) );
+		ConstObjectPtr attribute = s->readAttribute( *it, timeAsDouble( context ) );
+		if( attribute )
+		{
+			// The const cast is ok, because we're only using it to put the object into a CompoundObject that will
+			// be treated as forever const after being returned from this function.
+			result->members()[ std::string( *it ) ] = boost::const_pointer_cast<Object>( attribute );
+		}
+		else
+		{
+			IECore::msg(
+				IECore::Msg::Warning, "SceneReader::computeAttributes",
+				fmt::format(
+					"Failed to load attribute \"{}\" at location \"{}\"",
+					it->string(), ScenePlug::pathToString( path )
+				)
+			);
+		}
 	}
 
 	return result;
@@ -307,8 +458,8 @@ IECore::ConstCompoundObjectPtr SceneReader::computeAttributes( const ScenePath &
 
 void SceneReader::hashObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-
-	ConstSceneInterfacePtr s = scene( path );
+	int refreshCount = 0;
+	ConstSceneInterfacePtr s = scene( path, context, &refreshCount );
 	if( !s || !s->hasObject() )
 	{
 		// no object
@@ -318,24 +469,32 @@ void SceneReader::hashObject( const ScenePath &path, const Gaffer::Context *cont
 
 	SceneNode::hashObject( path, context, parent, h );
 
-	refreshCountPlug()->hash( h );
-	s->hash( SceneInterface::ObjectHash, context->getTime(), h );
+	h.append( refreshCount );
+	s->hash( SceneInterface::ObjectHash, timeAsDouble( context ), h );
 }
 
 IECore::ConstObjectPtr SceneReader::computeObject( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	ConstSceneInterfacePtr s = scene( path, context );
 	if( !s || !s->hasObject() )
 	{
 		return parent->objectPlug()->defaultValue();
 	}
 
-	return s->readObject( context->getTime() );
+	ConstObjectPtr o = s->readObject( timeAsDouble( context ), context->canceller() );
+	// We checked `hasObject()` already, so we shouldn't _really_ get a nullptr
+	// here. But it can currently happen in at least one circumstance : when a
+	// USDScene loads a UsdVolume with no valid field definitions. This could be
+	// dealt with in USDScene by extending the ObjectAlgo API and making
+	// `hasObject()` more expensive, but in the meantime it's simpler and
+	// cheaper to add some protection here.
+	return o ? o : parent->objectPlug()->defaultValue();
 }
 
 void SceneReader::hashChildNames( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	int refreshCount = 0; string tags;
+	ConstSceneInterfacePtr s = scene( path, context, &refreshCount, &tags );
 	if( !s )
 	{
 		h = parent->childNamesPlug()->defaultValue()->Object::hash();
@@ -344,17 +503,16 @@ void SceneReader::hashChildNames( const ScenePath &path, const Gaffer::Context *
 
 	SceneNode::hashChildNames( path, context, parent, h );
 
-	refreshCountPlug()->hash( h );
+	h.append( refreshCount );
+	h.append( tags );
 
-	// append a hash of the tags plug, as restricting the tags can affect the hierarchy
-	tagsPlug()->hash( h );
-
-	s->hash( SceneInterface::ChildNamesHash, context->getTime(), h );
+	s->hash( SceneInterface::ChildNamesHash, timeAsDouble( context ), h );
 }
 
 IECore::ConstInternedStringVectorDataPtr SceneReader::computeChildNames( const ScenePath &path, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( path );
+	string tagsString;
+	ConstSceneInterfacePtr s = scene( path, context, nullptr, &tagsString );
 	if( !s )
 	{
 		return parent->childNamesPlug()->defaultValue();
@@ -368,7 +526,6 @@ IECore::ConstInternedStringVectorDataPtr SceneReader::computeChildNames( const S
 
 	// filter out any which don't have the right tags
 
-	std::string tagsString = tagsPlug()->getValue();
 	if( !tagsString.empty() )
 	{
 		Tokenizer tagsTokenizer( tagsString, boost::char_separator<char>( " " ) );
@@ -425,14 +582,26 @@ void SceneReader::hashSetNames( const Gaffer::Context *context, const ScenePlug 
 
 IECore::ConstInternedStringVectorDataPtr SceneReader::computeSetNames( const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	ConstSceneInterfacePtr s = scene( ScenePath() );
+	ConstSceneInterfacePtr s = scene( ScenePath(), context );
 	if( !s )
 	{
 		return parent->setNamesPlug()->defaultValue();
 	}
 
 	InternedStringVectorDataPtr result = new InternedStringVectorData();
-	s->readTags( result->writable(), SceneInterface::LocalTag | SceneInterface::DescendantTag );
+	if( useSetsAPI( s.get() ) )
+	{
+		result->writable() = s->setNames();
+	}
+	else
+	{
+		s->readTags( result->writable(), SceneInterface::LocalTag | SceneInterface::DescendantTag );
+	}
+
+	if( shouldEmulateDefaultLightsSet( s.get(), result->readable() ) )
+	{
+		result->writable().push_back( g_defaultLights );
+	}
 
 	return result;
 }
@@ -440,12 +609,16 @@ IECore::ConstInternedStringVectorDataPtr SceneReader::computeSetNames( const Gaf
 void SceneReader::hashSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const
 {
 	SceneNode::hashSet( setName, context, parent, h );
+
+	ScenePlug::GlobalScope globalScope( context );
 	fileNamePlug()->hash( h );
 	refreshCountPlug()->hash( h );
+	// Technically speaking, we should also call `outPlug()->setNamesPlug()->hash( h )` here,
+	// but it doesn't append anything we haven't already appended.
 	h.append( setName );
 }
 
-static void loadSetWalk( const SceneInterface *s, const InternedString &setName, PathMatcher &set, const vector<InternedString> &path )
+static void loadSetWalk( const SceneInterface *s, const InternedString &setName, const Gaffer::Context *context, PathMatcher &set, const vector<InternedString> &path )
 {
 	if( s->hasTag( setName, SceneInterface::LocalTag ) )
 	{
@@ -468,21 +641,65 @@ static void loadSetWalk( const SceneInterface *s, const InternedString &setName,
 	childPath.push_back( InternedString() ); // room for the child name
 	for( SceneInterface::NameList::const_iterator it = childNames.begin(), eIt = childNames.end(); it != eIt; ++it )
 	{
+		Canceller::check( context->canceller() );
+
 		ConstSceneInterfacePtr child = s->child( *it );
 		childPath.back() = *it;
-		loadSetWalk( child.get(), setName, set, childPath );
+		loadSetWalk( child.get(), setName, context, set, childPath );
 	}
 }
 
 IECore::ConstPathMatcherDataPtr SceneReader::computeSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent ) const
 {
-	PathMatcherDataPtr result = new PathMatcherData;
-	ConstSceneInterfacePtr rootScene = scene( ScenePath() );
-	if( rootScene )
+	ConstInternedStringVectorDataPtr setNamesData = parent->setNames();
+	if( find( setNamesData->readable().begin(), setNamesData->readable().end(), setName ) == setNamesData->readable().end() )
 	{
-		loadSetWalk( rootScene.get(), setName, result->writable(), ScenePath() );
+		// As documented on `SceneNode::computeSet()`, we may be called with set names
+		// that are not present in `out.setNames`, and it is our responsibility to
+		// return an empty set in this case. Reading an empty set from a USDScene can
+		// be arbitrarily expensive though, because it will traverse the entire stage
+		// looking for matching collections. We perform our own check here first, to
+		// avoid that expense.
+		/// \todo Elsewhere in Gaffer it is the client's responsibility to only use
+		/// valid contexts with names that have been advertised (e.g. `scene:path`,
+		/// `image:channelName`). Perhaps that would be a better approach here?
+		return outPlug()->setPlug()->defaultValue();
 	}
-	return result;
+
+	ConstSceneInterfacePtr rootScene = scene( ScenePath(), context );
+	if( !rootScene )
+	{
+		return outPlug()->setPlug()->defaultValue();
+	}
+
+	InternedString setNameToRead = setName;
+	if( setName == g_defaultLights )
+	{
+		vector<InternedString> setNames;
+		if( useSetsAPI( rootScene.get() ) )
+		{
+			setNames = rootScene->setNames();
+		}
+		else
+		{
+			rootScene->readTags( setNames, SceneInterface::LocalTag | SceneInterface::DescendantTag );
+		}
+		if( shouldEmulateDefaultLightsSet( rootScene.get(), setNames ) )
+		{
+			setNameToRead = g_lights;
+		}
+	}
+
+	if( useSetsAPI( rootScene.get() ) )
+	{
+		return new PathMatcherData( rootScene->readSet( setNameToRead, /* readDescendantSets = */ true, context->canceller() ) );
+	}
+	else
+	{
+		PathMatcherDataPtr result = new PathMatcherData;
+		loadSetWalk( rootScene.get(), setNameToRead, context, result->writable(), ScenePath() );
+		return result;
+	}
 }
 
 void SceneReader::plugSet( Gaffer::Plug *plug )
@@ -498,12 +715,23 @@ void SceneReader::plugSet( Gaffer::Plug *plug )
 	}
 }
 
-ConstSceneInterfacePtr SceneReader::scene( const ScenePath &path ) const
+ConstSceneInterfacePtr SceneReader::scene( const ScenePath &path, const Gaffer::Context *context, int *refreshCount, std::string *tags ) const
 {
+	ScenePlug::GlobalScope globalScope( context );
+
 	std::string fileName = fileNamePlug()->getValue();
 	if( !fileName.size() )
 	{
 		return nullptr;
+	}
+
+	if( refreshCount )
+	{
+		*refreshCount = refreshCountPlug()->getValue();
+	}
+	if( tags )
+	{
+		*tags = tagsPlug()->getValue();
 	}
 
 	LastScene &lastScene = m_lastScene.local();
@@ -528,4 +756,15 @@ ConstSceneInterfacePtr SceneReader::scene( const ScenePath &path ) const
 	lastScene.path = path;
 
 	return lastScene.pathScene;
+}
+
+bool SceneReader::useSetsAPI( const SceneInterface *scene )
+{
+	const char *typeName = scene->typeName();
+	// We use the tags API for the legacy interfaces listed below, and the sets API
+	// for everything else.
+	return
+		strcmp( typeName, "SceneCache" ) && strcmp( typeName, "MeshCacheSceneInterface" ) &&
+		strcmp( typeName, "LinkedScene" ) && strcmp( typeName, "LiveScene" )
+	;
 }

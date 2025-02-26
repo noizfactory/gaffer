@@ -45,29 +45,22 @@ import GafferUI
 # implementation suitable for most purposes.
 class NodeToolbar( GafferUI.Widget ) :
 
-	__fallbackContext = Gaffer.Context()
-
 	def __init__( self, node, topLevelWidget, **kw ) :
 
 		GafferUI.Widget.__init__( self, topLevelWidget, **kw )
 
 		self.__node = node
-
-		scriptNode = self.__node.scriptNode()
-		self.__context = scriptNode.context() if scriptNode is not None else self.__fallbackContext
+		self.__contextTracker = GafferUI.ContextTracker.acquireForFocus( self.__node )
 
 	## Returns the node the toolbar represents.
 	def node( self ) :
 
 		return self.__node
 
-	def getContext( self ) :
+	## Returns the context in which the toolbar shows its plugs.
+	def context( self ) :
 
-		return self.__context
-
-	def setContext( self, context ) :
-
-		self.__context = context
+		return self.__contextTracker.context( self.__node )
 
 	## Creates a NodeToolbar instance for the specified node and edge.
 	# Note that not all nodes have toolbars, so None may be returned.
@@ -75,7 +68,7 @@ class NodeToolbar( GafferUI.Widget ) :
 	def create( cls, node, edge = GafferUI.Edge.Top ) :
 
 		# Try to create a toolbar using metadata.
-		toolbarType = Gaffer.Metadata.value( node, "nodeToolbar:%s:type" % str( edge ).lower() )
+		toolbarType = Gaffer.Metadata.value( node, "nodeToolbar:{}:type".format( edge.name.lower() ) )
 		if toolbarType is not None :
 			if toolbarType == "" :
 				return None

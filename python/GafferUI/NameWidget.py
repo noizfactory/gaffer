@@ -51,10 +51,10 @@ class NameWidget( GafferUI.TextWidget ) :
 
 		self._qtWidget().setValidator( _Validator( self._qtWidget() ) )
 
-		self.__graphComponent = None
+		self.__graphComponent = False # Sentinel that forces `setGraphComponent()` to update
 		self.setGraphComponent( graphComponent )
 
-		self.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setName ), scoped = False )
+		self.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setName ) )
 
 	def setGraphComponent( self, graphComponent ) :
 
@@ -62,12 +62,26 @@ class NameWidget( GafferUI.TextWidget ) :
 			return
 
 		self.__graphComponent = graphComponent
+		self.__nameChangedConnection = None
+		self.__nodeMetadataChangedConnection = None
+		self.__plugMetadataChangedConnection = None
+
 		if self.__graphComponent is not None :
-			self.__nameChangedConnection = self.__graphComponent.nameChangedSignal().connect( Gaffer.WeakMethod( self.__setText ) )
-		else :
-			self.__nameChangedConnection = None
+			self.__nameChangedConnection = self.__graphComponent.nameChangedSignal().connect(
+				Gaffer.WeakMethod( self.__setText ), scoped = True
+			)
+			if isinstance( self.__graphComponent, ( Gaffer.Node, Gaffer.Plug ) ) :
+				self.__nodeMetadataChangedConnection = Gaffer.Metadata.nodeValueChangedSignal().connect(
+					Gaffer.WeakMethod( self.__nodeMetadataChanged ), scoped = True
+				)
+
+			if isinstance( self.__graphComponent, Gaffer.Plug ) :
+				self.__plugMetadataChangedConnection = Gaffer.Metadata.plugValueChangedSignal( self.__graphComponent.node() ).connect(
+					Gaffer.WeakMethod( self.__plugMetadataChanged ), scoped = True
+				)
 
 		self.__setText()
+		self.__updateEditability()
 
 	def getGraphComponent( self ) :
 
@@ -85,7 +99,33 @@ class NameWidget( GafferUI.TextWidget ) :
 
 		self.setText( self.__graphComponent.getName() if self.__graphComponent is not None else "" )
 
+	def __updateEditability( self ) :
+
+		editable = False
+		if self.__graphComponent is not None :
+			editable = not Gaffer.MetadataAlgo.readOnly( self.__graphComponent ) and Gaffer.Metadata.value( self.__graphComponent, "renameable" )
+
+		self.setEditable( editable )
+
+	def __nodeMetadataChanged( self, nodeTypeId, key, node ) :
+
+		if (
+			Gaffer.MetadataAlgo.readOnlyAffectedByChange( self.__graphComponent, nodeTypeId, key, node ) or
+			node == self.__graphComponent and key == "renameable"
+		) :
+			self.__updateEditability()
+
+	def __plugMetadataChanged( self, plug, key, reason ) :
+
+		if (
+			Gaffer.MetadataAlgo.readOnlyAffectedByChange( self.__graphComponent, plug, key ) or
+			plug == self.__graphComponent and key == "renameable"
+		) :
+			self.__updateEditability()
+
 class _Validator( QtGui.QValidator ) :
+
+	__invalidCharacters = re.compile( "[^A-Za-z_:0-9]" )
 
 	def __init__( self, parent ) :
 
@@ -93,12 +133,9 @@ class _Validator( QtGui.QValidator ) :
 
 	def validate( self, input, pos ) :
 
-		input = input.replace( " ", "_" )
+		input = self.__invalidCharacters.sub( "_", input )
 		if len( input ) :
-			if re.match( "^[A-Za-z_]+[A-Za-z_0-9]*$", input ) :
-				result = QtGui.QValidator.Acceptable
-			else :
-				result = QtGui.QValidator.Invalid
+			result = QtGui.QValidator.Acceptable
 		else :
 			result = QtGui.QValidator.Intermediate
 

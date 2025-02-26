@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_CONTEXTMONITOR_H
-#define GAFFER_CONTEXTMONITOR_H
+#pragma once
 
 #include "Gaffer/Monitor.h"
 
@@ -66,17 +65,22 @@ class GAFFER_API ContextMonitor : public Monitor
 
 		/// Statistics are only collected for the root and its
 		/// descendants.
-		ContextMonitor( const GraphComponent *root = nullptr );
+		explicit ContextMonitor( const GraphComponent *root = nullptr );
 		~ContextMonitor() override;
 
 		IE_CORE_DECLAREMEMBERPTR( ContextMonitor )
 
-		struct Statistics
+		struct GAFFER_API Statistics
 		{
+
+			using CountingMap = boost::unordered_map<IECore::MurmurHash, size_t>;
 
 			size_t numUniqueContexts() const;
 			std::vector<IECore::InternedString> variableNames() const;
 			size_t numUniqueValues( IECore::InternedString variableName ) const;
+			/// Maps from the `Context::variableHash()` for each unique value to
+			/// the number of times that value appeared.
+			const CountingMap &variableHashes( IECore::InternedString variableName ) const;
 
 			Statistics & operator += ( const Context *rhs );
 			Statistics & operator += ( const Statistics &rhs );
@@ -86,16 +90,15 @@ class GAFFER_API ContextMonitor : public Monitor
 
 			private :
 
-				typedef boost::unordered_set<IECore::MurmurHash> ContextSet;
-				typedef boost::unordered_map<IECore::MurmurHash, size_t> CountingMap;
-				typedef std::map<IECore::InternedString, CountingMap> VariableMap;
+				using ContextSet = boost::unordered_set<IECore::MurmurHash>;
+				using VariableMap = std::map<IECore::InternedString, CountingMap>;
 
 				ContextSet m_contexts;
 				VariableMap m_variables;
 
 		};
 
-		typedef boost::unordered_map<ConstPlugPtr, Statistics> StatisticsMap;
+		using StatisticsMap = boost::unordered_map<ConstPlugPtr, Statistics>;
 
 		const StatisticsMap &allStatistics() const;
 		const Statistics &plugStatistics( const Plug *plug ) const;
@@ -130,5 +133,3 @@ class GAFFER_API ContextMonitor : public Monitor
 IE_CORE_DECLAREPTR( ContextMonitor )
 
 } // namespace Gaffer
-
-#endif // GAFFER_CONTEXTMONITOR_H

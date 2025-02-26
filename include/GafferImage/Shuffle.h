@@ -34,12 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_SHUFFLE_H
-#define GAFFERIMAGE_SHUFFLE_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
-#include "Gaffer/StringPlug.h"
+#include "Gaffer/ShufflePlug.h"
 
 namespace GafferImage
 {
@@ -49,52 +48,30 @@ class GAFFERIMAGE_API Shuffle : public ImageProcessor
 
 	public :
 
-		Shuffle( const std::string &name=defaultName<Shuffle>() );
+		explicit Shuffle( const std::string &name=defaultName<Shuffle>() );
 		~Shuffle() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Shuffle, ShuffleTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Shuffle, ShuffleTypeId, ImageProcessor );
 
-		/// A custom plug to hold the name of an output channel and the
-		/// name of an input channel to shuffle into it. Add instances
-		/// of these to the Shuffle::channelsPlug() to define the shuffle.
-		class ChannelPlug : public Gaffer::ValuePlug
+		enum class MissingSourceMode
 		{
-
-			public :
-
-				GAFFER_PLUG_DECLARE_TYPE( GafferImage::Shuffle::ChannelPlug, ShuffleChannelPlugTypeId, Gaffer::ValuePlug );
-
-				// Standard constructor. This is needed for serialisation.
-				ChannelPlug(
-					const std::string &name = defaultName<ChannelPlug>(),
-					Direction direction=In,
-					unsigned flags = Default
-				);
-				// Convenience constructor defining a shuffle of the specified
-				// in channel to the specified out channel.
-				ChannelPlug( const std::string &out, const std::string &in );
-
-				Gaffer::StringPlug *outPlug();
-				const Gaffer::StringPlug *outPlug() const;
-
-				Gaffer::StringPlug *inPlug();
-				const Gaffer::StringPlug *inPlug() const;
-
-				bool acceptsChild( const Gaffer::GraphComponent *potentialChild ) const override;
-				Gaffer::PlugPtr createCounterpart( const std::string &name, Direction direction ) const override;
-
+			Ignore,
+			Error,
+			Black
 		};
 
-		IE_CORE_DECLAREPTR( ChannelPlug )
+		Gaffer::IntPlug *missingSourceModePlug();
+		const Gaffer::IntPlug *missingSourceModePlug() const;
 
-		typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, ChannelPlug> > ChannelPlugIterator;
-
-		Gaffer::ValuePlug *channelsPlug();
-		const Gaffer::ValuePlug *channelsPlug() const;
+		Gaffer::ShufflesPlug *shufflesPlug();
+		const Gaffer::ShufflesPlug *shufflesPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 	protected :
+
+		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 
 		void hashChannelNames( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void hashChannelData( const GafferImage::ImagePlug *parent, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
@@ -103,6 +80,9 @@ class GAFFERIMAGE_API Shuffle : public ImageProcessor
 		IECore::ConstFloatVectorDataPtr computeChannelData( const std::string &channelName, const Imath::V2i &tileOrigin, const Gaffer::Context *context, const ImagePlug *parent ) const override;
 
 	private :
+
+		Gaffer::ObjectPlug *mappingPlug();
+		const Gaffer::ObjectPlug *mappingPlug() const;
 
 		std::string inChannelName( const std::string &outChannelName ) const;
 
@@ -113,5 +93,3 @@ class GAFFERIMAGE_API Shuffle : public ImageProcessor
 IE_CORE_DECLAREPTR( Shuffle )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_SHUFFLE_H

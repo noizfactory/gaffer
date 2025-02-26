@@ -55,7 +55,7 @@ class OpPathPreview( GafferUI.DeferredPathPreview ) :
 			# we'll replace this with the op in _deferredUpdate()
 			GafferUI.Spacer( imath.V2i( 1 ) )
 			button = GafferUI.Button( "Launch" )
-			button.clickedSignal().connect( Gaffer.WeakMethod( self.__executeClicked ), scoped = False )
+			button.clickedSignal().connect( Gaffer.WeakMethod( self.__executeClicked ) )
 
 		self._updateFromPath()
 
@@ -80,7 +80,7 @@ class OpPathPreview( GafferUI.DeferredPathPreview ) :
 
 	def _deferredUpdate( self, op ) :
 
-		self.__node = Gaffer.ParameterisedHolderNode()
+		self.__node = GafferCortex.ParameterisedHolderNode()
 		self.__node.setParameterised( op )
 		GafferCortexUI.ParameterPresets.autoLoad( self.__node )
 

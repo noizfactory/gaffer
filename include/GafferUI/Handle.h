@@ -35,11 +35,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_HANDLE_H
-#define GAFFERUI_HANDLE_H
+#pragma once
 
+#include "GafferUI/Export.h"
 #include "GafferUI/Gadget.h"
 #include "GafferUI/Style.h"
+
+#include <variant>
 
 namespace GafferUI
 {
@@ -65,12 +67,13 @@ class GAFFERUI_API Handle : public Gadget
 
 	protected :
 
-		Handle( const std::string &name=defaultName<Handle>() );
+		explicit Handle( const std::string &name=defaultName<Handle>() );
 
 		// Implemented to call renderHandle() after applying
 		// the raster scale.
-		void doRenderLayer( Layer layer, const Style *style ) const override;
-		bool hasLayer( Layer layer ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 		// Must be implemented by derived classes to draw their
 		// handle.
@@ -84,16 +87,19 @@ class GAFFERUI_API Handle : public Gadget
 		// Helper for performing linear drags. Should be constructed
 		// in `dragBegin()` and then `position()` should be used
 		// to measure the progress of the drag.
-		struct LinearDrag
+		struct GAFFERUI_API LinearDrag
 		{
 
-			LinearDrag();
+			LinearDrag( bool processModifiers = true );
+			// Line is parallel to the camera plane, centered on gadget, and
+			// with unit length axes in gadget space.
+			LinearDrag( const Gadget *gadget, const Imath::V2f &line, const DragDropEvent &dragBeginEvent, bool processModifiers = true );
 			// Line is specified in Gadget space.
-			LinearDrag( const Gadget *gadget, const IECore::LineSegment3f &line, const DragDropEvent &dragBeginEvent );
+			LinearDrag( const Gadget *gadget, const IECore::LineSegment3f &line, const DragDropEvent &dragBeginEvent, bool processModifiers = true );
 
 			// Positions are measured from 0 at line.p0 to 1 at line.p1.
 			float startPosition() const;
-			float position( const DragDropEvent &event ) const;
+			float updatedPosition( const DragDropEvent &event );
 
 			private :
 
@@ -104,19 +110,25 @@ class GAFFERUI_API Handle : public Gadget
 				IECore::LineSegment3f m_worldLine;
 				float m_dragBeginPosition;
 
+				bool m_processModifiers;
+
+				// We track the point where precision mode is enabled (hold shift)
+				// and scale movement after that point accordingly (x0.1)
+				bool m_preciseMotionEnabled;
+				float m_preciseMotionOrigin;
 		};
 
 		// Helper for performing drags in a plane.
-		struct PlanarDrag
+		struct GAFFERUI_API PlanarDrag
 		{
 
-			PlanarDrag();
+			PlanarDrag( bool processModifiers = true );
 			// Plane is parallel to the camera plane, centered on gadget, and with unit
 			// length axes in gadget space.
-			PlanarDrag( const Gadget *gadget, const DragDropEvent &dragBeginEvent );
+			PlanarDrag( const Gadget *gadget, const DragDropEvent &dragBeginEvent, bool processModifiers = true );
 			// Origin and axes are in gadget space. Axes are assumed to be orthogonal
 			// but may have any length.
-			PlanarDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &axis0, const Imath::V3f &axis1, const DragDropEvent &dragBeginEvent );
+			PlanarDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &axis0, const Imath::V3f &axis1, const DragDropEvent &dragBeginEvent, bool processModifiers = true );
 
 			// The axes of the plane in Gadget space.
 			const Imath::V3f &axis0() const;
@@ -125,7 +137,7 @@ class GAFFERUI_API Handle : public Gadget
 			// X coordinate are measured from 0 at origin to 1 at `origin + axis0`
 			// Y coordinates are measured from 0 at origin to 1 at `origin + axis1`
 			Imath::V2f startPosition() const;
-			Imath::V2f position( const DragDropEvent &event ) const;
+			Imath::V2f updatedPosition( const DragDropEvent &event );
 
 			private :
 
@@ -139,13 +151,66 @@ class GAFFERUI_API Handle : public Gadget
 				Imath::V3f m_worldOrigin;
 				Imath::V3f m_worldAxis0;
 				Imath::V3f m_worldAxis1;
+				Imath::V3f m_worldPlaneNormal;
 				Imath::V2f m_dragBeginPosition;
+
+				bool m_processModifiers;
+
+				// We track the point where precision mode is enabled (hold shift)
+				// and scale movement after that point accordingly (x0.1)
+				bool m_preciseMotionEnabled;
+				Imath::V2f m_preciseMotionOrigin;
+
+				std::optional<LinearDrag> m_linearDrag;
+				Imath::V2f m_linearDragAxisMask;
 
 		};
 
 		// Returns the current scale factor needed to keep the handles
 		// at the requested size in raster space.
 		Imath::V3f rasterScaleFactor() const;
+
+		// Helper for performing drags around a rotation axis.
+		struct GAFFERUI_API AngularDrag
+		{
+
+			AngularDrag( bool processModifiers = true );
+			// Origin, normal and axis0 are in gadget space. Rotations will be around
+			// normal, with 0 rotation along axis0. Axes are assumed to be
+			// orthogonal, but may have any length.
+			AngularDrag( const Gadget *gadget, const Imath::V3f &origin, const Imath::V3f &normal, const Imath::V3f &axis0, const DragDropEvent &dragBeginEvent, bool processModifiers = true );
+
+			// The axis of rotation in Gadget space.
+			const Imath::V3f &normal() const;
+			// The direction on which zero rotation lies.
+			const Imath::V3f &axis0() const;
+
+			// Rotation is in radians
+			float startRotation() const;
+			float updatedRotation( const DragDropEvent &event );
+
+			bool isLinearDrag() const;
+
+			private :
+
+				float closestRotation( const Imath::V2f &p, float targetRotation );
+
+				const Gadget *m_gadget;
+
+				std::variant<std::monostate, PlanarDrag, LinearDrag> m_drag;
+				float m_rotation;
+
+				Imath::V3f m_normal;
+				Imath::V3f m_axis0;
+				float m_dragBeginRotation;
+
+				bool m_processModifiers;
+
+				// AngularDrag re-implements precision so that it can be applied in
+				// angle space, to allow continuous 'winding'.
+				bool m_preciseMotionEnabled;
+				float m_preciseMotionOrigin;
+		};
 
 	private :
 
@@ -164,9 +229,4 @@ class GAFFERUI_API Handle : public Gadget
 
 IE_CORE_DECLAREPTR( Handle )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<Handle> > HandleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<Handle> > RecursiveHandleIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_HANDLE_H

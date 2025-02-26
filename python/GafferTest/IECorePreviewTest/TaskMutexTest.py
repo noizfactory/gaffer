@@ -64,10 +64,6 @@ class TaskMutexTest( GafferTest.TestCase ) :
 
 		GafferTest.testTaskMutexHeavyContention( False )
 
-	def testWorkerRecursion( self ) :
-
-		GafferTest.testTaskMutexWorkerRecursion()
-
 	def testAcquireOr( self ) :
 
 		GafferTest.testTaskMutexAcquireOr()
@@ -79,6 +75,14 @@ class TaskMutexTest( GafferTest.TestCase ) :
 	def testWorkerExceptions( self ) :
 
 		GafferTest.testTaskMutexWorkerExceptions()
+
+	def testDontSilentlyCancel( self ) :
+
+		GafferTest.testTaskMutexDontSilentlyCancel()
+
+	def testCancellation( self ) :
+
+		GafferTest.testTaskMutexCancellation()
 
 if __name__ == "__main__":
 	unittest.main()

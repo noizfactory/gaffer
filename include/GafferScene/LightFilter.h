@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_LIGHTFILTER_H
-#define GAFFERSCENE_LIGHTFILTER_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 #include "GafferScene/Shader.h"
@@ -57,7 +56,7 @@ class GAFFERSCENE_API LightFilter : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::LightFilter, LightFilterTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::LightFilter, LightFilterTypeId, ObjectSource );
 
 		~LightFilter() override;
 
@@ -73,7 +72,7 @@ class GAFFERSCENE_API LightFilter : public ObjectSource
 
 	protected :
 
-		LightFilter( GafferScene::ShaderPtr shader, const std::string &name=defaultName<LightFilter>() );
+		explicit LightFilter( GafferScene::ShaderPtr shader, const std::string &name=defaultName<LightFilter>() );
 
 		void hashSource( const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		IECore::ConstObjectPtr computeSource( const Gaffer::Context *context ) const override;
@@ -104,5 +103,3 @@ class GAFFERSCENE_API LightFilter : public ObjectSource
 IE_CORE_DECLAREPTR( LightFilter )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_LIGHTFILTER_H

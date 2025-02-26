@@ -43,6 +43,7 @@
 #include "Gaffer/Dot.h"
 #include "Gaffer/Node.h"
 #include "Gaffer/Plug.h"
+#include "Gaffer/Reference.h"
 #include "Gaffer/Switch.h"
 
 #include "GafferBindings/PlugBinding.h"
@@ -57,8 +58,23 @@ using namespace Gaffer;
 namespace
 {
 
-bool shouldSerialiseInput( const Plug *plug )
+bool shouldSerialiseInput( const Plug *plug, const Serialisation &serialisation )
 {
+	if( !plug->getInput() )
+	{
+		return false;
+	}
+
+	if( auto parent = plug->parent<Plug>() )
+	{
+		if( parent->getInput() && parent != serialisation.parent() )
+		{
+			// Parent plug's input will have been serialised, so a serialisation
+			// for the child would be redundant.
+			return false;
+		}
+	}
+
 	if( !plug->getFlags( Plug::Serialisable ) )
 	{
 		// Removing the Serialisable flag is a common way of
@@ -131,6 +147,16 @@ bool shouldSerialiseInput( const Plug *plug )
 			return false;
 		}
 	}
+	else if( auto reference = runTimeCast<const Reference>( plug->node() ) )
+	{
+		if( reference->isAncestorOf( plug->getInput()->node() ) )
+		{
+			// Don't serialise connection from a plug on an internal node
+			// onto an external plug of the Reference. These will have been
+			// serialised in the `.grf` file itself.
+			return false;
+		}
+	}
 
 	return true;
 }
@@ -142,20 +168,20 @@ const IECore::InternedString g_includeParentPlugMetadata( "plugSerialiser:includ
 void PlugSerialiser::moduleDependencies( const Gaffer::GraphComponent *graphComponent, std::set<std::string> &modules, const Serialisation &serialisation ) const
 {
 	Serialiser::moduleDependencies( graphComponent, modules, serialisation );
-	metadataModuleDependencies( static_cast<const Plug *>( graphComponent ), modules );
 }
 
-std::string PlugSerialiser::constructor( const Gaffer::GraphComponent *graphComponent, const Serialisation &serialisation ) const
+std::string PlugSerialiser::constructor( const Gaffer::GraphComponent *graphComponent, Serialisation &serialisation ) const
 {
 	return repr( static_cast<const Plug *>( graphComponent ) );
 }
 
-std::string PlugSerialiser::postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation ) const
+std::string PlugSerialiser::postHierarchy( const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation ) const
 {
 	const Plug *plug = static_cast<const Plug *>( graphComponent );
 
 	std::string result = Serialiser::postHierarchy( graphComponent, identifier, serialisation );
-	if( shouldSerialiseInput( plug ) )
+
+	if( shouldSerialiseInput( plug, serialisation ) )
 	{
 		std::string inputIdentifier = serialisation.identifier( plug->getInput() );
 		if( inputIdentifier.size() )
@@ -171,7 +197,7 @@ std::string PlugSerialiser::postHierarchy( const Gaffer::GraphComponent *graphCo
 	}
 	if( shouldSerialiseMetadata )
 	{
-		result += metadataSerialisation( plug, identifier );
+		result += metadataSerialisation( plug, identifier, serialisation );
 	}
 
 	return result;
@@ -282,4 +308,3 @@ std::string PlugSerialiser::repr( const Plug *plug, unsigned flagsMask )
 
 	return result;
 }
-

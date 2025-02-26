@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_FORMATDATA_H
-#define GAFFER_FORMATDATA_H
+#pragma once
 
 #include "GafferImage/Format.h"
 #include "GafferImage/TypeIds.h"
@@ -50,9 +49,7 @@ namespace IECore
 namespace GafferImage
 {
 
-typedef IECore::FormatData FormatData;
+using FormatData = IECore::FormatData;
 IE_CORE_DECLAREPTR( FormatData );
 
 } // namespace GafferImage
-
-#endif // GAFFER_FORMATDATA_H

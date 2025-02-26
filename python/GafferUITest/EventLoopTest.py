@@ -126,9 +126,9 @@ class EventLoopTest( GafferUITest.TestCase ) :
 
 		def t() :
 
-			st = time.clock()
+			st = time.time()
 			self.__uiThreadResult = GafferUI.EventLoop.executeOnUIThread( f, waitForResult=False )
-			self.__executeOnUIThreadDuration = time.clock() - st
+			self.__executeOnUIThreadDuration = time.time() - st
 
 		thread = threading.Thread( target = t )
 
@@ -141,7 +141,7 @@ class EventLoopTest( GafferUITest.TestCase ) :
 		self.assertEqual( self.__uiThreadResult, None )
 		# we shouldn't be waiting for the result of ui thread, so the return should be quicker
 		# than the actual function called
-		self.failUnless( self.__executeOnUIThreadDuration < 2 )
+		self.assertLess( self.__executeOnUIThreadDuration, 2 )
 
 	def testExceptionsInIdleCallbacks( self ) :
 
@@ -175,10 +175,10 @@ class EventLoopTest( GafferUITest.TestCase ) :
 			GafferUI.EventLoop.mainEventLoop().start()
 
 		self.assertEqual( self.__idle1Calls, 1 )
-		self.failUnless( self.__idle2Calls >= 4 )
+		self.assertGreaterEqual( self.__idle2Calls, 4 )
 		self.assertEqual( len( mh.messages ), 1 )
 		self.assertEqual( mh.messages[0].level, IECore.Msg.Level.Error )
-		self.failUnless( "I am a very naughty boy" in mh.messages[0].message )
+		self.assertIn( "I am a very naughty boy", mh.messages[0].message )
 
 	def testExecuteOnUITheadFromUIThread( self ) :
 
@@ -194,6 +194,60 @@ class EventLoopTest( GafferUITest.TestCase ) :
 
 		self.assertEqual( r, 10 )
 		self.assertEqual( self.__executed, True )
+
+	def testBlockedUIThreadExecution( self ) :
+
+		callsToMake = 10000
+		self.__uiThreadCallCount = 0
+
+		def f() :
+
+			assert( QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() )
+			self.__uiThreadCallCount += 1
+
+		def t() :
+
+			for i in range( 0, callsToMake ) :
+				GafferUI.EventLoop.executeOnUIThread( f )
+
+			GafferUI.EventLoop.mainEventLoop().stop()
+
+		thread = threading.Thread( target = t )
+		thread.start() # Start now, so we may have events queued even before we try to block them
+
+		with GafferUI.EventLoop.BlockedUIThreadExecution() :
+			GafferUI.EventLoop.mainEventLoop().start()
+			thread.join()
+			self.assertEqual( self.__uiThreadCallCount, 0 )
+
+		self.assertEqual( self.__uiThreadCallCount, 0 )
+
+		self.waitForIdle( 1000 )
+		self.assertEqual( self.__uiThreadCallCount, callsToMake )
+
+	def testLotsOfUIThreadCalls( self ) :
+
+		callsToMake = 10000
+		self.__uiThreadCallCount = 0
+
+		def f( stop ) :
+
+			assert( QtCore.QThread.currentThread() == QtWidgets.QApplication.instance().thread() )
+			self.__uiThreadCallCount += 1
+			if stop :
+				GafferUI.EventLoop.mainEventLoop().stop()
+
+		def t() :
+
+			for i in range( 0, callsToMake ) :
+				GafferUI.EventLoop.executeOnUIThread( functools.partial( f, stop = ( i == callsToMake - 1 ) ) )
+
+		thread = threading.Thread( target = t )
+		thread.start()
+		GafferUI.EventLoop.mainEventLoop().start()
+		thread.join()
+
+		self.assertEqual( self.__uiThreadCallCount, callsToMake )
 
 	def testAddIdleCallbackFromIdleCallback( self ) :
 

@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import pathlib
 import unittest
 import imath
 
@@ -48,11 +49,13 @@ import GafferScene
 import GafferSceneTest
 
 @unittest.skipIf( GafferTest.inCI(), "OpenGL not set up" )
-class OpenGLRenderTest( GafferSceneTest.SceneTestCase ) :
+class OpenGLRenderTest( GafferSceneTest.RenderTest ) :
 
-	def test( self ) :
+	renderer = "OpenGL"
 
-		self.assertFalse( os.path.exists( self.temporaryDirectory() + "/test.exr" ) )
+	def testTextureFromImagePlug( self ) :
+
+		self.assertFalse( ( self.temporaryDirectory() / "test.exr" ).exists() )
 
 		s = Gaffer.ScriptNode()
 
@@ -60,7 +63,7 @@ class OpenGLRenderTest( GafferSceneTest.SceneTestCase ) :
 		s["plane"]["transform"]["translate"].setValue( imath.V3f( 0, 0, -5 ) )
 
 		s["image"] = GafferImage.ImageReader()
-		s["image"]["fileName"].setValue( os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" ) )
+		s["image"]["fileName"].setValue( pathlib.Path( os.environ["GAFFER_ROOT"] ) / "python" / "GafferImageTest" / "images" / "checker.exr" )
 
 		s["shader"] = GafferScene.OpenGLShader()
 		s["shader"].loadShader( "Texture" )
@@ -76,7 +79,7 @@ class OpenGLRenderTest( GafferSceneTest.SceneTestCase ) :
 		s["outputs"].addOutput(
 			"beauty",
 			IECoreScene.Output(
-				self.temporaryDirectory() + "/test.exr",
+				( self.temporaryDirectory() / "test.exr" ).as_posix(),
 				"exr",
 				"rgba",
 				{}
@@ -84,18 +87,19 @@ class OpenGLRenderTest( GafferSceneTest.SceneTestCase ) :
 		)
 		s["outputs"]["in"].setInput( s["assignment"]["out"] )
 
-		s["render"] = GafferScene.OpenGLRender()
+		s["render"] = GafferScene.Render()
 		s["render"]["in"].setInput( s["outputs"]["out"] )
+		s["render"]["renderer"].setValue( "OpenGL" )
 
-		s["fileName"].setValue( self.temporaryDirectory() + "/test.gfr" )
+		s["fileName"].setValue( self.temporaryDirectory() / "test.gfr" )
 		s.save()
 
 		s["render"]["task"].execute()
 
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/test.exr" ) )
+		self.assertTrue( ( self.temporaryDirectory() / "test.exr" ).exists() )
 
 		imageReader = GafferImage.ImageReader()
-		imageReader["fileName"].setValue( self.temporaryDirectory() + "/test.exr" )
+		imageReader["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
 
 		imageSampler = GafferImage.ImageSampler()
 		imageSampler["image"].setInput( imageReader["out"] )
@@ -104,83 +108,6 @@ class OpenGLRenderTest( GafferSceneTest.SceneTestCase ) :
 		self.assertAlmostEqual( imageSampler["color"]["r"].getValue(), 0.666666, delta = 0.001 )
 		self.assertAlmostEqual( imageSampler["color"]["g"].getValue(), 0.666666, delta = 0.001 )
 		self.assertEqual( imageSampler["color"]["b"].getValue(), 0 )
-
-	def testOutputDirectoryCreation( self ) :
-
-		s = Gaffer.ScriptNode()
-		s["variables"].addChild( Gaffer.NameValuePlug( "renderDirectory", self.temporaryDirectory() + "/openGLRenderTest" ) )
-
-		s["plane"] = GafferScene.Plane()
-
-		s["outputs"] = GafferScene.Outputs()
-		s["outputs"]["in"].setInput( s["plane"]["out"] )
-		s["outputs"].addOutput(
-			"beauty",
-			IECoreScene.Output(
-				"$renderDirectory/test.####.exr",
-				"exr",
-				"rgba",
-				{}
-			)
-		)
-
-		s["render"] = GafferScene.OpenGLRender()
-		s["render"]["in"].setInput( s["outputs"]["out"] )
-
-		self.assertFalse( os.path.exists( self.temporaryDirectory() + "/openGLRenderTest" ) )
-		self.assertFalse( os.path.exists( self.temporaryDirectory() + "/openGLRenderTest/test.0001.exr" ) )
-
-		s["fileName"].setValue( "/tmp/test.gfr" )
-
-		with s.context() :
-			s["render"]["task"].execute()
-
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/openGLRenderTest" ) )
-		self.assertTrue( os.path.exists( self.temporaryDirectory() + "/openGLRenderTest/test.0001.exr" ) )
-
-	def testHash( self ) :
-
-		c = Gaffer.Context()
-		c.setFrame( 1 )
-		c2 = Gaffer.Context()
-		c2.setFrame( 2 )
-
-		s = Gaffer.ScriptNode()
-		s["plane"] = GafferScene.Plane()
-		s["outputs"] = GafferScene.Outputs()
-		s["outputs"]["in"].setInput( s["plane"]["out"] )
-		s["outputs"].addOutput( "beauty", IECoreScene.Output( "$renderDirectory/test.####.exr", "exr", "rgba", {} ) )
-		s["render"] = GafferScene.OpenGLRender()
-
-		# no input scene produces no effect
-		self.assertEqual( s["render"].hash( c ), IECore.MurmurHash() )
-
-		# now theres an scene to render, we get some output
-		s["render"]["in"].setInput( s["outputs"]["out"] )
-		self.assertNotEqual( s["render"].hash( c ), IECore.MurmurHash() )
-
-		# output varies by time
-		self.assertNotEqual( s["render"].hash( c ), s["render"].hash( c2 ) )
-
-		# output varies by new Context entries
-		current = s["render"].hash( c )
-		c["renderDirectory"] = self.temporaryDirectory() + "/openGLRenderTest"
-		self.assertNotEqual( s["render"].hash( c ), current )
-
-		# output varies by changed Context entries
-		current = s["render"].hash( c )
-		c["renderDirectory"] = self.temporaryDirectory() + "/openGLRenderTest2"
-		self.assertNotEqual( s["render"].hash( c ), current )
-
-		# output doesn't vary by ui Context entries
-		current = s["render"].hash( c )
-		c["ui:something"] = "alterTheUI"
-		self.assertEqual( s["render"].hash( c ), current )
-
-		# also varies by input node
-		current = s["render"].hash( c )
-		s["render"]["in"].setInput( s["plane"]["out"] )
-		self.assertNotEqual( s["render"].hash( c ), current )
 
 if __name__ == "__main__":
 	unittest.main()

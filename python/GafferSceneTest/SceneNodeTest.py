@@ -35,7 +35,10 @@
 #
 ##########################################################################
 
+import enum
+import inspect
 import unittest
+import time
 import threading
 import imath
 
@@ -94,7 +97,8 @@ class SceneNodeTest( GafferSceneTest.SceneTestCase ) :
 			namesToIgnore = {
 				"PathMatcherData", "Gaffer::PathMatcherDataPlug", "Gaffer::Switch",
 				"Gaffer::ContextVariables", "Gaffer::DeleteContextVariables", "Gaffer::TimeWarp",
-				"Gaffer::Loop", "GafferScene::ShaderTweaks"
+				"Gaffer::Loop", "GafferScene::ShaderTweaks", "Gaffer::TweakPlug",
+				"Gaffer::TweaksPlug",
 			}
 		)
 
@@ -187,7 +191,7 @@ class SceneNodeTest( GafferSceneTest.SceneTestCase ) :
 
 			try :
 				GafferSceneTest.traverseScene( g["out"] )
-			except Exception, e :
+			except Exception as e :
 				exceptions.append( e )
 
 		threads = []
@@ -215,7 +219,7 @@ class SceneNodeTest( GafferSceneTest.SceneTestCase ) :
 
 		class SphereOrCube( GafferScene.SceneNode ) :
 
-			Type = IECore.Enum.create( "Sphere", "Cube" )
+			Type = enum.IntEnum( "Type", [ "Sphere", "Cube" ], start = 0 )
 
 			def __init__( self, name = "SphereOrCube" ) :
 
@@ -291,6 +295,203 @@ class SceneNodeTest( GafferSceneTest.SceneTestCase ) :
 		)
 
 		self.assertEqual( Gaffer.NodeAlgo.presets( n["type"] ), [ "Sphere", "Cube" ] )
+
+	def testExists( self ) :
+
+		cube = GafferScene.Cube()
+
+		for path, exists in [
+			( "/", True ),
+			( "/cube", True ),
+			( "/cube2", False ),
+			( "/cube/child", False ),
+			( "/notHere/notHereEither", False ),
+		] :
+			self.assertEqual( cube["out"].exists( path ), exists )
+
+			with Gaffer.Context() as c :
+				c["scene:path"] = GafferScene.ScenePlug.stringToPath( path )
+				self.assertEqual( cube["out"].exists(), exists )
+
+	def testExistsInternals( self ) :
+
+		cube = GafferScene.Cube()
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData()
+			# When there's only one child, the sorted child names refer
+			# to exactly the same object as the regular child names.
+			self.assertTrue(
+				cube["out"]["__sortedChildNames"].getValue( _copy = False ).isSame(
+					cube["out"]["childNames"].getValue( _copy = False )
+				)
+			)
+			# Likewise when there's none
+			c["scene:path"] = IECore.InternedStringVectorData( [ "cube" ] )
+			self.assertTrue(
+				cube["out"]["__sortedChildNames"].getValue( _copy = False ).isSame(
+					cube["out"]["childNames"].getValue( _copy = False )
+				)
+			)
+
+		cs = GafferTest.CapturingSlot( cube.plugDirtiedSignal() )
+		cube["name"].setValue( "box" )
+		self.assertGreaterEqual(
+			{ x[0] for x in cs },
+			{ cube["out"]["childNames"], cube["out"]["__sortedChildNames"], cube["out"]["exists"] }
+		)
+
+	def testChildBounds( self ) :
+
+		cube = GafferScene.Cube()
+		sphere = GafferScene.Sphere()
+		group = GafferScene.Group()
+		group["in"][0].setInput( cube["out"] )
+		group["in"][1].setInput( sphere["out"] )
+
+		with Gaffer.Context() as c :
+			c["scene:path"] = IECore.InternedStringVectorData( [ "group" ] )
+			h = group["out"]["childBounds"].hash()
+			b = group["out"]["childBounds"].getValue()
+
+		self.assertEqual( h, group["out"].childBoundsHash( "/group" ) )
+		self.assertEqual( b, group["out"].childBounds( "/group" ) )
+
+		b2 = cube["out"].bound( "/" )
+		b2.extendBy( sphere["out"].bound( "/" ) )
+		self.assertEqual( b, b2 )
+
+		cube["transform"]["translate"]["x"].setValue( 10 )
+
+		self.assertNotEqual( group["out"].childBoundsHash( "/group"), h )
+		b = group["out"].childBounds( "/group" )
+
+		b2 = cube["out"].bound( "/" )
+		b2.extendBy( sphere["out"].bound( "/" ) )
+		self.assertEqual( b, b2 )
+
+	def testChildBoundsWhenNoChildren( self ) :
+
+		plane = GafferScene.Plane()
+		sphere = GafferScene.Sphere()
+
+		self.assertEqual( plane["out"].childBounds( "/plane" ), imath.Box3f() )
+		self.assertEqual( sphere["out"].childBounds( "/sphere" ), imath.Box3f() )
+
+	def testEnabledEvaluationUsesGlobalContext( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["plane"] = GafferScene.Plane()
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			path = context.get("scene:path", None )
+			assert( path is None )
+			parent["plane"]["enabled"] = True
+			"""
+		) )
+
+		with Gaffer.ContextMonitor( script["expression"] ) as monitor :
+			self.assertSceneValid( script["plane"]["out"] )
+
+		self.assertEqual( monitor.combinedStatistics().numUniqueValues( "scene:path" ), 0 )
+
+	def testChildBoundsCancellation( self ) :
+
+		# Make Sierpinski triangle type thing.
+
+		script = Gaffer.ScriptNode()
+
+		script["sphere"] = GafferScene.Sphere()
+
+		script["loop"] = Gaffer.Loop()
+		script["loop"].setup( script["sphere"]["out"] )
+		script["loop"]["in"].setInput( script["sphere"]["out"] )
+		script["loop"]["iterations"].setValue( 12 )
+
+		script["filter"] = GafferScene.PathFilter()
+		script["filter"]["paths"].setValue( IECore.StringVectorData( [ "/..." ] ) )
+
+		script["transform1"] = GafferScene.Transform()
+		script["transform1"]["in"].setInput( script["loop"]["previous"] )
+		script["transform1"]["filter"].setInput( script["filter"]["out"] )
+		script["transform1"]["transform"]["translate"]["x"].setValue( 1 )
+
+		script["transform2"] = GafferScene.Transform()
+		script["transform2"]["in"].setInput( script["loop"]["previous"] )
+		script["transform2"]["filter"].setInput( script["filter"]["out"] )
+		script["transform2"]["transform"]["translate"]["y"].setValue( 1 )
+
+		script["transform3"] = GafferScene.Transform()
+		script["transform3"]["in"].setInput( script["loop"]["previous"] )
+		script["transform3"]["filter"].setInput( script["filter"]["out"] )
+		script["transform3"]["transform"]["translate"]["z"].setValue( 1 )
+
+		script["group"] = GafferScene.Group()
+		script["group"]["in"][0].setInput( script["transform1"]["out"] )
+		script["group"]["in"][1].setInput( script["transform2"]["out"] )
+		script["group"]["in"][2].setInput( script["transform3"]["out"] )
+		script["group"]["transform"]["scale"].setValue( imath.V3f( 0.666 ) )
+
+		script["loop"]["next"].setInput( script["group"]["out"] )
+
+		for i in range( 0, 10 ) :
+
+			# Launch background task to compute root bounds. This will perform
+			# a deep recursion through the hierarchy using parallel tasks.
+
+			backgroundTask = Gaffer.ParallelAlgo.callOnBackgroundThread(
+				script["loop"]["out"],
+				lambda : script["loop"]["out"].bound( "/" )
+			)
+
+			time.sleep( 0.1 )
+
+			# Cancel background task so that we don't perform all the work.
+			# This triggered a crash bug in TaskMutex, but should return
+			# cleanly if it has been fixed.
+			backgroundTask.cancelAndWait()
+
+	def testGlobalsExpression( self ) :
+
+		script = Gaffer.ScriptNode()
+
+		script["plane"] = GafferScene.Plane()
+
+		script["outputs"] = GafferScene.Outputs()
+		script["outputs"]["in"].setInput( script["plane"]["out"] )
+		script["outputs"].addOutput( "test", IECoreScene.Output( "test.exr", "exr", "rgba" ) )
+
+		script["dot"] = Gaffer.Dot()
+		script["dot"].setup( script["outputs"]["out"] )
+		script["dot"]["in"].setInput( script["outputs"]["out"] )
+
+		script["expression"] = Gaffer.Expression()
+		script["expression"].setExpression( inspect.cleandoc(
+			"""
+			g = parent["outputs"]["out"]["globals"]
+
+			for key in g.keys() :
+				if not key.startswith( "output:" ) :
+					continue
+				g[key].parameters()["myParameter"] = 10
+
+			parent["dot"]["in"]["globals"] = g
+			"""
+		) )
+
+		def assertExpectedScene( scene ) :
+
+			self.assertScenesEqual( scene, script["plane"]["out"], checks = self.allSceneChecks - { "globals" } )
+			self.assertEqual( scene.globals()["output:test"].parameters()["myParameter"], IECore.IntData( 10 ) )
+
+		assertExpectedScene( script["dot"]["out"] )
+
+		script2 = Gaffer.ScriptNode()
+		script2.execute( script.serialise() )
+
+		assertExpectedScene( script2["dot"]["out"] )
+		self.assertEqual( script2["expression"].getExpression(), script["expression"].getExpression() )
 
 	def setUp( self ) :
 

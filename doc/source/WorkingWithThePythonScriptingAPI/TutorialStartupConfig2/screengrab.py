@@ -2,9 +2,14 @@
 # BuildTarget: images/tutorialDefaultBookmark.png
 # BuildTarget: images/tutorialDefaultImageNodeBookmark.png
 # BuildTarget: images/tutorialDefaultImageNodePath.png
+# BuildDependency: scripts/tutorialBookmarks_edit.gfr
+# BuildDependency: scripts/tutorialDefaultBookmark_edit.gfr
+# BuildDependency: scripts/tutorialDefaultImageNodeBookmark_edit.gfr
 
 import os
-import subprocess32 as subprocess
+import pathlib
+import subprocess
+import sys
 import tempfile
 import time
 
@@ -24,24 +29,24 @@ def __delay( delay ) :
 		GafferUI.EventLoop.waitForIdle( 1 )
 
 # Create a random directory in `/tmp` for the dispatcher's `jobsDirectory`, so we don't clutter the user's `~gaffer` directory
-__temporaryDirectory = tempfile.mkdtemp( prefix = "gafferDocs" )
+__temporaryDirectory = pathlib.Path( tempfile.mkdtemp( prefix = "gafferDocs" ) )
 
 def __getTempFilePath( fileName, directory = __temporaryDirectory ) :
-	filePath = "/".join( ( directory, fileName ) )
-	
-	return filePath
+
+	return ( directory / fileName ).as_posix()
+
+def __outputImagePath( fileName ) :
+
+	return pathlib.Path( "images/{}.png".format( fileName ) ).absolute().as_posix()
 
 def __dispatchScript( script, tasks, settings ) :
 	command = "gaffer dispatch -script {} -tasks {} -dispatcher Local -settings {} -dispatcher.jobsDirectory '\"{}/dispatcher/local\"'".format(
 		script,
 		" ".join( tasks ),
 		" ".join( settings ),
-		__temporaryDirectory
-		)
-	process = subprocess.Popen( command, shell=True, stderr = subprocess.PIPE )
-	process.wait()
-
-	return process
+		__temporaryDirectory.as_posix()
+	)
+	subprocess.check_call( command, shell=True )
 
 # Tutorial: bookmarks in a file browser
 __imageName = "tutorialBookmarks"
@@ -60,15 +65,16 @@ __dispatchScript(
 	tasks = [ "ImageWriter" ],
 	settings = [
 		"-ImageReader.fileName '\"{}\"'".format( __tempImagePath ),
-		"-ImageWriter.fileName '\"{}\"'".format( os.path.abspath( "images/{}.png".format( __imageName ) ) )
-		]
-	)
+		"-ImageWriter.fileName '\"{}\"'".format( __outputImagePath( __imageName ) )
+	]
+)
 __fileBrowser.setVisible( False )
 
+exampleBookmarkPath = "C:/" if sys.platform == "win32" else "/"
 # Tutorial: default bookmark in file browser
 __imageName = "tutorialDefaultBookmark"
 __tempImagePath = __getTempFilePath( "{}.png".format( __imageName ) )
-__bookmarks.add( "Resources", "/" )
+__bookmarks.add( "Resources", exampleBookmarkPath )
 __fileBrowser = GafferUI.PathChooserDialogue( __rootPath, bookmarks = __bookmarks )
 __fileBrowser.setVisible( True )
 __delay( 0.1 )
@@ -81,16 +87,16 @@ __dispatchScript(
 	tasks = [ "ImageWriter" ],
 	settings = [
 		"-ImageReader.fileName '\"{}\"'".format( __tempImagePath ),
-		"-ImageWriter.fileName '\"{}\"'".format( os.path.abspath( "images/{}.png".format( __imageName ) ) )
-		]
-	)
+		"-ImageWriter.fileName '\"{}\"'".format( __outputImagePath( __imageName ) )
+	]
+)
 __fileBrowser.setVisible( False )
 
 # Tutorial: default bookmark in image node file browser
 __imageName = "tutorialDefaultImageNodeBookmark"
 __tempImagePath = __getTempFilePath( "{}.png".format( __imageName ) )
 __bookmarks = GafferUI.Bookmarks.acquire( application, Gaffer.FileSystemPath, "image" )
-__bookmarks.add( "Pictures", "/" )
+__bookmarks.add( "Pictures", exampleBookmarkPath )
 __fileBrowser = GafferUI.PathChooserDialogue( __rootPath, bookmarks = __bookmarks )
 __fileBrowser.setVisible( True )
 __delay( 0.1 )
@@ -103,9 +109,9 @@ __dispatchScript(
 	tasks = [ "ImageWriter" ],
 	settings = [
 		"-ImageReader.fileName '\"{}\"'".format( __tempImagePath ),
-		"-ImageWriter.fileName '\"{}\"'".format( os.path.abspath( "images/{}.png".format( __imageName ) ) )
-		]
-	)
+		"-ImageWriter.fileName '\"{}\"'".format( __outputImagePath( __imageName ) )
+	]
+)
 __fileBrowser.setVisible( False )
 
 # Tutorial: default path in image node file browser

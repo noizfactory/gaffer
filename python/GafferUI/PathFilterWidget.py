@@ -56,7 +56,7 @@ class PathFilterWidget( GafferUI.Widget ) :
 
 	## Must be implemented by subclasses to update the UI when the filter
 	# changes in some way. To temporarily suspend calls to this function, use
-	# Gaffer.BlockedConnection( self._pathFilterChangedConnection() ).
+	# Gaffer.Signals.BlockedConnection( self._pathFilterChangedConnection() ).
 	def _updateFromPathFilter( self ) :
 
 		raise NotImplementedError
@@ -111,7 +111,7 @@ class BasicPathFilterWidget( PathFilterWidget ) :
 
 		PathFilterWidget.__init__( self, self.__checkBox, pathFilter )
 
-		self.__checkBox.stateChangedSignal().connect( Gaffer.WeakMethod( self.__stateChanged ), scoped = False )
+		self.__checkBox.stateChangedSignal().connect( Gaffer.WeakMethod( self.__stateChanged ) )
 
 		self._updateFromPathFilter()
 
@@ -126,6 +126,11 @@ class BasicPathFilterWidget( PathFilterWidget ) :
 		with IECore.IgnoredExceptions( KeyError ) :
 			invertEnabled = self.pathFilter().userData()["UI"]["invertEnabled"].value
 		self.__checkBox.setState( self.pathFilter().getEnabled() is not invertEnabled )
+
+		toolTip = ""
+		with IECore.IgnoredExceptions( KeyError ) :
+			toolTip = self.pathFilter().userData()["UI"]["toolTip"].value
+		self.__checkBox.setToolTip( toolTip )
 
 	def __stateChanged( self, checkBox ) :
 

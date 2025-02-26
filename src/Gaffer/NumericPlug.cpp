@@ -39,7 +39,7 @@
 
 #include "Gaffer/TypedPlug.h"
 
-#include "OpenEXR/ImathFun.h"
+#include "Imath/ImathFun.h"
 
 using namespace IECore;
 using namespace Gaffer;
@@ -85,9 +85,11 @@ bool NumericPlug<T>::acceptsInput( const Plug *input ) const
 	}
 	if( input )
 	{
-		return input->isInstanceOf( FloatPlug::staticTypeId() ) ||
-		       input->isInstanceOf( IntPlug::staticTypeId() ) ||
-		       input->isInstanceOf( BoolPlug::staticTypeId() );
+		return
+			input->isInstanceOf( FloatPlug::staticTypeId() ) ||
+			input->isInstanceOf( IntPlug::staticTypeId() ) ||
+			input->isInstanceOf( BoolPlug::staticTypeId() )
+		;
 	}
 	return true;
 }
@@ -107,13 +109,13 @@ T NumericPlug<T>::defaultValue() const
 template<class T>
 bool NumericPlug<T>::hasMinValue() const
 {
-	return m_minValue!=Imath::limits<T>::min();
+	return m_minValue!=std::numeric_limits<T>::lowest();
 }
 
 template<class T>
 bool NumericPlug<T>::hasMaxValue() const
 {
-	return m_maxValue!=Imath::limits<T>::max();
+	return m_maxValue!=std::numeric_limits<T>::max();
 }
 
 template<class T>
@@ -133,18 +135,6 @@ void NumericPlug<T>::setValue( T value )
 {
 	value = Imath::clamp( value, m_minValue, m_maxValue );
 	setObjectValue( new DataType( value ) );
-}
-
-template<class T>
-T NumericPlug<T>::getValue( const IECore::MurmurHash *precomputedHash ) const
-{
-	ConstObjectPtr o = getObjectValue( precomputedHash );
-	const DataType *d = IECore::runTimeCast<const DataType>( o.get() );
-	if( !d )
-	{
-		throw IECore::Exception( "NumericPlug::getObjectValue() didn't return expected type - is the hash being computed correctly?" );
-	}
-	return d->readable();
 }
 
 template<class T>

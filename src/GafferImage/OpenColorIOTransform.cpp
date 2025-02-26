@@ -36,12 +36,12 @@
 
 #include "GafferImage/OpenColorIOTransform.h"
 
+#include "GafferImage/OpenColorIOAlgo.h"
+
 #include "Gaffer/Context.h"
+#include "Gaffer/Process.h"
 
 #include "IECore/SimpleTypedData.h"
-
-#include "tbb/mutex.h"
-#include "tbb/null_mutex.h"
 
 using namespace std;
 using namespace IECore;
@@ -51,24 +51,27 @@ using namespace GafferImage;
 namespace
 {
 
-// Although the OpenColorIO library is advertised as threadsafe,
-// it seems to crash regularly on OS X in getProcessor(), while
-// mucking around with the locale(). we mutex the call to getProcessor()
-// but still do the actual processing in parallel - this seems to
-// have negligible performance impact but a nice not-crashing impact.
-// On other platforms we use a null_mutex so there should be no
-// performance impact at all.
-#ifdef __APPLE__
-typedef tbb::mutex OCIOMutex;
-#else
-typedef tbb::null_mutex OCIOMutex;
-#endif
+struct ProcessorProcess : public Process
+{
 
-static OCIOMutex g_ocioMutex;
+	public :
+
+		ProcessorProcess( InternedString type, const OpenColorIOTransform *node )
+			:	Process( type, node->outPlug() )
+		{
+		}
+
+		static InternedString processorProcessType;
+		static InternedString processorHashProcessType;
+
+};
+
+InternedString ProcessorProcess::processorProcessType( "openColorIOTransform:processor" );
+InternedString ProcessorProcess::processorHashProcessType( "openColorIOTransform:processorHash" );
 
 } // namespace
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( OpenColorIOTransform );
+GAFFER_NODE_DEFINE_TYPE( OpenColorIOTransform );
 
 size_t OpenColorIOTransform::g_firstPlugIndex = 0;
 
@@ -104,27 +107,43 @@ const Gaffer::CompoundDataPlug *OpenColorIOTransform::contextPlug() const
 	return getChild<CompoundDataPlug>( g_firstPlugIndex );
 }
 
-bool OpenColorIOTransform::enabled() const
+OCIO_NAMESPACE::ConstProcessorRcPtr OpenColorIOTransform::processor() const
 {
-	if( !ColorProcessor::enabled() )
+	// Process is necessary to trigger substitutions for plugs
+	// pulled on by `transform()` and `ocioContext()`.
+	ProcessorProcess process( ProcessorProcess::processorProcessType, this );
+
+	OCIO_NAMESPACE::ConstTransformRcPtr colorTransform = transform();
+	if( !colorTransform )
 	{
-		return false;
+		return OCIO_NAMESPACE::ConstProcessorRcPtr();
 	}
 
-	MurmurHash h;
-	{
-		ImagePlug::GlobalScope c( Context::current() );
-		hashTransform( Context::current(), h );
-	}
-	return ( h != MurmurHash() );
+	auto [config, context] = OpenColorIOAlgo::currentConfigAndContext();
+	context = modifiedOCIOContext( context );
+	return config->getProcessor( context, colorTransform, OCIO_NAMESPACE::TRANSFORM_DIR_FORWARD );
 }
 
-bool OpenColorIOTransform::affectsColorData( const Gaffer::Plug *input ) const
+IECore::MurmurHash OpenColorIOTransform::processorHash() const
 {
-	if( ColorProcessor::affectsColorData( input ) )
+	// Process is necessary to trigger substitutions for plugs
+	// that may be pulled on by `hashTransform()`.
+	ProcessorProcess process( ProcessorProcess::processorHashProcessType, this );
+
+	IECore::MurmurHash result;
+	hashTransform( Context::current(), result );
+
+	result.append( OpenColorIOAlgo::currentConfigAndContextHash() );
+
+	if( auto *p = contextPlug() )
 	{
-		return true;
+		p->hash( result );
 	}
+	return result;
+}
+
+bool OpenColorIOTransform::affectsColorProcessor( const Gaffer::Plug *input ) const
+{
 	if( contextPlug() && contextPlug()->isAncestorOf( input ) )
 	{
 		return true;
@@ -132,24 +151,14 @@ bool OpenColorIOTransform::affectsColorData( const Gaffer::Plug *input ) const
 	return affectsTransform( input );
 }
 
-void OpenColorIOTransform::hashColorData( const Gaffer::Context *context, IECore::MurmurHash &h ) const
+void OpenColorIOTransform::hashColorProcessor( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	ColorProcessor::hashColorData( context, h );
-	if( contextPlug() )
-	{
-		contextPlug()->hash( h );
-	}
-
-	{
-		ImagePlug::GlobalScope c( Context::current() );
-		hashTransform( context, h );
-	}
+	h.append( processorHash() );
 }
 
-OpenColorIO::ConstContextRcPtr OpenColorIOTransform::ocioContext(OpenColorIO::ConstConfigRcPtr config) const
+OCIO_NAMESPACE::ConstContextRcPtr OpenColorIOTransform::modifiedOCIOContext( OCIO_NAMESPACE::ConstContextRcPtr context ) const
 {
 
-	OpenColorIO::ConstContextRcPtr context = config->getCurrentContext();
 	const CompoundDataPlug *p = contextPlug();
 	if( !p )
 	{
@@ -161,11 +170,11 @@ OpenColorIO::ConstContextRcPtr OpenColorIOTransform::ocioContext(OpenColorIO::Co
 		return context;
 	}
 
-	OpenColorIO::ContextRcPtr mutableContext;
+	OCIO_NAMESPACE::ContextRcPtr mutableContext;
 	std::string name;
 	std::string value;
 
-	for( NameValuePlugIterator it( p ); !it.done(); ++it )
+	for( NameValuePlug::Iterator it( p ); !it.done(); ++it )
 	{
 		IECore::DataPtr d = p->memberDataAndName( it->get(), name );
 		if( d )
@@ -187,68 +196,37 @@ OpenColorIO::ConstContextRcPtr OpenColorIOTransform::ocioContext(OpenColorIO::Co
 		}
 	}
 
-	if( mutableContext )
-	{
-		context = mutableContext;
-	}
-	return context;
+	return mutableContext ? mutableContext : context;
 }
 
-void OpenColorIOTransform::processColorData( const Gaffer::Context *context, IECore::FloatVectorData *r, IECore::FloatVectorData *g, IECore::FloatVectorData *b ) const
+ColorProcessor::ColorProcessorFunction OpenColorIOTransform::colorProcessor( const Gaffer::Context *context ) const
 {
-	OpenColorIO::ConstTransformRcPtr colorTransform;
+	OCIO_NAMESPACE::ConstProcessorRcPtr processor = this->processor();
+	if( !processor || processor->isNoOp() )
 	{
-		ImagePlug::GlobalScope c( context );
-		colorTransform = transform();
+		return ColorProcessorFunction();
 	}
 
-	if( !colorTransform )
-	{
-		return;
-	}
+	OCIO_NAMESPACE::ConstCPUProcessorRcPtr cpuProcessor = processor->getDefaultCPUProcessor();
 
-	OpenColorIO::ConstProcessorRcPtr processor;
-	{
-		OCIOMutex::scoped_lock lock( g_ocioMutex );
-		OpenColorIO::ConstConfigRcPtr config = OpenColorIO::GetCurrentConfig();
-		OpenColorIO::ConstContextRcPtr context = ocioContext( config );
-		processor = config->getProcessor( context, colorTransform, OpenColorIO::TRANSFORM_DIR_FORWARD );
-	}
+	return [cpuProcessor] ( IECore::FloatVectorData *r, IECore::FloatVectorData *g, IECore::FloatVectorData *b ) {
 
-	OpenColorIO::PlanarImageDesc image(
-		r->baseWritable(),
-		g->baseWritable(),
-		b->baseWritable(),
-		nullptr, // alpha
-		ImagePlug::tileSize(), // width
-		ImagePlug::tileSize() // height
-	);
+		if( !r->readable().size() )
+		{
+			// Deep image with no samples. OCIO will throw if we give it an empty
+			// PlanarImageDesc.
+			return;
+		}
 
-	processor->apply( image );
-}
+		OCIO_NAMESPACE::PlanarImageDesc image(
+			r->baseWritable(),
+			g->baseWritable(),
+			b->baseWritable(),
+			nullptr, // alpha
+			r->readable().size(), // Treat all pixels as a single line, since geometry doesn't affect OCIO
+			1 // height
+		);
 
-void OpenColorIOTransform::availableColorSpaces( std::vector<std::string> &colorSpaces )
-{
-	OpenColorIO::ConstConfigRcPtr config = OpenColorIO::GetCurrentConfig();
-
-	colorSpaces.clear();
-	colorSpaces.reserve( config->getNumColorSpaces() );
-
-	for( int i = 0; i < config->getNumColorSpaces(); ++i )
-	{
-		colorSpaces.push_back( config->getColorSpaceNameByIndex( i ) );
-	}
-}
-
-void OpenColorIOTransform::availableRoles( std::vector<std::string> &roles )
-{
-	OpenColorIO::ConstConfigRcPtr config = OpenColorIO::GetCurrentConfig();
-
-	roles.clear();
-	roles.reserve( config->getNumRoles() );
-
-	for( int i = 0; i < config->getNumRoles(); ++i )
-	{
-		roles.push_back( config->getRoleName( i ) );
-	}
+		cpuProcessor->apply( image );
+	};
 }

@@ -72,7 +72,7 @@ class _ChannelsFooter( GafferUI.PlugValueWidget ) :
 
 				GafferUI.Spacer( imath.V2i( GafferUI.PlugWidget.labelWidth(), 1 ) )
 
-				menuButton = GafferUI.MenuButton(
+				self.__menuButton = GafferUI.MenuButton(
 					image = "plus.png",
 					hasFrame = False,
 					menu = GafferUI.Menu(
@@ -81,24 +81,19 @@ class _ChannelsFooter( GafferUI.PlugValueWidget ) :
 					),
 					toolTip = "Add Input"
 				)
-				menuButton.setEnabled( not Gaffer.MetadataAlgo.readOnly( plug ) )
 
 				GafferUI.Spacer( imath.V2i( 1 ), imath.V2i( 999999, 1 ), parenting = { "expand" : True } )
 
-	def _updateFromPlug( self ) :
+	def _updateFromEditable( self ) :
 
-		self.setEnabled( self._editable() )
+		self.__menuButton.setEnabled( self._editable() )
 
 	def __menuDefinition( self ) :
 
 		result = IECore.MenuDefinition()
 		usedNames = set()
 		for p in self.getPlug().children():
-			# TODO - this method for checking if a plug variesWithContext should probably live in PlugAlgo
-			# ( it's based on Switch::variesWithContext )
-			sourcePlug = p["name"].source()
-			variesWithContext = sourcePlug.direction() == Gaffer.Plug.Direction.Out and isinstance( ComputeNode, sourcePlug.node() )
-			if not variesWithContext:
+			if not Gaffer.PlugAlgo.dependsOnCompute( p ) :
 				usedNames.add( p["name"].getValue() )
 
 		# Use a fixed order for some standard options that we want to list in a specific order
@@ -193,7 +188,7 @@ Gaffer.Metadata.registerNode(
 
 	"layout:activator:defaultFormatActive", lambda node : not node["in"].getInput(),
 
- 	plugs = {
+	plugs = {
 		"defaultFormat" : [
 			"description",
 			"""
@@ -202,8 +197,8 @@ Gaffer.Metadata.registerNode(
 			"layout:activator", "defaultFormatActive",
 		],
 		"channels" : [
- 			"description",
- 			"""
+			"description",
+			"""
 			Define image channels to output by adding child plugs and connecting
 			corresponding OSL shaders.  You can drive RGB layers with a color,
 			or connect individual channels to a float.
@@ -223,12 +218,13 @@ Gaffer.Metadata.registerNode(
 		],
 		"channels.*" : [
 
+			"deletable", True,
 			# Although the parameters plug is positioned
 			# as we want above, we must also register
 			# appropriate values for each individual parameter,
 			# for the case where they get promoted to a box
 			# individually.
- 			"noduleLayout:section", "left",
+			"noduleLayout:section", "left",
 			"nodule:type", "GafferUI::CompoundNodule",
 			"nameValuePlugPlugValueWidget:ignoreNamePlug", lambda plug : isinstance( plug["value"], GafferOSL.ClosurePlug ),
 		],
@@ -247,10 +243,9 @@ Gaffer.Metadata.registerNode(
 			# for the case where they get promoted to a box
 			# individually.
 			"noduleLayout:section", "left",
-			"nodule:type", "GafferUI::StandardNodule",
 			"noduleLayout:label", __channelLabelFromPlug,
 			"ui:visibleDimensions", lambda plug : 2 if hasattr( plug, "interpretation" ) and plug.interpretation() == IECore.GeometricData.Interpretation.UV else None,
- 		],
+		],
 	}
 
 )

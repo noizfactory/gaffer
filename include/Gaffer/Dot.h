@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_DOT_H
-#define GAFFER_DOT_H
+#pragma once
 
 #include "Gaffer/DependencyNode.h"
 #include "Gaffer/NumericPlug.h"
@@ -52,10 +51,10 @@ class GAFFER_API Dot : public DependencyNode
 
 	public :
 
-		Dot( const std::string &name=defaultName<Dot>() );
+		explicit Dot( const std::string &name=defaultName<Dot>() );
 		~Dot() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Dot, DotTypeId, DependencyNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Dot, DotTypeId, DependencyNode );
 
 		/// Because plugs are strongly typed in Gaffer, a
 		/// Dot cannot be set up in advance to work with
@@ -105,11 +104,6 @@ class GAFFER_API Dot : public DependencyNode
 
 IE_CORE_DECLAREPTR( Dot )
 
-typedef FilteredChildIterator<TypePredicate<Dot> > DotIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<Dot> > RecursiveDotIterator;
-
 } // namespace Gaffer
 
 #include "Gaffer/Dot.inl"
-
-#endif // GAFFER_DOT_H

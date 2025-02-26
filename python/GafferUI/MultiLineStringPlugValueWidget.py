@@ -38,6 +38,8 @@
 import Gaffer
 import GafferUI
 
+from GafferUI.PlugValueWidget import sole
+
 ## Supported Metadata :
 #
 # - "multiLineStringPlugValueWidget:continuousUpdate"
@@ -52,30 +54,20 @@ class MultiLineStringPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		self._addPopupMenu( self.__textWidget )
 
-		self.__textWidget.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
-		self.__textWidget.activatedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ), scoped = False )
-		self.__textWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ), scoped = False )
-		self.__textChangedConnection = self.__textWidget.textChangedSignal().connect( Gaffer.WeakMethod( self.__setPlugValue ), scoped = False )
-
-		self._updateFromPlug()
+		self.__textWidget.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
 
 	def textWidget( self ) :
 
 		return self.__textWidget
 
-	def _updateFromPlug( self ) :
+	def _updateFromValues( self, values, exception ) :
+
+		self.__textWidget.setText( sole( values ) or "" )
+		self.__textWidget.setErrored( exception is not None )
+
+	def _updateFromMetadata( self ) :
 
 		if self.getPlug() is not None :
-			with self.getContext() :
-				try :
-					value = self.getPlug().getValue()
-				except :
-					value = None
-
-			if value is not None :
-				self.__textWidget.setText( value )
-
-			self.__textWidget.setErrored( value is None )
 
 			fixedLineHeight = Gaffer.Metadata.value( self.getPlug(), "fixedLineHeight" )
 			self.__textWidget.setFixedLineHeight( fixedLineHeight )
@@ -84,9 +76,15 @@ class MultiLineStringPlugValueWidget( GafferUI.PlugValueWidget ) :
 			role = getattr( self.__textWidget.Role, role.capitalize() ) if role else self.__textWidget.Role.Text
 			self.__textWidget.setRole( role )
 
-			self.__textChangedConnection.block(
-				not Gaffer.Metadata.value( self.getPlug(), "multiLineStringPlugValueWidget:continuousUpdate" )
-			)
+			# We don't connect to `editingFinishedSignal()` when we're in continuous mode, as otherwise the
+			# text widget would show an unnecessary "activation hint" overlay.
+			if Gaffer.Metadata.value( self.getPlug(), "multiLineStringPlugValueWidget:continuousUpdate" ) :
+				textEditedSignal = self.__textWidget.textChangedSignal()
+			else :
+				textEditedSignal = self.__textWidget.editingFinishedSignal()
+			self.__textEditedConnection = textEditedSignal.connect( Gaffer.WeakMethod( self.__setPlugValue ), scoped = True )
+
+	def _updateFromEditable( self ) :
 
 		self.__textWidget.setEditable( self._editable() )
 
@@ -99,7 +97,7 @@ class MultiLineStringPlugValueWidget( GafferUI.PlugValueWidget ) :
 
 		# escape abandons everything
 		if event.key=="Escape" :
-			self._updateFromPlug()
+			self._requestUpdateFromValues()
 			return True
 
 		return False

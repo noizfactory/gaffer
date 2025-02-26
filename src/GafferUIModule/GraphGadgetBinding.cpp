@@ -48,14 +48,21 @@
 #include "GafferUI/GraphLayout.h"
 #include "GafferUI/NodeGadget.h"
 #include "GafferUI/StandardGraphLayout.h"
+#include "GafferUI/ContextTracker.h"
 
 #include "GafferBindings/SignalBinding.h"
 
+#include "Gaffer/Context.h"
+#include "Gaffer/DependencyNode.h"
 #include "Gaffer/Node.h"
+#include "Gaffer/ScriptNode.h"
+
+#include "boost/pointer_cast.hpp"
 
 using namespace boost::python;
 using namespace IECorePython;
 using namespace Gaffer;
+using namespace GafferBindings;
 using namespace GafferUI;
 using namespace GafferUIBindings;
 
@@ -76,10 +83,9 @@ void setFilter( GraphGadget &graphGadget, Gaffer::SetPtr filter )
 
 struct RootChangedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, GraphGadgetPtr g, Gaffer::NodePtr n )
+	void operator()( boost::python::object slot, GraphGadgetPtr g, Gaffer::NodePtr n )
 	{
 		slot( g , n );
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -185,6 +191,23 @@ tuple connectionAt( AuxiliaryConnectionsGadget &g, IECore::LineSegment3f positio
 	return make_tuple( nodeGadgets.first, nodeGadgets.second );
 }
 
+const std::string &annotationTextWrapper( const AnnotationsGadget &gadget, const Gaffer::Node &node, IECore::InternedString annotation )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	return gadget.annotationText( &node, annotation );
+}
+
+object annotationAtWrapper( const AnnotationsGadget &gadget, const IECore::LineSegment3f &lineInGadgetSpace )
+{
+	std::optional<AnnotationsGadget::AnnotationIdentifier> a = gadget.annotationAt( lineInGadgetSpace );
+	if( a )
+	{
+		return boost::python::make_tuple( NodePtr( const_cast<Node *>( a.value().first ) ), a.value().second );
+	}
+
+	return object();
+}
+
 bool connectNode( const GraphLayout &layout, GraphGadget &graph, Gaffer::Node &node, Gaffer::Set &potentialInputs )
 {
 	IECorePython::ScopedGILRelease gilRelease;
@@ -215,6 +238,43 @@ void layoutNodes( const GraphLayout &layout, GraphGadget &graph, Gaffer::Set *no
 	layout.layoutNodes( &graph, nodes );
 }
 
+NodePtr targetNodeWrapper( const ContextTracker &contextTracker )
+{
+	return const_cast<Node *>( contextTracker.targetNode() );
+}
+
+ContextPtr targetContextWrapper( const ContextTracker &contextTracker )
+{
+	return const_cast<Context *>( contextTracker.targetContext() );
+}
+
+struct ContextTrackerSlotCaller
+{
+	void operator()( boost::python::object slot, ContextTracker &contextTracker )
+	{
+		try
+		{
+			slot( ContextTrackerPtr( &contextTracker ) );
+		}
+		catch( const boost::python::error_already_set & )
+		{
+			ExceptionAlgo::translatePythonException();
+		}
+	}
+};
+
+ContextPtr contextWrapper1( const ContextTracker &contextTracker, const Node &node, bool copy )
+{
+	ConstContextPtr c = contextTracker.context( &node );
+	return copy ? new Context( *c ) : boost::const_pointer_cast<Context>( c );
+}
+
+ContextPtr contextWrapper2( const ContextTracker &contextTracker, const Plug &plug, bool copy )
+{
+	ConstContextPtr c = contextTracker.context( &plug );
+	return copy ? new Context( *c ) : boost::const_pointer_cast<Context>( c );
+}
+
 } // namespace
 
 void GafferUIModule::bindGraphGadget()
@@ -232,9 +292,10 @@ void GafferUIModule::bindGraphGadget()
 			.def( "connectionGadgets", &connectionGadgets1, ( arg_( "plug" ), arg_( "excludedNodes" ) = object() ) )
 			.def( "connectionGadgets", &connectionGadgets2, ( arg_( "node" ), arg_( "excludedNodes" ) = object() ) )
 			.def( "auxiliaryConnectionsGadget", (AuxiliaryConnectionsGadget *(GraphGadget::*)())&GraphGadget::auxiliaryConnectionsGadget, return_value_policy<CastToIntrusivePtr>() )
-			.def( "upstreamNodeGadgets", &upstreamNodeGadgets, ( arg( "node" ), arg( "degreesOfSeparation" ) = Imath::limits<size_t>::max() ) )
-			.def( "downstreamNodeGadgets", &downstreamNodeGadgets, ( arg( "node" ), arg( "degreesOfSeparation" ) = Imath::limits<size_t>::max() ) )
-			.def( "connectedNodeGadgets", &connectedNodeGadgets, ( arg( "node" ), arg( "direction" ) = Gaffer::Plug::Invalid, arg( "degreesOfSeparation" ) = Imath::limits<size_t>::max() ) )
+			.def( "annotationsGadget",  (AnnotationsGadget *(GraphGadget::*)())&GraphGadget::annotationsGadget, return_value_policy<CastToIntrusivePtr>() )
+			.def( "upstreamNodeGadgets", &upstreamNodeGadgets, ( arg( "node" ), arg( "degreesOfSeparation" ) = std::numeric_limits<size_t>::max() ) )
+			.def( "downstreamNodeGadgets", &downstreamNodeGadgets, ( arg( "node" ), arg( "degreesOfSeparation" ) = std::numeric_limits<size_t>::max() ) )
+			.def( "connectedNodeGadgets", &connectedNodeGadgets, ( arg( "node" ), arg( "direction" ) = Gaffer::Plug::Invalid, arg( "degreesOfSeparation" ) = std::numeric_limits<size_t>::max() ) )
 			.def( "unpositionedNodeGadgets", &unpositionedNodeGadgets )
 			.def( "setNodePosition", &setNodePosition )
 			.def( "getNodePosition", &GraphGadget::getNodePosition )
@@ -259,6 +320,11 @@ void GafferUIModule::bindGraphGadget()
 	;
 
 	GadgetClass<AnnotationsGadget>()
+		.def_readonly( "untemplatedAnnotations", &AnnotationsGadget::untemplatedAnnotations )
+		.def( "setVisibleAnnotations", &AnnotationsGadget::setVisibleAnnotations )
+		.def( "getVisibleAnnotations", &AnnotationsGadget::getVisibleAnnotations, return_value_policy<copy_const_reference>() )
+		.def( "annotationText", &annotationTextWrapper, return_value_policy<copy_const_reference>(), ( arg( "node" ), arg( "annotation" ) = "user" ) )
+		.def( "annotationAt", &annotationAtWrapper )
 	;
 
 	IECorePython::RunTimeTypedClass<GraphLayout>()
@@ -276,5 +342,26 @@ void GafferUIModule::bindGraphGadget()
 		.def( "setNodeSeparationScale", &StandardGraphLayout::setNodeSeparationScale )
 		.def( "getNodeSeparationScale", &StandardGraphLayout::getNodeSeparationScale )
 	;
+
+	{
+		scope s = IECorePython::RefCountedClass<ContextTracker, IECore::RefCounted>( "ContextTracker" )
+			.def( init<const NodePtr &, const ContextPtr &>() )
+			.def( "acquire", &ContextTracker::acquire ).staticmethod( "acquire" )
+			.def( "acquireForFocus", &ContextTracker::acquireForFocus ).staticmethod( "acquireForFocus" )
+			.def( "targetNode", &targetNodeWrapper )
+			.def( "targetContext", &targetContextWrapper )
+			.def( "isTracked", (bool (ContextTracker::*)( const Plug *plug ) const)&ContextTracker::isTracked )
+			.def( "isTracked", (bool (ContextTracker::*)( const Node *node ) const)&ContextTracker::isTracked )
+			.def( "context", &contextWrapper1, ( arg( "node" ), arg( "_copy" ) = true ) )
+			.def( "context", &contextWrapper2, ( arg( "plug" ), arg( "_copy" ) = true ) )
+			.def( "isEnabled", &ContextTracker::isEnabled )
+			.def( "updatePending", &ContextTracker::updatePending )
+			.def( "changedSignal", (ContextTracker::Signal &(ContextTracker::*)())&ContextTracker::changedSignal, return_internal_reference<1>() )
+			.def( "changedSignal", (ContextTracker::Signal &(ContextTracker::*)( GraphComponent * ))&ContextTracker::changedSignal, return_internal_reference<1>() )
+		;
+
+		SignalClass<ContextTracker::Signal, DefaultSignalCaller<ContextTracker::Signal>, ContextTrackerSlotCaller>( "Signal" );
+
+	}
 
 }

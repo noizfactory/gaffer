@@ -37,6 +37,8 @@
 import Gaffer
 import GafferUI
 
+from GafferUI.PlugValueWidget import sole
+
 import imath
 
 from Qt import QtWidgets
@@ -55,24 +57,30 @@ class _AnimationPathFilter( Gaffer.PathFilter ) :
 		Gaffer.PathFilter.__init__( self, userData )
 
 		self.__selection = selection
-		self.__plugInputChangedConnections = [ node.plugInputChangedSignal().connect( Gaffer.WeakMethod( self.__plugInputChanged ) ) for node in selection ]
 
+		self.__selectionAncestors = set()
+		for node in self.__selection :
+			while True :
+				node = node.parent()
+				if node is not None :
+					self.__selectionAncestors.add( node )
+				else :
+					break
+
+		self.__plugInputChangedConnections = [ node.plugInputChangedSignal().connect( Gaffer.WeakMethod( self.__plugInputChanged ), scoped = True ) for node in selection ]
 		self.__nameChangedConnections = []
 
-	def _filter( self, paths ) :
+	def _filter( self, paths, canceller ) :
 
 		def shouldKeep( path ) :
 
 			graphComponent = path.property( "graphComponent:graphComponent" )
 			if isinstance( graphComponent, Gaffer.Node ) :
 
-				for selected in self.__selection :
-					if graphComponent.isAncestorOf( selected ) :
-						return True
-					elif graphComponent == selected :
-						if self.__hasAnimation( graphComponent ) :
-							return True
-				return False
+				return (
+					graphComponent in self.__selectionAncestors or
+					( graphComponent in self.__selection and self.__hasAnimation( graphComponent ) )
+				)
 
 			else :
 
@@ -90,7 +98,7 @@ class _AnimationPathFilter( Gaffer.PathFilter ) :
 			# Hack to report name changes on paths we keep. Really this
 			# should be dealt with for us by GraphComponentPath.
 			self.__nameChangedConnections.append(
-				path.property( "graphComponent:graphComponent" ).nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ) )
+				path.property( "graphComponent:graphComponent" ).nameChangedSignal().connect( Gaffer.WeakMethod( self.__nameChanged ), scoped = True )
 			)
 
 		return result
@@ -115,7 +123,7 @@ class _AnimationPathFilter( Gaffer.PathFilter ) :
 		# when an AnimationNode is involved.
 		self.changedSignal()( self )
 
-	def __nameChanged( self, graphComponent ) :
+	def __nameChanged( self, graphComponent, oldName ) :
 
 		self.changedSignal()( self )
 
@@ -132,13 +140,13 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 			Gaffer.DictPath( {}, "/" ), # placeholder, updated in `_updateFromSet()`.
 			columns = ( GafferUI.PathListingWidget.defaultNameColumn, ),
 			displayMode = GafferUI.PathListingWidget.DisplayMode.Tree,
-			allowMultipleSelection=True
+			selectionMode = GafferUI.PathListingWidget.SelectionMode.Rows,
 		)
 
 		self.__curveList._qtWidget().setMinimumSize( 160, 0 )
 		self.__curveList._qtWidget().setSizePolicy( QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored )
-		self.__curveList.expansionChangedSignal().connect( Gaffer.WeakMethod( self.__expansionChanged ), scoped = False )
-		self.__selectionChangedConnection = self.__curveList.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__selectionChanged ), scoped = False )
+		self.__curveList.expansionChangedSignal().connect( Gaffer.WeakMethod( self.__updateGadgetSets ) )
+		self.__selectionChangedConnection = self.__curveList.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__updateGadgetSets ) )
 
 		# Set up the widget responsible for actual curve drawing
 		self.__animationGadget = GafferUI.AnimationGadget()
@@ -146,38 +154,40 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 		# Set up signals needed to update selection state in PathListingWidget
 		editable = self.__animationGadget.editablePlugs()
 		self.__editablePlugsConnections = [
-			editable.memberAddedSignal().connect( Gaffer.WeakMethod( self.__editablePlugAdded ), scoped = False ),
-			editable.memberRemovedSignal().connect( Gaffer.WeakMethod( self.__editablePlugRemoved ), scoped = False )
+			editable.memberAddedSignal().connect( Gaffer.WeakMethod( self.__editablePlugAdded ) ),
+			editable.memberRemovedSignal().connect( Gaffer.WeakMethod( self.__editablePlugRemoved ) )
 		]
 
-		self.__gadgetWidget = GafferUI.GadgetWidget(
-			bufferOptions = set(
-				[ GafferUI.GLWidget.BufferOptions.Depth,
-				  GafferUI.GLWidget.BufferOptions.Double, ] ), )
+		self.__gadgetWidget = GafferUI.GadgetWidget()
 
 		self.__gadgetWidget.getViewportGadget().setPrimaryChild( self.__animationGadget )
 		self.__gadgetWidget.getViewportGadget().setVariableAspectZoom( True )
 
-		# Assemble UI
-		self.__splitter = GafferUI.SplitContainer( orientation=GafferUI.SplitContainer.Orientation.Horizontal )
-		mainRow.addChild( self.__splitter )
+		# Set up the widget responsible for curve editing
+		self.__curveEditor = _CurveEditor( self.__animationGadget )
 
-		self.__splitter.append( self.__curveList )
-		self.__splitter.append( self.__gadgetWidget )
+		# Assemble UI
+		self.__splitMain = GafferUI.SplitContainer( orientation=GafferUI.SplitContainer.Orientation.Horizontal )
+		self.__splitSide = GafferUI.SplitContainer( orientation=GafferUI.SplitContainer.Orientation.Vertical )
+		mainRow.addChild( self.__splitMain )
+
+		self.__splitSide.append( self.__curveList )
+		self.__splitSide.append( self.__curveEditor )
+		self.__splitMain.append( self.__splitSide )
+		self.__splitMain.append( self.__gadgetWidget )
 
 		# Initial allocation of screen space:
 		#   If there's enough space for the list to get 160 pixels give the rest to the AnimationGadget.
 		#   If that's not the case, divide the space 50/50
 		# \todo: do we want to preserve that ratio when maximizing the window as being done currently?
-		self.__splitter.setSizes( (1, 1) )
-		currentSizes = self.__splitter.getSizes()
+		self.__splitMain.setSizes( (1, 1) )
+		currentSizes = self.__splitMain.getSizes()
 		if currentSizes[0] > 160 :
 			total = sum(currentSizes)
 			betterSize = [float(x) / total for x in [160, total - 160]]
-			self.__splitter.setSizes( betterSize )
+			self.__splitMain.setSizes( betterSize )
 
 		# set initial state
-		self.__editablePlugs = None
 		self._updateFromSet()
 		self._updateFromContext( [ "frame" ] )
 		self.__curveList._qtWidget().adjustSize()
@@ -185,6 +195,9 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 		# \todo: is this a reasonable initial framing?
 		bound = imath.Box3f( imath.V3f( -1, -1, 0 ), imath.V3f( 10, 10, 0 ) )
 		self.__gadgetWidget.getViewportGadget().frame( bound )
+
+		# connect context menu for animation gadget
+		self.__gadgetWidget.contextMenuSignal().connect( Gaffer.WeakMethod( self.__animationGadgetContextMenu ) )
 
 	def _updateFromSet( self ) :
 
@@ -206,66 +219,64 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 			)
 		)
 
-		# Trigger sychronization onto self.__animationGadget
-		self.__expansionChanged( self.__curveList )
+		self.__pathChangedConnection = self.__curveList.getPath().pathChangedSignal().connect( Gaffer.WeakMethod( self.__updateGadgetSets ), scoped = True )
+		self.__updateGadgetSets()
 
 	def _updateFromContext( self, modifiedItems ) :
 
-		self.__animationGadget.setContext( self.getContext() )
+		# Note that we're passing `scriptNode().context()` rather than
+		# `self.context()` because we don't want to use a ContextTracker-based
+		# context in the AnimationEditor.
+		## \todo It would be better if `AnimationGadget::setContext()` connected
+		# to `Context::changedSignal()` and updated automatically after that. We
+		# could also consider removing `setContext()` entirely and connecting to
+		# the ScriptNode's context in the AnimationGadget constructor.
+		self.__animationGadget.setContext( self.scriptNode().context() )
 
-	def __expansionChanged( self, pathListing ) :
-
-		assert( pathListing is self.__curveList )
-
-		paths = pathListing.getExpandedPaths()
+	def __updateGadgetSets( self, unused = None ) :
 
 		visiblePlugs = set()
-		for path in paths:
+		path = self.__curveList.getPath().copy()
+		for name in self.__curveList.getExpansion().paths() :
+			path.setFromString( name )
 			for childPath in path.children() :
 				child = childPath.property( "graphComponent:graphComponent" )
 				if isinstance( child, Gaffer.ValuePlug ) and Gaffer.Animation.isAnimated( child ) :
 					visiblePlugs.add( child )
 
 		visible = self.__animationGadget.visiblePlugs()
-		editable = self.__animationGadget.editablePlugs()
-
 		visible.clear()
 		for plug in visiblePlugs :
 			visible.add( self.__sourceCurvePlug( plug ) )
 
-		with Gaffer.BlockedConnection( self.__editablePlugsConnections ) :
-
-			editable.clear()
-			for plug in ( self.__editablePlugs or set() ) & visiblePlugs :
-				editable.add( self.__sourceCurvePlug( plug ) )
-
-	def __selectionChanged( self, pathListing ) :
-
-		assert( pathListing is self.__curveList )
-
-		paths = pathListing.getSelectedPaths()
-
-		plugList = []
-
-		for path in paths :
-			graphComponent = path.property( "graphComponent:graphComponent" )
-
-			if isinstance( graphComponent, Gaffer.ValuePlug ) and Gaffer.Animation.isAnimated( graphComponent ) :
-				plugList.append( graphComponent )
-
-			for child in graphComponent.children() :
-				if isinstance( child, Gaffer.ValuePlug ) and Gaffer.Animation.isAnimated( child ) :
-					plugList.append( child )
-
-		self.__editablePlugs = set( plugList )
+		editablePlugs = set()
+		for name in self.__curveList.getSelection().paths() :
+			path.setFromString( name )
+			try :
+				# NOTE : path.property() will throw a KeyError exception if the parent
+				#        node has been deleted since we last updated in which case we
+				#        dont want to add the curve to the editable set so we pass.
+				# TODO : Could path.property() return None instead of raising an exception?
+				graphComponent = path.property( "graphComponent:graphComponent" )
+			except KeyError :
+				pass
+			else :
+				if isinstance( graphComponent, Gaffer.ValuePlug ) and Gaffer.Animation.isAnimated( graphComponent ) :
+					editablePlugs.add( graphComponent )
+				for child in graphComponent.children() :
+					if isinstance( child, Gaffer.ValuePlug ) and Gaffer.Animation.isAnimated( child ) :
+						editablePlugs.add( child )
 
 		editable = self.__animationGadget.editablePlugs()
-
-		with Gaffer.BlockedConnection( self.__editablePlugsConnections ) :
-
-			editable.clear()
-			for plug in plugList :
-				editable.add( self.__sourceCurvePlug( plug ) )
+		curves = set( self.__sourceCurvePlug( plug ) for plug in editablePlugs & visiblePlugs )
+		with Gaffer.Signals.BlockedConnection( self.__editablePlugsConnections ) :
+			for curve in list( editable ) :
+				if curve in curves :
+					curves.remove( curve )
+				else :
+					editable.remove( curve )
+			for curve in curves :
+				editable.add( curve )
 
 	def __editablePlugAdded( self, standardSet, curvePlug ) :
 
@@ -277,7 +288,7 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 				output.relativeName( root ).replace( ".", "/" )
 			)
 
-		with Gaffer.BlockedConnection( self.__selectionChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__selectionChangedConnection ) :
 			self.__curveList.setSelection( selection )
 
 	def __editablePlugRemoved( self, standardSet, curvePlug ) :
@@ -290,7 +301,7 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 				output.relativeName( root ).replace( ".", "/" )
 			)
 
-		with Gaffer.BlockedConnection( self.__selectionChangedConnection ) :
+		with Gaffer.Signals.BlockedConnection( self.__selectionChangedConnection ) :
 			self.__curveList.setSelection( selection )
 
 	def __sourceCurvePlug( self, plug ) :
@@ -299,8 +310,700 @@ class AnimationEditor( GafferUI.NodeSetEditor ) :
 		assert( isinstance( result, Gaffer.Animation.CurvePlug ) )
 		return result
 
+	def __animationGadgetContextMenu( self, *unused ) :
+
+		import IECore
+		import functools
+
+		# convert mouse position to event line
+		line = self.__gadgetWidget.getViewportGadget().rasterToGadgetSpace(
+			imath.V2f( GafferUI.Widget.mousePosition( relativeTo = self.__gadgetWidget ) ), gadget = self.__animationGadget )
+
+		# only show context menu when mouse not above axis
+		if self.__animationGadget.onTimeAxis( line ) or self.__animationGadget.onValueAxis( line ) :
+			return False
+
+		# check there are selected keys
+		emptySelectedKeys = not self.__animationGadget.selectedKeys()
+
+		# tie mode for selected keys
+		tieMode = None if emptySelectedKeys else self.__curveEditor.keyWidget().getTieModeForSelectedKeys()
+
+		# key interpolation for selected keys
+		interpolation = None if emptySelectedKeys else self.__curveEditor.keyWidget().getInterpolationForSelectedKeys()
+
+		# check there are editable curves
+		emptyEditableCurves = not self.__animationGadget.editablePlugs()
+
+		# build context menu
+		menuDefinition = IECore.MenuDefinition()
+
+		menuDefinition.append( "/KeysHeader", { "divider" : True, "label" : "Selected Keys" } )
+
+		for mode in sorted( Gaffer.Animation.Interpolation.values.values() ) :
+			menuDefinition.append(
+				"/Interpolation/%s" % ( mode.name ),
+				{
+					"command" : functools.partial(
+						Gaffer.WeakMethod( self.__setSelectedKeysInterpolation ),
+						mode=mode
+					),
+					"active" : not emptySelectedKeys,
+					"checkBox" : interpolation == mode,
+					"description" : Gaffer.Metadata.value( "Animation.Interpolation.%s" % mode.name, "description" ),
+				}
+			)
+
+		for mode in sorted( Gaffer.Animation.TieMode.values.values() ) :
+			menuDefinition.append(
+				"/Tie Mode/%s" % ( mode.name ),
+				{
+					"command" : functools.partial(
+						Gaffer.WeakMethod( self.__setSelectedKeysTieMode ),
+						mode=mode
+					),
+					"active" : not emptySelectedKeys,
+					"checkBox" : tieMode == mode,
+					"description" : Gaffer.Metadata.value( "Animation.TieMode.%s" % mode.name, "description" ),
+				}
+			)
+
+		menuDefinition.append( "/CurvesHeader", { "divider" : True, "label" : "Selected Curves" } )
+
+		for direction in sorted( Gaffer.Animation.Direction.values.values() ) :
+			extrapolation = None if emptyEditableCurves else self.__curveEditor.curveWidget().getExtrapolationForEditableCurves( direction )
+			for mode in sorted( Gaffer.Animation.Extrapolation.values.values() ) :
+				menuDefinition.append(
+					"/Extrapolation/%s/%s" % ( direction.name, mode.name ),
+					{
+						"command" : functools.partial(
+							Gaffer.WeakMethod( self.__setEditableCurvesExtrapolation ),
+							direction=direction,
+							mode=mode
+						),
+						"active" : not emptyEditableCurves,
+						"checkBox" : extrapolation == mode,
+						"description" : Gaffer.Metadata.value( "Animation.Extrapolation.%s" % mode.name, "description" ),
+					}
+				)
+
+		self.__popupMenu = GafferUI.Menu( menuDefinition )
+		self.__popupMenu.popup( parent = self )
+
+		return True
+
+	def __setSelectedKeysInterpolation( self, unused, mode ) :
+
+		with Gaffer.UndoScope( self.scriptNode() ) :
+			for key in self.__animationGadget.selectedKeys() :
+				key.setInterpolation( mode )
+
+	def __setSelectedKeysTieMode( self, unused, mode ) :
+
+		with Gaffer.UndoScope( self.scriptNode() ) :
+			for key in self.__animationGadget.selectedKeys() :
+				key.setTieMode( mode )
+
+	def __setEditableCurvesExtrapolation( self, unused, direction, mode ) :
+
+		with Gaffer.UndoScope( self.scriptNode() ) :
+			for curve in self.__animationGadget.editablePlugs() :
+				curve.setExtrapolation( direction, mode )
+
 	def __repr__( self ) :
 
 		return "GafferUI.AnimationEditor( scriptNode )"
+
+# Private implementation - tab widget
+class _CurveEditor( GafferUI.TabbedContainer ) :
+
+	def __init__( self, curveGadget ) :
+
+		GafferUI.TabbedContainer.__init__( self )
+
+		# store curve set and gadget
+		self.__curveGadget = curveGadget
+
+		# create widgets
+		self.__keyWidget = _KeyWidget()
+		self.__curveWidget = _CurveWidget()
+
+		# set tab ordering
+		self.append( self.__keyWidget, "Key" )
+		self.append( self.__curveWidget, "Curve" )
+
+		# set up signals
+		self.__curveGadget.selectedKeys().memberAddedSignal().connect(
+			Gaffer.WeakMethod( self.__selectedKeysKeyAdded ) )
+		self.__curveGadget.selectedKeys().memberRemovedSignal().connect(
+			Gaffer.WeakMethod( self.__selectedKeysKeyRemoved ) )
+		self.__curveGadget.editablePlugs().memberAddedSignal().connect(
+			Gaffer.WeakMethod( self.__curveSelected ) ),
+		self.__curveGadget.editablePlugs().memberRemovedSignal().connect(
+			Gaffer.WeakMethod( self.__curveDeselected ) )
+
+		# update all tabs
+		for tab in self :
+			tab.update()
+
+	def curveGadget( self ) :
+		return self.__curveGadget
+
+	def keyWidget( self ) :
+		return self.__keyWidget
+
+	def curveWidget( self ) :
+		return self.__curveWidget
+
+	def __selectedKeysChanged( self ) :
+		self.__keyWidget.update()
+
+	@GafferUI.LazyMethod()
+	def __selectedKeysKeyAdded( self, set, key ) :
+		self.__selectedKeysChanged()
+
+	@GafferUI.LazyMethod()
+	def __selectedKeysKeyRemoved( self, set, key ) :
+		self.__selectedKeysChanged()
+
+	def __curveSelected( self, unused, curve ) :
+		for tab in self :
+			tab.connect( curve )
+			tab.update()
+
+	def __curveDeselected( self, unused, curve ) :
+		for tab in self :
+			tab.disconnect( curve )
+			tab.update()
+
+# Private implementation - key widget
+class _KeyWidget( GafferUI.GridContainer ) :
+
+	from collections import namedtuple
+	Connections = namedtuple( "Connections", ("frame", "value", "interpolation", "tieMode", "tangent") )
+
+	def __init__( self ) :
+
+		import IECore
+		import functools
+
+		GafferUI.GridContainer.__init__( self, spacing=4, borderWidth=4 )
+
+		# tool tips
+		frameToolTip = "# Frame\n\nThe frame of the currently selected keys."
+		valueToolTip = "# Value\n\nThe value of the currently selected keys."
+		interpolationToolTip = "# Interpolation\n\nThe interpolation of the currently selected keys."
+		tieModeToolTip = "# Tie Mode\n\nThe tie mode of the currently selected keys."
+		slopeToolTip = "# Slope\n\nThe slope of the %stangents of the currently selected keys."
+		scaleToolTip = "# Scale\n\nThe scale of the %stangents of the currently selected keys."
+
+		# append interpolation mode descriptions to tooltip
+		for mode in sorted( Gaffer.Animation.Interpolation.values.values() ) :
+			description = Gaffer.Metadata.value( "Animation.Interpolation.%s" % mode.name, "description" )
+			interpolationToolTip += "\n* %s%s" % ( mode.name, " : %s" % description if description is not None else "" )
+
+		# append tie mode descriptions to tooltip
+		for mode in sorted( Gaffer.Animation.TieMode.values.values() ) :
+			description = Gaffer.Metadata.value( "Animation.TieMode.%s" % mode.name, "description" )
+			tieModeToolTip += "\n* %s%s" % ( mode.name, " : %s" % description if description is not None else "" )
+
+		# create labels
+		frameLabel = GafferUI.Label( text="Frame", toolTip=frameToolTip )
+		valueLabel = GafferUI.Label( text="Value", toolTip=valueToolTip )
+		interpolationLabel = GafferUI.Label( text="Interpolation", toolTip=interpolationToolTip )
+		tieModeLabel = GafferUI.Label( text="Tie Mode", toolTip=tieModeToolTip )
+		slopeLabel = GafferUI.Label( text="Slope", toolTip=( slopeToolTip % "" ) )
+		scaleLabel = GafferUI.Label( text="Scale", toolTip=( scaleToolTip % "" ) )
+
+		# create editors
+		# NOTE: initial value type (e.g. int or float) determines validated value type of widget
+		self.__frameEditor = GafferUI.NumericWidget( value=int(0), toolTip=frameToolTip )
+		self.__valueEditor = GafferUI.NumericWidget( value=float(0), toolTip=valueToolTip )
+		self.__interpolationEditor = GafferUI.MenuButton( toolTip=interpolationToolTip )
+		self.__tieModeEditor = GafferUI.MenuButton( toolTip=tieModeToolTip )
+		self.__slopeEditor = (
+			GafferUI.NumericWidget( value=float(0), toolTip=( slopeToolTip % "in " ) ),
+			GafferUI.NumericWidget( value=float(0), toolTip=( slopeToolTip % "out " ) ) )
+		self.__scaleEditor = (
+			GafferUI.NumericWidget( value=float(0), toolTip=( scaleToolTip % "in " ) ),
+			GafferUI.NumericWidget( value=float(0), toolTip=( scaleToolTip % "out " ) ) )
+
+		# build interpolation menu
+		im = IECore.MenuDefinition()
+		for mode in sorted( Gaffer.Animation.Interpolation.values.values() ) :
+			im.append( "%s" % ( mode.name ), {
+				"command" : functools.partial( Gaffer.WeakMethod( self.__setInterpolation ), mode=mode ),
+				"checkBox" : functools.partial( Gaffer.WeakMethod( self.__checkBoxStateForKeyInterpolation ), mode=mode ),
+				"description" : Gaffer.Metadata.value( "Animation.Interpolation.%s" % mode.name, "description" ),
+			} )
+		self.__interpolationEditor.setMenu( GafferUI.Menu( im ) )
+
+		# build tie mode menu
+		tm = IECore.MenuDefinition()
+		for mode in sorted( Gaffer.Animation.TieMode.values.values() ) :
+			tm.append( "%s" % ( mode.name ), {
+				"command" : functools.partial( Gaffer.WeakMethod( self.__setTieMode ), mode=mode ),
+				"checkBox" : functools.partial( Gaffer.WeakMethod( self.__checkBoxStateForTieMode ), mode=mode ),
+				"description" : Gaffer.Metadata.value( "Animation.TieMode.%s" % mode.name, "description" ),
+			} )
+		self.__tieModeEditor.setMenu( GafferUI.Menu( tm ) )
+
+		# setup editor connections
+		self.__frameConnection = self.__frameEditor.valueChangedSignal().connect(
+			Gaffer.WeakMethod( self.__setFrame ) )
+		self.__valueConnection = self.__valueEditor.valueChangedSignal().connect(
+			Gaffer.WeakMethod( self.__setValue ) )
+		self.__slopeConnection = (
+			self.__slopeEditor[ Gaffer.Animation.Direction.In ].valueChangedSignal().connect(
+				functools.partial( Gaffer.WeakMethod( self.__setSlope ), Gaffer.Animation.Direction.In ) ),
+			self.__slopeEditor[ Gaffer.Animation.Direction.Out ].valueChangedSignal().connect(
+				functools.partial( Gaffer.WeakMethod( self.__setSlope ), Gaffer.Animation.Direction.Out ) ) )
+		self.__scaleConnection = (
+			self.__scaleEditor[ Gaffer.Animation.Direction.In ].valueChangedSignal().connect(
+				functools.partial( Gaffer.WeakMethod( self.__setScale ), Gaffer.Animation.Direction.In ) ),
+			self.__scaleEditor[ Gaffer.Animation.Direction.Out ].valueChangedSignal().connect(
+				functools.partial( Gaffer.WeakMethod( self.__setScale ), Gaffer.Animation.Direction.Out ) ) )
+
+		# layout widgets
+		alignment = ( GafferUI.HorizontalAlignment.Right, GafferUI.VerticalAlignment.Center )
+		self.addChild( frameLabel, index=( 0, 0 ), alignment=alignment )
+		self[ 1:3, 0 ] = self.__frameEditor
+		self.addChild( valueLabel, index=( 0, 1 ), alignment=alignment )
+		self[ 1:3, 1 ] = self.__valueEditor
+		self.addChild( interpolationLabel, index=( 0, 2 ), alignment=alignment )
+		self[ 1:3, 2 ] = self.__interpolationEditor
+		self.addChild( tieModeLabel, index=( 0, 3 ), alignment=alignment )
+		self[ 1:3, 3 ] = self.__tieModeEditor
+		self[ 0:3, 4 ] = GafferUI.Divider()
+		self.addChild( slopeLabel, index=( 0, 5 ), alignment=alignment )
+		self[ 1, 5 ] = self.__slopeEditor[ Gaffer.Animation.Direction.In ]
+		self[ 2, 5 ] = self.__slopeEditor[ Gaffer.Animation.Direction.Out ]
+		self.addChild( scaleLabel, index=( 0, 6 ), alignment=alignment )
+		self[ 1, 6 ] = self.__scaleEditor[ Gaffer.Animation.Direction.In ]
+		self[ 2, 6 ] = self.__scaleEditor[ Gaffer.Animation.Direction.Out ]
+
+		# curve connections
+		self.__connections = {}
+
+		# numeric widget undo queue state
+		self.__lastChangedReasonValue = None
+		self.__lastChangedReasonFrame = None
+		self.__lastChangedReasonSlope = [ None, None ]
+		self.__lastChangedReasonScale = [ None, None ]
+		self.__mergeGroupIdValue = 0
+		self.__mergeGroupIdFrame = 0
+		self.__mergeGroupIdSlope = [ 0, 0 ]
+		self.__mergeGroupIdScale = [ 0, 0 ]
+
+		# scale of selected keys at start of merge group
+		self.__selectedKeysMergeGroupScale = [ {}, {} ]
+
+	def connect( self, curve ) :
+		if curve not in self.__connections :
+			self.__connections[ curve ] = _KeyWidget.Connections(
+				frame = curve.keyTimeChangedSignal().connect( Gaffer.WeakMethod( self.__keyFrameChanged ) ),
+				value = curve.keyValueChangedSignal().connect( Gaffer.WeakMethod( self.__keyValueChanged ) ),
+				interpolation = curve.keyInterpolationChangedSignal().connect( Gaffer.WeakMethod( self.__keyInterpolationChanged ) ),
+				tieMode = curve.keyTieModeChangedSignal().connect( Gaffer.WeakMethod( self.__keyTieModeChanged ) ),
+				tangent = curve.node().plugDirtiedSignal().connect( Gaffer.WeakMethod( self.__keyTangentChanged ) ) )
+
+	def disconnect( self, curve ) :
+		if curve in self.__connections :
+			for connection in self.__connections[ curve ] :
+				connection.disconnect()
+			del self.__connections[ curve ]
+
+	def update( self ) :
+		self.__updateKeyFrame()
+		self.__updateKeyValue()
+		self.__updateKeyInterpolation()
+		self.__updateKeyTieMode()
+		self.__updateKeyTangents()
+
+	def getTieModeForSelectedKeys( self ) :
+		# if multiple keys selected check if all have same tie mode otherwise return None
+		return sole( key.getTieMode() for key in self.parent().curveGadget().selectedKeys() )
+
+	def getInterpolationForSelectedKeys( self ) :
+		# if multiple keys selected check if all have same interpolation otherwise return None
+		return sole( key.getInterpolation() for key in self.parent().curveGadget().selectedKeys() )
+
+	def __keyFrameChanged( self, curve, key ) :
+		if self.parent().curveGadget().selectedKeys().contains( key ) :
+			self.__updateKeyFrame()
+
+	def __keyValueChanged( self, curve, key ) :
+		if self.parent().curveGadget().selectedKeys().contains( key ) :
+			self.__updateKeyValue()
+
+	def __keyInterpolationChanged( self, curve, key ) :
+		if self.parent().curveGadget().selectedKeys().contains( key ) :
+			self.__updateKeyInterpolation()
+
+	def __keyTieModeChanged( self, curve, key ) :
+		if self.parent().curveGadget().selectedKeys().contains( key ) :
+			self.__updateKeyTieMode()
+
+	@GafferUI.LazyMethod()
+	def __keyTangentChanged( self, unused ) :
+		self.__updateKeyTangents()
+
+	def __updateKeyFrame( self ) :
+
+		# if multiple keys selected display "---" unless all selected keys have same value
+		# which can only happen when all the keys have different parent curves
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		time = sole( key.getTime() for key in selectedKeys )
+		if time is not None :
+			context = selectedKeys[ 0 ].parent().ancestor( Gaffer.ScriptNode ).context()
+			frame = int( round( time * context.getFramesPerSecond() ) )
+			with Gaffer.Signals.BlockedConnection( self.__frameConnection ) :
+				self.__frameEditor.setValue( frame )
+		else :
+			with Gaffer.Signals.BlockedConnection( self.__frameConnection ) :
+				self.__frameEditor.setText( "" )
+				self.__frameEditor.setPlaceholderText( "---" )
+
+		# set enabled when all selected keys have different parent curves
+		enabled = bool( selectedKeys )
+		curves = set()
+		for key in selectedKeys :
+			if key.parent() in curves :
+				enabled = False
+				break
+			curves.add( key.parent() )
+		self.__frameEditor.setEnabled( enabled )
+
+	def __updateKeyValue( self ) :
+
+		# if multiple keys selected display "---" unless all selected keys have same value
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		value = sole( key.getValue() for key in selectedKeys )
+		if value is not None :
+			with Gaffer.Signals.BlockedConnection( self.__valueConnection ) :
+				self.__valueEditor.setValue( value )
+		else :
+			with Gaffer.Signals.BlockedConnection( self.__valueConnection ) :
+				self.__valueEditor.setText( "" )
+				self.__valueEditor.setPlaceholderText( "---" )
+
+		# set disabled when no selected keys
+		self.__valueEditor.setEnabled( bool( selectedKeys ) )
+
+	def __updateKeyInterpolation( self ) :
+
+		mode = self.getInterpolationForSelectedKeys()
+		self.__interpolationEditor.setText( "---" if mode is None else mode.name )
+
+		# set disabled when no selected keys
+		self.__interpolationEditor.setEnabled( bool( self.parent().curveGadget().selectedKeys() ) )
+
+	def __updateKeyTieMode( self ) :
+
+		mode = self.getTieModeForSelectedKeys()
+		self.__tieModeEditor.setText( "---" if mode is None else mode.name )
+
+		# set disabled when no selected keys
+		self.__tieModeEditor.setEnabled( bool( self.parent().curveGadget().selectedKeys() ) )
+
+	def __updateKeyTangents( self ) :
+
+		for direction in Gaffer.Animation.Direction.names.values() :
+			self.__updateTangentSlope( direction )
+			self.__updateTangentScale( direction )
+
+	def __updateTangentSlope( self, direction ) :
+
+		# if multiple keys selected display "---" unless all selected keys have same slope for tangent direction
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		value = sole( key.tangent( direction ).getSlope() for key in selectedKeys )
+		if value is not None :
+			with Gaffer.Signals.BlockedConnection( self.__slopeConnection[ direction ] ) :
+				self.__slopeEditor[ direction ].setValue( value )
+		else :
+			with Gaffer.Signals.BlockedConnection( self.__slopeConnection[ direction ] ) :
+				self.__slopeEditor[ direction ].setText( "" )
+				self.__slopeEditor[ direction ].setPlaceholderText( "---" )
+
+		# set disabled when no selected keys or slope is constrained by interpolation mode
+		enabled = bool( selectedKeys )
+		for key in selectedKeys :
+			if key.tangent( direction ).slopeIsConstrained() :
+				enabled = False
+				break
+		self.__slopeEditor[ direction ].setEnabled( enabled )
+
+	def __updateTangentScale( self, direction ) :
+
+		# if multiple keys selected display "---" unless all selected keys have same scale for tangent direction
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		value = sole( key.tangent( direction ).getScale() for key in selectedKeys )
+		if value is not None :
+			with Gaffer.Signals.BlockedConnection( self.__scaleConnection[ direction ] ) :
+				self.__scaleEditor[ direction ].setValue( value )
+		else :
+			with Gaffer.Signals.BlockedConnection( self.__scaleConnection[ direction ] ) :
+				self.__scaleEditor[ direction ].setText( "" )
+				self.__scaleEditor[ direction ].setPlaceholderText( "---" )
+
+		# set disabled when no selected keys or scale is constrained by interpolation mode
+		enabled = bool( selectedKeys )
+		for key in selectedKeys :
+			if key.tangent( direction ).scaleIsConstrained() :
+				enabled = False
+				break
+		self.__scaleEditor[ direction ].setEnabled( enabled )
+
+	def __setInterpolation( self, unused, mode ) :
+
+		# set interpolation for all selected keys
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if selectedKeys :
+			with Gaffer.UndoScope( selectedKeys[0].parent().ancestor( Gaffer.ScriptNode ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].interpolation ) :
+						key.setInterpolation( mode )
+		self.__interpolationEditor.setText( mode.name )
+
+	def __setTieMode( self, unused, mode ) :
+
+		# set tie mode for all selected keys
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if selectedKeys :
+			with Gaffer.UndoScope( selectedKeys[0].parent().ancestor( Gaffer.ScriptNode ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].tieMode ) :
+						key.setTieMode( mode )
+		self.__tieModeEditor.setText( mode.name )
+
+	def __setFrame( self, widget, reason ) :
+
+		# check for invalid edit
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self.__updateKeyFrame()
+			return
+
+		# handle undo queue
+		if not widget.changesShouldBeMerged( self.__lastChangedReasonFrame, reason ) :
+			curves = self.parent().curveGadget().editablePlugs()
+			if curves :
+				scriptNode = curves[0].ancestor( Gaffer.ScriptNode )
+				with Gaffer.UndoScope( scriptNode, mergeGroup=str( self.__mergeGroupIdFrame ) ) :
+					for curve in curves :
+						curve.removeInactiveKeys()
+			self.__mergeGroupIdFrame += 1
+		self.__lastChangedReasonFrame = reason
+
+		# set frame for selected keys
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if selectedKeys :
+			try :
+				value = int( widget.getValue() )
+			except ValueError :
+				return
+			scriptNode = selectedKeys[0].parent().ancestor( Gaffer.ScriptNode )
+			time = value / scriptNode.context().getFramesPerSecond()
+			with Gaffer.UndoScope( scriptNode, mergeGroup=str( self.__mergeGroupIdFrame ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].frame ) :
+						key.setTime( time )
+			widget.clearUndo()
+
+	def __setValue( self, widget, reason ) :
+
+		# check for invalid edit
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self.__updateKeyValue()
+			return
+
+		# handle undo queue
+		if not widget.changesShouldBeMerged( self.__lastChangedReasonValue, reason ) :
+			self.__mergeGroupIdValue += 1
+		self.__lastChangedReasonValue = reason
+
+		# set value for all selected keys
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if selectedKeys :
+			try :
+				value = widget.getValue()
+			except ValueError :
+				return
+			with Gaffer.UndoScope( selectedKeys[0].parent().ancestor( Gaffer.ScriptNode ), mergeGroup=str( self.__mergeGroupIdValue ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].value ) :
+						key.setValue( value )
+			widget.clearUndo()
+
+	def __setSlope( self, direction, widget, reason ) :
+
+		# check for invalid edit
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self.__updateTangentSlope( direction )
+			return
+
+		# handle undo queue
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if not widget.changesShouldBeMerged( self.__lastChangedReasonSlope[ direction ], reason ) :
+			self.__mergeGroupIdSlope[ direction ] += 1
+			self.__selectedKeysMergeGroupScale[ direction ].clear()
+			for key in selectedKeys :
+				self.__selectedKeysMergeGroupScale[ direction ][ key ] = key.tangent( direction ).getScale()
+		self.__lastChangedReasonSlope[ direction ] = reason
+
+		# set slope for all selected keys in specified direction
+		if selectedKeys :
+			try :
+				value = widget.getValue()
+			except ValueError :
+				return
+			with Gaffer.UndoScope( selectedKeys[0].parent().ancestor( Gaffer.ScriptNode ), mergeGroup=str( self.__mergeGroupIdSlope[ direction ] ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].tangent ) :
+						key.tangent( direction ).setSlopeAndScale( value,
+							self.__selectedKeysMergeGroupScale[ direction ][ key ] )
+			widget.clearUndo()
+
+		# ensure editors are up to date
+		for direction in Gaffer.Animation.Direction.names.values() :
+			self.__updateTangentSlope( direction )
+			self.__updateTangentScale( direction )
+
+	def __setScale( self, direction, widget, reason ) :
+
+		# check for invalid edit
+		if reason == GafferUI.NumericWidget.ValueChangedReason.InvalidEdit :
+			self.__updateTangentScale( direction )
+			return
+
+		# handle undo queue
+		if not widget.changesShouldBeMerged( self.__lastChangedReasonScale[ direction ], reason ) :
+			self.__mergeGroupIdScale[ direction ] += 1
+		self.__lastChangedReasonScale[ direction ] = reason
+
+		# set scale for all selected keys in specified direction
+		selectedKeys = self.parent().curveGadget().selectedKeys()
+		if selectedKeys :
+			try :
+				value = max( widget.getValue(), float(0) )
+			except ValueError :
+				return
+			with Gaffer.UndoScope( selectedKeys[0].parent().ancestor( Gaffer.ScriptNode ), mergeGroup=str( self.__mergeGroupIdScale[ direction ] ) ) :
+				for key in selectedKeys :
+					with Gaffer.Signals.BlockedConnection( self.__connections[ key.parent() ].tangent ) :
+						key.tangent( direction ).setScale( value )
+			widget.clearUndo()
+
+		# ensure editors are up to date
+		for direction in Gaffer.Animation.Direction.names.values() :
+			self.__updateTangentScale( direction )
+
+	def __checkBoxStateForKeyInterpolation( self, mode ) :
+
+		# check if mode equals common mode of selected keys
+		commonMode = self.getInterpolationForSelectedKeys()
+		return None if commonMode is None else commonMode == mode
+
+	def __checkBoxStateForTieMode( self, mode ) :
+
+		# check if tie mode equals common tie mode of selected keys
+		commonMode = self.getTieModeForSelectedKeys()
+		return None if commonMode is None else commonMode == mode
+
+# Private implementation - curve widget
+class _CurveWidget( GafferUI.GridContainer ) :
+
+	from collections import namedtuple
+	Connections = namedtuple( "Connections", ("extrapolation") )
+
+	def __init__( self ) :
+
+		import IECore
+		import functools
+
+		GafferUI.GridContainer.__init__( self, spacing=4, borderWidth=4 )
+
+		# tool tips
+		extrapolationToolTip = "# Extrapolation\n\nThe %sextrapolation of the currently selected curves.\n"
+
+		# append extrapolation mode descriptions to tooltip
+		for mode in sorted( Gaffer.Animation.Extrapolation.values.values() ) :
+			description = Gaffer.Metadata.value( "Animation.Extrapolation.%s" % mode.name, "description" )
+			extrapolationToolTip += "\n* %s%s" % ( mode.name, " : %s" % description if description is not None else "" )
+
+		# create labels
+		extrapolationLabel = GafferUI.Label( text="Extrapolation", toolTip=( extrapolationToolTip % "" ) )
+
+		# create editors
+		self.__extrapolationEditor = (
+			GafferUI.MenuButton( toolTip=( extrapolationToolTip % "in " ) ),
+			GafferUI.MenuButton( toolTip=( extrapolationToolTip % "out " ) ) )
+
+		# build extrapolation menus
+		for direction in Gaffer.Animation.Direction.names.values() :
+			em = IECore.MenuDefinition()
+			for mode in sorted( Gaffer.Animation.Extrapolation.values.values() ) :
+				em.append( "%s" % ( mode.name ), {
+					"command" : functools.partial( Gaffer.WeakMethod( self.__setExtrapolation ), direction=direction, mode=mode ),
+					"checkBox" : functools.partial( Gaffer.WeakMethod( self.__checkBoxStateForExtrapolation ), direction=direction, mode=mode ),
+					"description" : Gaffer.Metadata.value( "Animation.Extrapolation.%s" % mode.name, "description" ),
+				} )
+			self.__extrapolationEditor[ direction ].setMenu( GafferUI.Menu( em ) )
+
+		# layout widgets
+		alignment = ( GafferUI.HorizontalAlignment.Right, GafferUI.VerticalAlignment.Center )
+		self.addChild( extrapolationLabel, index=( 0, 0 ), alignment=alignment )
+		self[ 1, 0 ] = self.__extrapolationEditor[ Gaffer.Animation.Direction.In ]
+		self[ 2, 0 ] = self.__extrapolationEditor[ Gaffer.Animation.Direction.Out ]
+
+		# curve connections
+		self.__connections = {}
+
+	def connect( self, curve ) :
+		if curve not in self.__connections :
+			self.__connections[ curve ] = _CurveWidget.Connections(
+				extrapolation = curve.extrapolationChangedSignal().connect( Gaffer.WeakMethod( self.__extrapolationChanged ) ) )
+
+	def disconnect( self, curve ) :
+		if curve in self.__connections :
+			for connection in self.__connections[ curve ] :
+				connection.disconnect()
+			del self.__connections[ curve ]
+
+	def update( self ) :
+		for direction in Gaffer.Animation.Direction.names.values() :
+			self.__updateExtrapolation( direction )
+
+	def getExtrapolationForEditableCurves( self, direction ) :
+		# if multiple curves are editable check if all have same extrapolation in specified direction otherwise return None
+		return sole( curve.getExtrapolation( direction ) for curve in self.parent().curveGadget().editablePlugs() )
+
+	def __extrapolationChanged( self, curve, direction ) :
+		if self.parent().curveGadget().editablePlugs().contains( curve ) :
+			self.__updateExtrapolation( direction )
+
+	def __updateExtrapolation( self, direction ) :
+
+		mode = self.getExtrapolationForEditableCurves( direction )
+		self.__extrapolationEditor[ direction ].setText( "---" if mode is None else mode.name )
+
+		# set disabled when no editable curves
+		self.__extrapolationEditor[ direction ].setEnabled( bool( self.parent().curveGadget().editablePlugs() ) )
+
+	def __setExtrapolation( self, unused, direction, mode ) :
+
+		# set extrapolation for all editable curves
+		editableCurves = self.parent().curveGadget().editablePlugs()
+		if editableCurves :
+			with Gaffer.UndoScope( editableCurves[0].ancestor( Gaffer.ScriptNode ) ) :
+				for curve in editableCurves :
+					with Gaffer.BlockedConnection( self.__connections[ curve ].extrapolation ) :
+						curve.setExtrapolation( direction, mode )
+		self.__extrapolationEditor[ direction ].setText( mode.name )
+
+	def __checkBoxStateForExtrapolation( self, direction, mode ) :
+
+		# check if mode equals common mode of editable curves
+		commonMode = self.getExtrapolationForEditableCurves( direction )
+		return None if commonMode is None else commonMode == mode
 
 GafferUI.Editor.registerType( "AnimationEditor", AnimationEditor )

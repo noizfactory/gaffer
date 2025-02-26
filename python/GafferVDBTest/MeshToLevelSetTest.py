@@ -34,22 +34,33 @@
 #
 ##########################################################################
 
-import GafferTest
+import imath
+import time
 
-import GafferVDB
 import IECore
-import IECoreScene
 import IECoreVDB
+
+import Gaffer
+import GafferTest
+import GafferVDB
 import GafferVDBTest
-import os
 import GafferScene
 
-
 class MeshToLevelSetTest( GafferVDBTest.VDBTestCase ) :
-	def setUp( self ) :
-		GafferVDBTest.VDBTestCase.setUp( self )
-		self.sourcePath = os.path.join( self.dataDir, "sphere.vdb" )
-		self.sceneInterface = IECoreScene.SceneInterface.create( self.sourcePath, IECore.IndexedIO.OpenMode.Read )
+
+	def testAffects( self ) :
+
+		sphere = GafferScene.Sphere()
+		meshToLevelSet = GafferVDB.MeshToLevelSet()
+		meshToLevelSet["in"].setInput( sphere["out"] )
+
+		cs = GafferTest.CapturingSlot( meshToLevelSet.plugDirtiedSignal() )
+		self.setFilter( meshToLevelSet, path = "/sphere" )
+		self.assertIn( meshToLevelSet["out"]["object"], { x[0] for x in cs } )
+
+		del cs[:]
+		sphere["radius"].setValue( 2 )
+		self.assertIn( meshToLevelSet["out"]["object"], { x[0] for x in cs } )
 
 	def testCanConvertMeshToLevelSetVolume( self ) :
 		sphere = GafferScene.Sphere()
@@ -119,3 +130,164 @@ class MeshToLevelSetTest( GafferVDBTest.VDBTestCase ) :
 		meshToLevelSet["grid"].setValue( "fooBar" )
 		obj2 = meshToLevelSet['out'].object( "sphere" )
 		self.assertEqual( obj2.gridNames(), ["fooBar"] )
+
+	def testCancellation( self ) :
+
+		# Start a computation in the background, and
+		# then cancel it.
+
+		script = Gaffer.ScriptNode()
+
+		script["sphere"] = GafferScene.Sphere()
+
+		script["meshToLevelSet"] = GafferVDB.MeshToLevelSet()
+		script["meshToLevelSet"]["in"].setInput( script["sphere"]["out"] )
+		self.setFilter( script["meshToLevelSet"], path = "/sphere" )
+		script["meshToLevelSet"]["voxelSize"].setValue( 0.01 )
+
+		def computeObject() :
+
+			script["meshToLevelSet"]["out"].object( "/sphere" )
+
+		backgroundTask = Gaffer.ParallelAlgo.callOnBackgroundThread(
+			script["meshToLevelSet"]["out"]["object"], computeObject
+		)
+		# Delay so that the computation actually starts, rather
+		# than being avoided entirely.
+		time.sleep( 0.01 )
+		backgroundTask.cancelAndWait()
+
+		# Get the value again. If cancellation has been managed properly, this
+		# will do a fresh compute to get a full result, and not pull a half-finished
+		# result out of the cache.
+		vdbAfterCancellation = script["meshToLevelSet"]["out"].object( "/sphere" )
+
+		# Compare against a result computed from scratch.
+		Gaffer.ValuePlug.clearCache()
+		vdb = script["meshToLevelSet"]["out"].object( "/sphere" )
+
+		self.assertEqual(
+			vdbAfterCancellation.findGrid( "surface" ).activeVoxelCount(),
+			vdb.findGrid( "surface" ).activeVoxelCount(),
+		)
+
+	def testParallelGetValueComputesObjectOnce( self ) :
+
+		cube = GafferScene.Cube()
+
+		pathFilter = GafferScene.PathFilter()
+		pathFilter["paths"].setValue( IECore.StringVectorData( [ "/cube" ] ) )
+
+		meshToLevelSet = GafferVDB.MeshToLevelSet()
+		meshToLevelSet["in"].setInput( cube["out"] )
+		meshToLevelSet["filter"].setInput( pathFilter["out"] )
+
+		self.assertParallelGetValueComputesObjectOnce( meshToLevelSet["out"], "/cube" )
+
+	@GafferTest.TestRunner.CategorisedTestMethod( { "taskCollaboration:hashAliasing" } )
+	def testRecursionViaIntermediateQuery( self ) :
+
+		cube = GafferScene.Cube()
+
+		cubeFilter = GafferScene.PathFilter()
+		cubeFilter["paths"].setValue( IECore.StringVectorData( [ "/cube" ] ) )
+
+		# Two identical MeshToLevelSet nodes, with the same input scene.
+
+		meshToLevelSet1 = GafferVDB.MeshToLevelSet()
+		meshToLevelSet1["in"].setInput( cube["out"] )
+		meshToLevelSet1["filter"].setInput( cubeFilter["out"] )
+
+		meshToLevelSet2 = GafferVDB.MeshToLevelSet()
+		meshToLevelSet2["in"].setInput( cube["out"] )
+		meshToLevelSet2["filter"].setInput( cubeFilter["out"] )
+
+		# Use a PrimitiveVariableQuery to make one node depend on the other,
+		# while keeping the input values they receive identical. Dastardly!
+
+		query = GafferScene.PrimitiveVariableQuery()
+		query["scene"].setInput( meshToLevelSet1["out"] )
+		query["location"].setValue( "/cube" )
+		p = query.addQuery( Gaffer.StringPlug(), "thisVariableDoesNotExist" )
+		# Query will fail and output this default value, but not without
+		# pulling on `meshToLevelSet1` first.
+		p["value"].setValue( "surface" )
+		meshToLevelSet2["grid"].setInput( query.valuePlugFromQuery( p ) )
+
+		# The two nodes now have the same hash, despite one depending
+		# on the other. This is because `surface` is a StringPlug, which
+		# hashes based on value, thanks to de8ab79d6f958cef3b80954798f8083a346945a7.
+
+		self.assertEqual(
+			meshToLevelSet2["out"].objectHash( "/cube" ),
+			meshToLevelSet1["out"].objectHash( "/cube" )
+		)
+
+		# Evict all values from the compute cache, keeping the hashes in
+		# the hash cache.
+
+		Gaffer.ValuePlug.clearCache()
+
+		# Now, when we get the value from the downstream node, it will
+		# trigger a recursive compute of the upstream node, for the
+		# _same_ compute cache entry. If we don't handle this appropriately
+		# we'll get deadlock.
+
+		meshToLevelSet2["out"].object( "/cube" )
+
+	def testMerging( self ):
+
+		# Create two non-overlapping spheres
+		sphere = GafferScene.Sphere()
+		sphere["radius"].setValue( 1.0 )
+
+		sphere2 = GafferScene.Sphere()
+		sphere2["name"].setValue( "sphere2" )
+		sphere2["radius"].setValue( 1.0 )
+		sphere2["transform"]["translate"]["x"].setValue( 5 )
+
+		freezeTransform = GafferScene.FreezeTransform()
+		freezeTransform["in"].setInput( sphere2["out"] )
+		self.setFilter( freezeTransform, '/sphere2' )
+
+		parent = GafferScene.Parent()
+		parent["parent"].setValue( "/" )
+		parent["in"].setInput( sphere["out"] )
+		parent["children"][0].setInput( freezeTransform["out"] )
+
+
+		meshToLevelSet = GafferVDB.MeshToLevelSet()
+		meshToLevelSet["in"].setInput( parent["out"] )
+		self.setFilter( meshToLevelSet, '/*' )
+
+		voxelCountA = meshToLevelSet["out"].object( "/sphere" ).findGrid( "surface" ).activeVoxelCount()
+		voxelCountB = meshToLevelSet["out"].object( "/sphere2" ).findGrid( "surface" ).activeVoxelCount()
+
+		# Maybe this could change if OpenVDB's algorithm changes, but I would expect it to be constant
+		# unless something weird changes, so might as well check the actual numbers
+		self.assertEqual( voxelCountA, 7712 )
+		self.assertEqual( voxelCountB, 7712 )
+
+		meshToLevelSet["destination"].setValue( "/merged" )
+
+		# If we write both locations to the same destination, they get merged
+		self.assertEqual(
+			meshToLevelSet["out"].object( "/merged" ).findGrid( "surface" ).activeVoxelCount(),
+			voxelCountA + voxelCountB
+		)
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testBasicPerf( self ):
+		sphere = GafferScene.Sphere()
+		sphere["radius"].setValue( 2.0 )
+		sphere["divisions"].setValue( imath.V2i( 1000, 1000 ) )
+
+		meshToLevelSet = GafferVDB.MeshToLevelSet()
+		self.setFilter( meshToLevelSet, '/sphere' )
+		meshToLevelSet["voxelSize"].setValue( 0.05 )
+		meshToLevelSet["in"].setInput( sphere["out"] )
+
+		meshToLevelSet["in"].object( "/sphere" )
+
+		with GafferTest.TestRunner.PerformanceScope() :
+			meshToLevelSet["out"].object( "/sphere" )

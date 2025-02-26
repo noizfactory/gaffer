@@ -57,17 +57,16 @@ namespace
 
 struct DriverCreatedSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, IECoreImage::DisplayDriver *driver, const IECore::CompoundData *parameters )
+	void operator()( boost::python::object slot, IECoreImage::DisplayDriver *driver, const IECore::CompoundData *parameters )
 	{
 		try
 		{
 			slot( IECoreImage::DisplayDriverPtr( driver ), IECore::CompoundDataPtr( const_cast<IECore::CompoundData *>( parameters ) ) );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -101,19 +100,19 @@ void copyFrom( Catalogue::Image &image, const Catalogue::Image *other )
 	image.copyFrom( other );
 }
 
-void save( Catalogue::Image &image, const std::string &fileName )
+void save( Catalogue::Image &image, const std::filesystem::path &fileName )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	image.save( fileName );
 }
 
-std::string generateFileName1( Catalogue &catalogue, const Catalogue::Image *image )
+std::filesystem::path generateFileName1( Catalogue &catalogue, const Catalogue::Image *image )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	return catalogue.generateFileName( image );
 }
 
-std::string generateFileName2( Catalogue &catalogue, const ImagePlug *image )
+std::filesystem::path generateFileName2( Catalogue &catalogue, const ImagePlug *image )
 {
 	IECorePython::ScopedGILRelease gilRelease;
 	return catalogue.generateFileName( image );
@@ -128,6 +127,7 @@ void GafferImageModule::bindCatalogue()
 		scope s = GafferBindings::DependencyNodeClass<Display>()
 			.def( "setDriver", &Display::setDriver, ( arg( "driver" ), arg( "copy" ) = false ) )
 			.def( "getDriver", (IECoreImage::DisplayDriver *(Display::*)())&Display::getDriver, return_value_policy<CastToIntrusivePtr>() )
+			.def( "driverClosed", &Display::driverClosed )
 			.def( "driverCreatedSignal", &Display::driverCreatedSignal, return_value_policy<reference_existing_object>() ).staticmethod( "driverCreatedSignal" )
 			.def( "imageReceivedSignal", &Display::imageReceivedSignal, return_value_policy<reference_existing_object>() ).staticmethod( "imageReceivedSignal" )
 		;
@@ -162,5 +162,17 @@ void GafferImageModule::bindCatalogue()
 
 		Serialisation::registerSerialiser( Catalogue::staticTypeId(), new CatalogueSerialiser );
 	}
+
+	// Expose Catalogue::InternalImages as if they were plain ImageNodes. We don't
+	// want to bind them fully because then we'd be exposing a private class, but
+	// we need to register them so that they can be returned to Python
+	// successfully when inspecting Catalogue internals in the UI.
+	//
+	// See "Boost.Python and slightly more tricky inheritance" at
+	// http://lists.boost.org/Archives/boost/2005/09/93017.php for more details.
+
+	boost::python::objects::copy_class_object(
+		type_id<ImageNode>(), Catalogue::internalImageTypeInfo()
+	);
 
 }

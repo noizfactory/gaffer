@@ -1,9 +1,10 @@
 # BuildTarget: index.md
+# UndeclaredBuildTargets
 
 import re
 import inspect
 
-changes = open( "../../../Changes" )
+changes = open( "../../../Changes.md" )
 # remove me
 
 versionFile = None
@@ -14,9 +15,14 @@ for line in changes :
 
 	m = re.match( r"^(Gaffer )?(([0-9]+\.){2,3}[0-9]+)", line )
 	if m :
-		versionIndex += ( "\n{}{}.md".format( " " * 4, m.group( 2 ) ) )
-		versionFile = open( m.group( 2 ) + ".md", "w" )
-		versionFile.write( m.group( 2 ) + "\n" )
+		versionString = m.group( 2 )
+		if versionString.startswith( "0." ) or versionString.count( "." ) != 3 :
+			# Ignore versions prior to 1.0.0.0
+			versionFile = None
+		else :
+			versionIndex += ( f"\n    {versionString}.md" )
+			versionFile = open( f"{versionString}.md", "w" )
+			versionFile.write( f"{versionString}\n" )
 		continue
 
 	if not versionFile :
@@ -29,13 +35,13 @@ for line in changes :
 index = open( "./index.md", "w" )
 
 index.write( inspect.cleandoc(
-	
+
 	"""
 	<!-- !NO_SCROLLSPY -->
 
 	# Release Notes #
 
-	```eval_rst
+	```{{eval-rst}}
 	.. toctree::
 	    :titlesonly:
 	{0}

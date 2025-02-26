@@ -35,14 +35,21 @@
 ##########################################################################
 
 import os
+import pathlib
 import platform
 import unittest
 import shutil
 import functools
 import datetime
+import re
+import subprocess
 import imath
+import inspect
+
+import OpenImageIO
 
 import IECore
+import IECoreImage
 
 import Gaffer
 import GafferTest
@@ -52,10 +59,10 @@ import GafferImageTest
 
 class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
-	__largeFilePath = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/large.exr" )
-	__rgbFilePath = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/rgb.100x100" )
-	__negativeDataWindowFilePath = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checkerWithNegativeDataWindow.200x150" )
-	__defaultFormatFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/defaultNegativeDisplayWindow.exr" )
+	__largeFilePath = GafferImageTest.ImageTestCase.imagesPath() / "large.exr"
+	__rgbFilePath = GafferImageTest.ImageTestCase.imagesPath() / "rgb.100x100.exr"
+	__negativeDataWindowFilePath = GafferImageTest.ImageTestCase.imagesPath() / "checkerWithNegativeDataWindow.200x150.exr"
+	__representativeDeepPath = GafferImageTest.ImageTestCase.imagesPath() / "representativeDeepImage.exr"
 
 	longMessage = True
 
@@ -69,60 +76,45 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		GafferImageTest.ImageTestCase.tearDown( self )
 		GafferImage.ImageWriter.setDefaultColorSpaceFunction( self.__defaultColorSpaceFunction )
 
+		# Restore ExrCore back to default
+		OpenImageIO.attribute( "openexr:core", 1 )
+
 	# Test that we can select which channels to write.
 	def testChannelMask( self ) :
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( self.__rgbFilePath+".exr" )
+		r["fileName"].setValue( self.__rgbFilePath )
 
 		testFile = self.__testFile( "default", "RB", "exr" )
-		self.failIf( os.path.exists( testFile ) )
+		self.assertFalse( testFile.exists() )
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( r["out"] )
 		w["fileName"].setValue( testFile )
 		w["channels"].setValue( "R B" )
-		with Gaffer.Context() :
-			w["task"].execute()
+		w["task"].execute()
 
 		writerOutput = GafferImage.ImageReader()
 		writerOutput["fileName"].setValue( testFile )
 
 		channelNames = writerOutput["out"]["channelNames"].getValue()
-		self.failUnless( "R" in channelNames )
-		self.failUnless( not "G" in channelNames )
-		self.failUnless( "B" in channelNames )
-		self.failUnless( not "A" in channelNames )
-
-	def testWriteModePlugCompatibility( self ) :
-		w = GafferImage.ImageWriter()
-
-		w['writeMode'].setValue( GafferImage.ImageWriter.Mode.Scanline )
-
-		self.assertEqual( w['openexr']['mode'].getValue(), GafferImage.ImageWriter.Mode.Scanline )
-		self.assertEqual( w['tiff']['mode'].getValue(), GafferImage.ImageWriter.Mode.Scanline )
-		self.assertEqual( w['field3d']['mode'].getValue(), GafferImage.ImageWriter.Mode.Scanline )
-		self.assertEqual( w['iff']['mode'].getValue(), GafferImage.ImageWriter.Mode.Scanline )
-
-		w['writeMode'].setValue( GafferImage.ImageWriter.Mode.Tile )
-
-		self.assertEqual( w['openexr']['mode'].getValue(), GafferImage.ImageWriter.Mode.Tile )
-		self.assertEqual( w['tiff']['mode'].getValue(), GafferImage.ImageWriter.Mode.Tile )
-		self.assertEqual( w['field3d']['mode'].getValue(), GafferImage.ImageWriter.Mode.Tile )
-		self.assertEqual( w['iff']['mode'].getValue(), GafferImage.ImageWriter.Mode.Tile )
+		self.assertIn( "R", channelNames )
+		self.assertNotIn( "G", channelNames )
+		self.assertIn( "B", channelNames )
+		self.assertNotIn( "A", channelNames )
 
 	def testAcceptsInput( self ) :
 
 		w = GafferImage.ImageWriter()
 		p = GafferImage.ImagePlug( direction = Gaffer.Plug.Direction.Out )
 
-		self.failIf( w["preTasks"][0].acceptsInput( p ) )
-		self.failUnless( w["in"].acceptsInput( p ) )
+		self.assertFalse( w["preTasks"][0].acceptsInput( p ) )
+		self.assertTrue( w["in"].acceptsInput( p ) )
 
 	def testTiffWrite( self ) :
 
 		options = {}
-		options['maxError'] = 0.003
+		options['maxError'] = 0.0032
 		options['metadata'] = { 'compression' : IECore.StringData( "zip" ), 'tiff:Compression' : IECore.IntData( 8 ) }
 		options['plugs'] = {}
 		options['plugs']['mode'] = [
@@ -281,52 +273,26 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 	def testDefaultFormatWrite( self ) :
 
 		s = Gaffer.ScriptNode()
-		w1 = GafferImage.ImageWriter()
-		w2 = GafferImage.ImageWriter()
-		g = GafferImage.Grade()
-
-		s.addChild( g )
-		s.addChild( w2 )
-
-		testScanlineFile = self.temporaryDirectory() + "/test.defaultFormat.scanline.exr"
-		testTileFile = self.temporaryDirectory() + "/test.defaultFormat.tile.exr"
-		self.failIf( os.path.exists( testScanlineFile ) )
-		self.failIf( os.path.exists( testTileFile ) )
+		s["c"] = GafferImage.Constant()
+		s["w"] = GafferImage.ImageWriter()
+		s["r"] = GafferImage.ImageReader()
 
 		GafferImage.FormatPlug.acquireDefaultFormatPlug( s ).setValue(
 			GafferImage.Format( imath.Box2i( imath.V2i( -7, -2 ), imath.V2i( 23, 25 ) ), 1. )
 		)
 
-		w1["in"].setInput( g["out"] )
-		w1["fileName"].setValue( testScanlineFile )
-		w1["channels"].setValue( "*" )
-		w1["openexr"]["mode"].setValue( GafferImage.ImageWriter.Mode.Scanline )
+		s["w"]["in"].setInput( s["c"]["out"] )
+		s["w"]["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		s["r"]["fileName"].setInput( s["w"]["fileName"] )
 
-		w2["in"].setInput( g["out"] )
-		w2["fileName"].setValue( testTileFile )
-		w2["channels"].setValue( "*" )
-		w2["openexr"]["mode"].setValue( GafferImage.ImageWriter.Mode.Tile )
+		for mode in ( GafferImage.ImageWriter.Mode.Scanline, GafferImage.ImageWriter.Mode.Tile ) :
 
-		# Try to execute. In older versions of the ImageWriter this would throw an exception.
-		with s.context() :
-			w1["task"].execute()
-			w2["task"].execute()
-		self.failUnless( os.path.exists( testScanlineFile ) )
-		self.failUnless( os.path.exists( testTileFile ) )
+			s["r"]["refreshCount"].setValue( s["r"]["refreshCount"].getValue() + 1 )
 
-		# Check the output.
-		expectedFile = self.__defaultFormatFile
-		expectedOutput = IECore.Reader.create( expectedFile ).read()
-		expectedOutput.blindData().clear()
-
-		writerScanlineOutput = IECore.Reader.create( testScanlineFile ).read()
-		writerScanlineOutput.blindData().clear()
-
-		writerTileOutput = IECore.Reader.create( testTileFile ).read()
-		writerTileOutput.blindData().clear()
-
-		self.assertEqual( writerScanlineOutput, expectedOutput )
-		self.assertEqual( writerTileOutput, expectedOutput )
+			s["w"]["openexr"]["mode"].setValue( mode )
+			with s.context() :
+				s["w"]["task"].execute()
+				self.assertImagesEqual( s["c"]["out"], s["r"]["out"], ignoreMetadata = True )
 
 	def testDefaultFormatOptionPlugValues( self ) :
 		w = GafferImage.ImageWriter()
@@ -363,18 +329,133 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		self.assertEqual( w["webp"]["compressionQuality"].getValue(), 100 )
 
+	def testDeepWrite( self ) :
+
+		r = GafferImage.ImageReader()
+		r["fileName"].setValue( self.__representativeDeepPath )
+
+		flatten = GafferImage.DeepToFlat()
+		flatten["in"].setInput( r["out"] )
+
+		c = GafferImage.Crop()
+		c["in"].setInput( r["out"] )
+		c["area"].setValue( imath.Box2i( imath.V2i( 0 ), imath.V2i( 64 ) ) )
+
+		o = GafferImage.Offset()
+		o["in"].setInput( c["out"] )
+
+		testFile = self.__testFile( "deep", "RGBA", "exr" )
+
+		w = GafferImage.ImageWriter()
+		w['fileName'].setValue( testFile )
+		w["openexr"]["dataType"].setValue( 'float' )
+
+		w['in'].setInput( o['out'] )
+
+		reRead = GafferImage.ImageReader()
+		reRead["fileName"].setValue( testFile )
+
+		# We don't currently have an explicit way of trimming to the dataWindow - any nodes that process the
+		# data should do it, but crop may be passing through.  In order to be able to do an exact compare with
+		# the round tripped data, we can do a little hack by offsetting back and forth by a pixel, to force
+		# processing, which will trim to the dataWindow
+		trimToDataWindowStage1 = GafferImage.Offset()
+		trimToDataWindowStage1["in"].setInput( o["out"] )
+		trimToDataWindowStage1["offset"].setValue( imath.V2i( 1, 0 ) )
+
+		trimToDataWindowStage2 = GafferImage.Offset()
+		trimToDataWindowStage2["in"].setInput( trimToDataWindowStage1["out"] )
+		trimToDataWindowStage2["offset"].setValue( imath.V2i( -1, 0 ) )
+
+		for exrCore in [ 1, 0 ]:
+
+			Gaffer.ValuePlug.clearCache()
+			Gaffer.ValuePlug.clearHashCache()
+			r["refreshCount"].setValue( r["refreshCount"].getValue() + 1 )
+			OpenImageIO.attribute( "openexr:core", exrCore )
+
+			for deep in [ True, False ]:
+				c["in"].setInput( r["out"] if deep else flatten["out"] )
+
+				for mode in [ GafferImage.ImageWriter.Mode.Scanline, GafferImage.ImageWriter.Mode.Tile]:
+
+					with self.subTest( exrCore = exrCore, deep = deep, mode = mode ):
+						w["openexr"]["mode"].setValue( mode )
+
+						for area, affectDisplayWindow in [
+								( imath.Box2i( imath.V2i( 0 ), imath.V2i( 64 ) ), True ),
+								( imath.Box2i( imath.V2i( 0 ), imath.V2i( 63 ) ), True ),
+								( imath.Box2i( imath.V2i( 0 ), imath.V2i( 65 ) ), True ),
+								( imath.Box2i( imath.V2i( 0 ), imath.V2i( 150, 100 ) ), True ),
+								( imath.Box2i( imath.V2i( 37, 21 ), imath.V2i( 96, 43 ) ), False ),
+								( imath.Box2i( imath.V2i( 0 ), imath.V2i( 0 ) ), False )
+							]:
+							c["area"].setValue( area )
+							c["affectDisplayWindow"].setValue( affectDisplayWindow )
+
+							for offset in [
+									imath.V2i( 0, 0 ),
+									imath.V2i( 13, 17 ),
+									imath.V2i( -13, -17 ),
+									imath.V2i( -233, 431 ),
+									imath.V2i( -GafferImage.ImagePlug.tileSize(), 2 * GafferImage.ImagePlug.tileSize() ),
+									imath.V2i( 106, 28 )
+								]:
+
+								o["offset"].setValue( offset )
+
+								w["task"].execute()
+
+								reRead["refreshCount"].setValue( reRead["refreshCount"].getValue() + 1 )
+								if area.size() != imath.V2i( 0 ):
+									self.assertImagesEqual( reRead["out"], trimToDataWindowStage2["out"], ignoreMetadata = True )
+								else:
+									# We have to write one pixel to file, since OpenEXR doesn't permit empty dataWindow
+									onePixelDataWindow = imath.Box2i( imath.V2i( 0, 99 ), imath.V2i( 1, 100 ) )
+									self.assertEqual( reRead["out"].dataWindow(), onePixelDataWindow )
+
+									emptyPixelData = IECore.CompoundObject()
+									emptyPixelData["tileOrigins"] = IECore.V2iVectorData( [ GafferImage.ImagePlug.tileOrigin( imath.V2i( 0, 99 ) ) ] )
+
+									refData = IECore.FloatVectorData() if deep else GafferImage.ImagePlug.blackTile()
+									if deep:
+										emptyPixelData["sampleOffsets"] = IECore.ObjectVector( [ GafferImage.ImagePlug.emptyTileSampleOffsets() ] )
+									for channel in [ "R", "G","B", "A", "Z", "ZBack" ]:
+										if channel == "ZBack" and not deep:
+											continue
+										emptyPixelData[channel] = IECore.ObjectVector( [ refData ] )
+									self.assertEqual( GafferImage.ImageAlgo.tiles( reRead["out"] ), emptyPixelData )
+
 	# Write an RGBA image that has a data window to various supported formats and in both scanline and tile modes.
 	def __testExtension( self, ext, formatName, options = {}, metadataToIgnore = [] ) :
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( self.__rgbFilePath+".exr" )
-		expectedFile = "{base}.{ext}".format( base=self.__rgbFilePath, ext=ext )
+		r["fileName"].setValue( self.__rgbFilePath )
+		if ext != "exr" :
+			# All our expected reference images were written using an old OCIO config
+			# where the source EXR file was assumed to have sRGB primaries. Set the
+			# source color space to account for that.
+			r["colorSpace"].setValue( "Linear Rec.709 (sRGB)" )
+		expectedFile = self.__rgbFilePath.with_suffix( "." + ext )
 
-		tests = [ {
-			'name': "default",
-			'plugs': {},
-			'metadata': options.get( "metadata", {} ),
-			'maxError': options.get( "maxError", 0.0 ) } ]
+		tests = [
+			{
+				'name': "default",
+				'plugs': {},
+				'metadata': options.get( "metadata", {} ),
+				'maxError': options.get( "maxError", 0.0 )
+			},
+			{
+				'name': "defaultNoAlpha",
+				'removeAlpha': True,
+				'plugs': {},
+				'metadata': options.get( "metadata", {} ),
+				# The expected images were written out with an alpha.  Removing two unpremults/premults from the
+				# color space processing chain produces slightly different results ( in low precision file formats,
+				# like PNG, this error accumulates to be a bit large )
+				'maxError': 0.011
+			}
+		]
 
 		for optPlugName in options['plugs'] :
 			for optPlugVal in options['plugs'][optPlugName] :
@@ -393,14 +474,15 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 			maxError = test['maxError']
 			overrideMetadata = test['metadata']
 			testFile = self.__testFile( name, "RGBA", ext )
+			removeAlpha = "removeAlpha" in test
 
-			self.failIf( os.path.exists( testFile ), "Temporary file already exists : {}".format( testFile ) )
+			self.assertFalse( testFile.exists(), "Temporary file already exists : {}".format( testFile ) )
 
 			# Setup the writer.
 			w = GafferImage.ImageWriter()
 			w["in"].setInput( r["out"] )
 			w["fileName"].setValue( testFile )
-			w["channels"].setValue( "*" )
+			w["channels"].setValue( "[RGB]" if removeAlpha else "*" )
 
 			for opt in test['plugs']:
 				w[formatName][opt].setValue( test['plugs'][opt] )
@@ -408,7 +490,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 			# Execute
 			with Gaffer.Context() :
 				w["task"].execute()
-			self.failUnless( os.path.exists( testFile ), "Failed to create file : {} ({}) : {}".format( ext, name, testFile ) )
+			self.assertTrue( testFile.exists(), "Failed to create file : {} ({}) : {}".format( ext, name, testFile ) )
 
 			# Check the output.
 			expectedOutput = GafferImage.ImageReader()
@@ -427,11 +509,24 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 			# the writer adds several standard attributes that aren't in the original file
 			expectedMetadata["Software"] = IECore.StringData( "Gaffer " + Gaffer.About.versionString() )
 			expectedMetadata["HostComputer"] = IECore.StringData( platform.node() )
-			expectedMetadata["Artist"] = IECore.StringData( os.environ["USER"] )
+			expectedMetadata["Artist"] = IECore.StringData( os.environ.get("USER") or os.environ["USERNAME"] ) #Linux or windows
 			expectedMetadata["DocumentName"] = IECore.StringData( "untitled" )
 
 			for key in overrideMetadata :
 				expectedMetadata[key] = overrideMetadata[key]
+
+			if removeAlpha:
+				# If we're not writing alpha, we can't expect to see OIIO's automatically added alpha type
+				# metadata get read in.  This should be compatible with both current OIIO, and also in the
+				# future once we upgrade to OIIO 2.3.12, and it gets renamed from tga: to targa:
+				try:
+					del expectedMetadata[ "tga:alpha_type" ]
+				except:
+					pass
+				try:
+					del expectedMetadata["targa:alpha_type" ]
+				except:
+					pass
 
 			self.__addExpectedIPTCMetadata( writerMetadata, expectedMetadata )
 
@@ -446,7 +541,20 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 				self.assertTrue( metaName in writerMetadata.keys(), "Writer Metadata missing expected key \"{}\" set to \"{}\" : {} ({})".format(metaName, str(expectedMetadata[metaName]), ext, name) )
 				self.assertEqual( expectedMetadata[metaName], writerMetadata[metaName], "Metadata does not match for key \"{}\" : {} ({})".format(metaName, ext, name) )
 
-			self.assertImagesEqual( expectedOutput["out"], writerOutput["out"], maxDifference = maxError, ignoreMetadata = True )
+			# OIIO 2.2 no longer considers tiffs to have a dataWindow, but some of our
+			# reference images were written with an older OIIO that mistakenly read/writes
+			# this metadata. Note non-OIIO apps like RV do not read this metadata.
+			# See https://github.com/OpenImageIO/oiio/pull/2521 for an explanation
+			ignoreDataWindow = ext in ( "tif", "tiff" ) and hasattr( IECoreImage, "OpenImageIOAlgo" ) and IECoreImage.OpenImageIOAlgo.version() >= 20206
+
+			if not removeAlpha:
+				self.assertImagesEqual( expectedOutput["out"], writerOutput["out"], maxDifference = maxError, ignoreMetadata = True, ignoreDataWindow = ignoreDataWindow )
+			else:
+				deleteChannels = GafferImage.DeleteChannels()
+				deleteChannels["channels"].setValue( "A" )
+				deleteChannels["in"].setInput( expectedOutput["out"] )
+
+				self.assertImagesEqual( deleteChannels["out"], writerOutput["out"], maxDifference = maxError, ignoreMetadata = True, ignoreDataWindow = ignoreDataWindow )
 
 	def __addExpectedIPTCMetadata( self, metadata, expectedMetadata ) :
 
@@ -482,13 +590,17 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 	def __testAdjustDataWindowToDisplayWindow( self, ext, filePath ) :
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( filePath+".exr" )
+		r["fileName"].setValue( filePath )
+		# All our expected reference images were written using an old OCIO config
+		# where the source EXR file was assumed to have sRGB primaries. Set the
+		# source color space to account for that.
+		r["colorSpace"].setValue( "Linear Rec.709 (sRGB)" )
 		w = GafferImage.ImageWriter()
 
-		testFile = self.__testFile( os.path.basename(filePath), "RGBA", ext )
-		expectedFile = filePath+"."+ext
+		testFile = self.__testFile( filePath.with_suffix("").name, "RGBA", ext )
+		expectedFile = filePath.with_suffix( "."+ext )
 
-		self.failIf( os.path.exists( testFile ), "Temporary file already exists : {}".format( testFile ) )
+		self.assertFalse( testFile.exists(), "Temporary file already exists : {}".format( testFile ) )
 
 		# Setup the writer.
 		w["in"].setInput( r["out"] )
@@ -496,9 +608,8 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		w["channels"].setValue( "*" )
 
 		# Execute
-		with Gaffer.Context() :
-			w["task"].execute()
-		self.failUnless( os.path.exists( testFile ), "Failed to create file : {} : {}".format( ext, testFile ) )
+		w["task"].execute()
+		self.assertTrue( testFile.exists(), "Failed to create file : {} : {}".format( ext, testFile ) )
 
 		# Check the output.
 		expectedOutput = GafferImage.ImageReader()
@@ -522,8 +633,8 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		w["task"].execute()
 
-		self.failUnless( os.path.exists( testFile ) )
-		i = IECore.Reader.create( testFile ).read()
+		self.assertTrue( testFile.exists() )
+		i = IECore.Reader.create( str( testFile ) ).read()
 
 		# Cortex uses the EXR convention, which differs
 		# from Gaffer's, so we use the conversion methods to
@@ -548,7 +659,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( writer.hash( c ), IECore.MurmurHash() )
 
 		# no input image produces no effect
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test.exr" )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
 		self.assertEqual( writer.hash( c ), IECore.MurmurHash() )
 
 		# now theres a file and an image, we get some output
@@ -560,7 +671,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( writer.hash( c ), writer.hash( c2 ) )
 
 		# now it does vary
-		writer["fileName"].setValue( self.temporaryDirectory() + "/test.#.exr" )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.#.exr" )
 		self.assertNotEqual( writer.hash( c ), writer.hash( c2 ) )
 
 		# other plugs matter too
@@ -579,9 +690,8 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		s["w"] = GafferImage.ImageWriter()
 		s["w"]["in"].setInput( s["c"]["out"] )
 
-		with s.context() :
-			ci = s["c"]["out"].image()
-			wi = s["w"]["out"].image()
+		ci = GafferImage.ImageAlgo.image( s["c"]["out"] )
+		wi = GafferImage.ImageAlgo.image( s["w"]["out"] )
 
 		self.assertEqual( ci, wi )
 
@@ -596,18 +706,17 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 	def testMetadataDocumentName( self ) :
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( self.__rgbFilePath+".exr" )
+		r["fileName"].setValue( self.__rgbFilePath )
 		w = GafferImage.ImageWriter()
 
 		testFile = self.__testFile( "metadataTest", "RGBA", "exr" )
-		self.failIf( os.path.exists( testFile ) )
+		self.assertFalse( testFile.exists() )
 
 		w["in"].setInput( r["out"] )
 		w["fileName"].setValue( testFile )
 
-		with Gaffer.Context() :
-			w["task"].execute()
-		self.failUnless( os.path.exists( testFile ) )
+		w["task"].execute()
+		self.assertTrue( testFile.exists() )
 
 		result = GafferImage.ImageReader()
 		result["fileName"].setValue( testFile )
@@ -619,8 +728,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		s = Gaffer.ScriptNode()
 		s.addChild( w )
 
-		with Gaffer.Context() :
-			w["task"].execute()
+		w["task"].execute()
 
 		result["refreshCount"].setValue( result["refreshCount"].getValue() + 1 )
 		self.assertEqual( result["out"]["metadata"].getValue()["DocumentName"].value, "untitled" )
@@ -628,8 +736,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		# actually set the script's file name
 		s["fileName"].setValue( "/my/gaffer/script.gfr" )
 
-		with Gaffer.Context() :
-			w["task"].execute()
+		w["task"].execute()
 
 		result["refreshCount"].setValue( result["refreshCount"].getValue() + 1 )
 		self.assertEqual( result["out"]["metadata"].getValue()["DocumentName"].value, "/my/gaffer/script.gfr" )
@@ -637,7 +744,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 	def __testMetadataDoesNotAffectPixels( self, ext, overrideMetadata = {}, metadataToIgnore = [] ) :
 
 		reader = GafferImage.ImageReader()
-		reader["fileName"].setValue( self.__rgbFilePath+"."+ext )
+		reader["fileName"].setValue( self.__rgbFilePath.with_suffix( "."+ext ) )
 
 		# IPTC:Creator will have the current username appended to the end of
 		# the existing one, creating a list of creators. Blank out the initial
@@ -664,12 +771,12 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		regularWriter = GafferImage.ImageWriter()
 		regularWriter["in"].setInput( regularMetadata["out"] )
 		regularWriter["fileName"].setValue( self.__testFile( "regularMetadata", "RGBA", ext ) )
-		self.failIf( os.path.exists( regularWriter["fileName"].getValue() ) )
+		self.assertFalse( pathlib.Path( regularWriter["fileName"].getValue() ).exists() )
 
 		misledWriter = GafferImage.ImageWriter()
 		misledWriter["in"].setInput( misleadingMetadata["out"] )
 		misledWriter["fileName"].setValue( self.__testFile( "misleadingMetadata", "RGBA", ext ) )
-		self.failIf( os.path.exists( misledWriter["fileName"].getValue() ) )
+		self.assertFalse( pathlib.Path( misledWriter["fileName"].getValue() ).exists() )
 
 		# Check that the writer is indeed being given misleading metadata.
 
@@ -685,8 +792,8 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		regularWriter["task"].execute()
 		misledWriter["task"].execute()
 
-		self.failUnless( os.path.exists( regularWriter["fileName"].getValue() ) )
-		self.failUnless( os.path.exists( misledWriter["fileName"].getValue() ) )
+		self.assertTrue( pathlib.Path( regularWriter["fileName"].getValue() ).exists() )
+		self.assertTrue( pathlib.Path( misledWriter["fileName"].getValue() ).exists() )
 
 		# Make readers to read back what we wrote out
 
@@ -700,8 +807,14 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		# been changed at all, regardless of which metadata
 		# was provided to the writers.
 
-		self.assertImagesEqual( misledWriter["in"], misledReader["out"], ignoreMetadata = True )
-		self.assertImagesEqual( misledReader["out"], regularReader["out"], ignoreMetadata = True )
+		# OIIO 2.2 no longer considers tiffs to have a dataWindow, but some of our
+		# reference images were written with an older OIIO that mistakenly read/writes
+		# this metadata. Note non-OIIO apps like RV do not read this metadata.
+		# See https://github.com/OpenImageIO/oiio/pull/2521 for an explanation
+		ignoreDataWindow = ext in ( "tif", "tiff" ) and hasattr( IECoreImage, "OpenImageIOAlgo" ) and IECoreImage.OpenImageIOAlgo.version() >= 20206
+
+		self.assertImagesEqual( misledWriter["in"], misledReader["out"], ignoreMetadata = True, ignoreDataWindow = ignoreDataWindow )
+		self.assertImagesEqual( misledReader["out"], regularReader["out"], ignoreMetadata = True, ignoreDataWindow = ignoreDataWindow )
 
 		# Load the metadata from the files, and figure out what
 		# metadata we expect to have based on what we expect the
@@ -715,7 +828,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		expectedMetadata["DateTime"] = regularReaderMetadata["DateTime"]
 		expectedMetadata["Software"] = IECore.StringData( "Gaffer " + Gaffer.About.versionString() )
 		expectedMetadata["HostComputer"] = IECore.StringData( platform.node() )
-		expectedMetadata["Artist"] = IECore.StringData( os.environ["USER"] )
+		expectedMetadata["Artist"] = IECore.StringData( os.environ.get("USER") or os.environ["USERNAME"] ) #Linux or windows
 		expectedMetadata["DocumentName"] = IECore.StringData( "untitled" )
 		expectedMetadata["fileFormat"] = regularReaderMetadata["fileFormat"]
 		expectedMetadata["dataType"] = regularReaderMetadata["dataType"]
@@ -769,7 +882,6 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		)
 
 	def testSinglePixelThatUsedToCrash( self ) :
-
 		i = GafferImage.Constant()
 		i["format"].setValue( GafferImage.Format( 4096, 2304, 1.000 ) )
 
@@ -784,15 +896,14 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		c["in"].setInput( overscanCrop["out"] )
 
 		testFile = self.__testFile( "emptyImage", "RGBA", "exr" )
-		self.failIf( os.path.exists( testFile ) )
+		self.assertFalse( testFile.exists() )
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( c["out"] )
 		w["fileName"].setValue( testFile )
 
-		with Gaffer.Context():
-			w["task"].execute()
-		self.failUnless( os.path.exists( testFile ) )
+		w["task"].execute()
+		self.assertTrue( testFile.exists() )
 
 		after = GafferImage.ImageReader()
 		after["fileName"].setValue( testFile )
@@ -812,15 +923,14 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		c["in"].setInput( i["out"] )
 
 		testFile = self.__testFile( "emptyImage", "RGBA", "exr" )
-		self.failIf( os.path.exists( testFile ) )
+		self.assertFalse( testFile.exists() )
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( c["out"] )
 		w["fileName"].setValue( testFile )
 
-		with Gaffer.Context():
-			w["task"].execute()
-		self.failUnless( os.path.exists( testFile ) )
+		w["task"].execute()
+		self.assertTrue( testFile.exists() )
 
 		after = GafferImage.ImageReader()
 		after["fileName"].setValue( testFile )
@@ -830,7 +940,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 	def testPixelAspectRatio( self ) :
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( self.__rgbFilePath+".exr" )
+		r["fileName"].setValue( self.__rgbFilePath )
 		self.assertEqual( r["out"]["format"].getValue().getPixelAspect(), 1 )
 		self.assertEqual( r["out"]["metadata"].getValue()["PixelAspectRatio"], IECore.FloatData( 1 ) )
 
@@ -843,16 +953,15 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( r["out"]["metadata"].getValue()["PixelAspectRatio"], IECore.FloatData( 1 ) )
 
 		testFile = self.__testFile( "pixelAspectFromFormat", "RGBA", "exr" )
-		self.failIf( os.path.exists( testFile ) )
+		self.assertFalse( testFile.exists() )
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( f["out"] )
 		w["fileName"].setValue( testFile )
 		w["channels"].setValue( "*" )
 
-		with Gaffer.Context() :
-			w["task"].execute()
-		self.failUnless( os.path.exists( testFile ) )
+		w["task"].execute()
+		self.assertTrue( testFile.exists() )
 
 		after = GafferImage.ImageReader()
 		after["fileName"].setValue( testFile )
@@ -907,14 +1016,14 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		s["c"] = GafferImage.Constant()
 		s["w"] = GafferImage.ImageWriter()
 		s["w"]["in"].setInput( s["c"]["out"] )
-		s["w"]["fileName"].setValue( self.temporaryDirectory() + "/test.${ext}" )
+		s["w"]["fileName"].setValue( self.temporaryDirectory() / "test.${ext}" )
 
 		context = Gaffer.Context( s.context() )
 		context["ext"] = "tif"
 		with context :
 			s["w"]["task"].execute()
 
-		self.assertTrue( os.path.isfile( self.temporaryDirectory() + "/test.tif" ) )
+		self.assertTrue( ( self.temporaryDirectory() / "test.tif" ).is_file() )
 
 	def testErrorMessages( self ) :
 
@@ -923,17 +1032,17 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		s["c"] = GafferImage.Constant()
 		s["w"] = GafferImage.ImageWriter()
 		s["w"]["in"].setInput( s["c"]["out"] )
-		s["w"]["fileName"].setValue( self.temporaryDirectory() + "/test.unsupportedExtension" )
+		s["w"]["fileName"].setValue( self.temporaryDirectory() / "test.unsupportedExtension" )
 
 		with s.context() :
 
-			self.assertRaisesRegexp( RuntimeError, "could not find a format writer for", s["w"].execute )
+			self.assertRaisesRegex( RuntimeError, "could not find a format writer for", s["w"].execute )
 
-			s["w"]["fileName"].setValue( self.temporaryDirectory() + "/test.tif" )
+			s["w"]["fileName"].setValue( self.temporaryDirectory() / "test.tif" )
 			s["w"]["task"].execute()
 
-			os.chmod( self.temporaryDirectory() + "/test.tif", 0o444 )
-			self.assertRaisesRegexp( RuntimeError, "Could not open", s["w"]["task"].execute )
+			os.chmod( self.temporaryDirectory() / "test.tif", 0o444 )
+			self.assertRaisesRegex( RuntimeError, "Could not open", s["w"]["task"].execute )
 
 	def testWriteIntermediateFile( self ) :
 
@@ -953,24 +1062,25 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		s["w1"] = GafferImage.ImageWriter()
 		s["w1"]["in"].setInput( s["c"]["out"] )
-		s["w1"]["fileName"].setValue( self.temporaryDirectory() + "/test1.exr" )
+		s["w1"]["fileName"].setValue( self.temporaryDirectory() / "test1.exr" )
 
 		s["r"] = GafferImage.ImageReader()
-		s["r"]["fileName"].setValue( self.temporaryDirectory() + "/test1.exr" )
+		s["r"]["fileName"].setValue( self.temporaryDirectory() / "test1.exr" )
 
 		s["w2"] = GafferImage.ImageWriter()
 		s["w2"]["in"].setInput( s["r"]["out"] )
-		s["w2"]["fileName"].setValue( self.temporaryDirectory() + "/test2.exr" )
+		s["w2"]["fileName"].setValue( self.temporaryDirectory() / "test2.exr" )
 		s["w2"]["preTasks"][0].setInput( s["w1"]["task"] )
 
-		d = GafferDispatch.LocalDispatcher()
-		d["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
+		s["d"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		s["d"]["tasks"][0].setInput( s["w2"]["task"] )
+		s["d"]["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
 
 		with s.context() :
-			d.dispatch( [ s["w2"] ] )
+			s["d"]["task"].execute()
 
-		self.assertTrue( os.path.isfile( s["w1"]["fileName"].getValue() ) )
-		self.assertTrue( os.path.isfile( s["w2"]["fileName"].getValue() ) )
+		self.assertTrue( pathlib.Path( s["w1"]["fileName"].getValue() ).is_file() )
+		self.assertTrue( pathlib.Path( s["w2"]["fileName"].getValue() ).is_file() )
 
 	def testBackgroundDispatch( self ) :
 
@@ -980,18 +1090,19 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		s["w"] = GafferImage.ImageWriter()
 		s["w"]["in"].setInput( s["c"]["out"] )
-		s["w"]["fileName"].setValue( self.temporaryDirectory() + "/test.exr" )
+		s["w"]["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
 
-		d = GafferDispatch.LocalDispatcher()
-		d["jobsDirectory"].setValue( self.temporaryDirectory() + "/jobs" )
-		d["executeInBackground"].setValue( True )
+		s["d"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		s["d"]["tasks"][0].setInput( s["w"]["task"] )
+		s["d"]["jobsDirectory"].setValue( self.temporaryDirectory() / "jobs" )
+		s["d"]["executeInBackground"].setValue( True )
 
 		with s.context() :
-			d.dispatch( [ s["w"] ] )
+			s["d"]["task"].execute()
 
-		d.jobPool().waitForAll()
+		s["d"].jobPool().waitForAll()
 
-		self.assertTrue( os.path.isfile( s["w"]["fileName"].getValue() ) )
+		self.assertTrue( pathlib.Path( s["w"]["fileName"].getValue() ).is_file() )
 
 	def testDerivingInPython( self ) :
 
@@ -1015,13 +1126,13 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		w = DerivedImageWriter()
 		w["in"].setInput( c["out"] )
-		w["fileName"].setValue( os.path.join( self.temporaryDirectory(), "test.exr" ) )
-		w["copyFileName"].setValue( os.path.join( self.temporaryDirectory(), "test2.exr" ) )
+		w["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		w["copyFileName"].setValue( self.temporaryDirectory() / "test2.exr" )
 
 		w["task"].execute()
 
-		self.assertTrue( os.path.isfile( w["fileName"].getValue() ) )
-		self.assertTrue( os.path.isfile( w["copyFileName"].getValue() ) )
+		self.assertTrue( pathlib.Path( w["fileName"].getValue() ).is_file() )
+		self.assertTrue( pathlib.Path( w["copyFileName"].getValue() ).is_file() )
 
 	def testStringMetadata( self ) :
 
@@ -1033,7 +1144,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( m["out"] )
-		w["fileName"].setValue( os.path.join( self.temporaryDirectory(), "test.exr" ) )
+		w["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
 		w["task"].execute()
 
 		r = GafferImage.ImageReader()
@@ -1043,12 +1154,12 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 	def __testFile( self, mode, channels, ext ) :
 
-		return self.temporaryDirectory() + "/test." + channels + "." + str( mode ) + "." + str( ext )
+		return self.temporaryDirectory() / ( "test." + channels + "." + str( mode ) + "." + str( ext ) )
 
 	def testJpgChroma( self ):
 
 		r = GafferImage.ImageReader()
-		r["fileName"].setValue( self.__rgbFilePath+".exr" )
+		r["fileName"].setValue( self.__rgbFilePath )
 
 		w = GafferImage.ImageWriter()
 		w["in"].setInput( r["out"] )
@@ -1058,15 +1169,14 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		chromaSubSamplings = ( "4:4:4", "4:2:2", "4:2:0", "4:1:1", "" )
 		for chromaSubSampling in chromaSubSamplings:
 
-			testFile = os.path.join( self.temporaryDirectory(), "chromaSubSampling.{0}.jpg".format( chromaSubSampling ) )
+			testFile = self.temporaryDirectory() / "chromaSubSampling.{0}.jpg".format( chromaSubSampling.replace( ':', '_' ) )
 
 			w["fileName"].setValue( testFile )
 			w["jpeg"]["chromaSubSampling"].setValue( chromaSubSampling )
 
-			with Gaffer.Context() :
-				w["task"].execute()
+			w["task"].execute()
 
-			self.failUnless( os.path.exists( testFile ), "Failed to create file : {} : {}".format( chromaSubSampling, testFile ) )
+			self.assertTrue( testFile.exists(), "Failed to create file : {} : {}".format( chromaSubSampling, testFile ) )
 
 			result["fileName"].setValue( testFile )
 
@@ -1084,7 +1194,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 		for dataType in [ 8, 10, 12, 16 ] :
 
-			writer["fileName"].setValue( "{}/uint{}.dpx".format( self.temporaryDirectory(), dataType ) )
+			writer["fileName"].setValue( self.temporaryDirectory() / "uint{}.dpx".format( dataType ) )
 			writer["dpx"]["dataType"].setValue( "uint{0}".format( dataType ) )
 			writer["task"].execute()
 
@@ -1109,7 +1219,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		# just captures its arguments.
 
 		capturedArguments = {}
-		def f( fileName, fileFormat, dataType, metadata ) :
+		def f( fileName, fileFormat, dataType, metadata, config ) :
 
 			capturedArguments.update(
 				{
@@ -1117,33 +1227,39 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 					"fileFormat" : fileFormat,
 					"dataType" : dataType,
 					"metadata" : metadata,
+					"config" : config,
 				}
 			)
-			return "linear"
+			return "scene_linear"
 
 		GafferImage.ImageWriter.setDefaultColorSpaceFunction( f )
 
 		# Verify that the correct arguments are passed for
 		# a variety of fileNames and dataTypes.
 
-		for ext, fileFormat, dataType in [
-			( "exr", "openexr", "half" ),
-			( "dpx", "dpx", "uint12" ),
-			( "TIFF", "tiff", "float" ),
-			( "tif", "tiff", "uint32" ),
+		for ext, fileFormat, dataType, config in [
+			( "exr", "openexr", "half", "" ),
+			( "dpx", "dpx", "uint12", "" ),
+			( "TIFF", "tiff", "float", "" ),
+			( "tif", "tiff", "uint32", ( self.openColorIOPath() / "context.ocio" ).as_posix() ),
 		] :
 
-			w["fileName"].setValue( "{0}/{1}.{2}".format( self.temporaryDirectory(), dataType, ext ) )
+			w["fileName"].setValue( self.temporaryDirectory() / "{0}.{1}".format( dataType, ext ) )
 			w[fileFormat]["dataType"].setValue( dataType )
 
-			capturedArguments.clear()
-			w.execute()
+			with Gaffer.Context() as context :
 
-			self.assertEqual( len( capturedArguments ), 4 )
-			self.assertEqual( capturedArguments["fileName"], w["fileName"].getValue() )
-			self.assertEqual( capturedArguments["fileFormat"], fileFormat )
-			self.assertEqual( capturedArguments["dataType"], dataType )
-			self.assertEqual( capturedArguments["metadata"], w["in"]["metadata"].getValue() )
+				GafferImage.OpenColorIOAlgo.setConfig( context, config )
+
+				capturedArguments.clear()
+				w["task"].execute()
+
+				self.assertEqual( len( capturedArguments ), 5 )
+				self.assertEqual( capturedArguments["fileName"], w["fileName"].getValue() )
+				self.assertEqual( capturedArguments["fileFormat"], fileFormat )
+				self.assertEqual( capturedArguments["dataType"], dataType )
+				self.assertEqual( capturedArguments["metadata"], w["in"]["metadata"].getValue() )
+				self.assertEqual( capturedArguments["config"], GafferImage.OpenColorIOAlgo.currentConfig() )
 
 	def testDefaultColorSpace( self ) :
 
@@ -1161,40 +1277,63 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 
 			return colorSpace
 
-		for colorSpace in [ "Cineon", "rec709", "AlexaV3LogC", "linear" ] :
+		for colorSpace in [ "Linear V-Gamut", "CanonLog3 CinemaGamut D55", "Linear ARRI Wide Gamut 3", "scene_linear" ] :
 
-			GafferImage.ImageWriter.setDefaultColorSpaceFunction(
-				functools.partial( hardcodedColorSpaceConfig, colorSpace )
-			)
+			with self.subTest( colorSpace = colorSpace ) :
 
-			writer["fileName"].setValue( "{0}/{1}.exr".format( self.temporaryDirectory(), colorSpace ) )
-			writer["task"].execute()
+				GafferImage.ImageWriter.setDefaultColorSpaceFunction(
+					functools.partial( hardcodedColorSpaceConfig, colorSpace )
+				)
 
-			reader["colorSpace"].setValue( colorSpace )
-			self.assertImagesEqual( reader["out"], image["out"], ignoreMetadata = True, maxDifference = 0.000001 )
+				writer["fileName"].setValue( self.temporaryDirectory() / "{}.exr".format( colorSpace ) )
+				writer["task"].execute()
+
+				reader["colorSpace"].setValue( colorSpace )
+				self.assertImagesEqual( reader["out"], image["out"], ignoreMetadata = True, maxDifference = 0.000001 )
 
 	def testNonDefaultColorSpace( self ) :
 
 		reader = GafferImage.ImageReader()
-		reader["fileName"].setValue( self.__rgbFilePath + ".exr" )
+		reader["fileName"].setValue( self.__rgbFilePath )
+
+		extraChannel = GafferImage.Shuffle()
+		extraChannel["in"].setInput( reader["out"] )
+		extraChannel["shuffles"].addChild( Gaffer.ShufflePlug( "R", "Q" ) )
 
 		writer = GafferImage.ImageWriter()
-		writer["in"].setInput( reader["out"] )
 
 		resultReader = GafferImage.ImageReader()
 		resultReader["fileName"].setInput( writer["fileName"] )
 
-		for colorSpace in [ "Cineon", "rec709", "AlexaV3LogC" ] :
+		resultWithoutExtra = GafferImage.DeleteChannels()
+		resultWithoutExtra["in"].setInput( resultReader["out"] )
+		resultWithoutExtra["channels"].setValue( "Q" )
 
-			writer["fileName"].setValue( "{0}/{1}.exr".format( self.temporaryDirectory(), colorSpace ) )
+		for colorSpace in [ "Linear V-Gamut", "CanonLog3 CinemaGamut D55", "Linear ARRI Wide Gamut 3" ] :
+
+			writer["in"].setInput( reader["out"] )
+			writer["fileName"].setValue( self.temporaryDirectory() / "{}.exr".format( colorSpace ) )
 			writer["colorSpace"].setValue( colorSpace )
 
 			writer["task"].execute()
 
-			self.failUnless( os.path.exists( writer["fileName"].getValue() ), "Failed to create file : {}".format( writer["fileName"].getValue() ) )
+			self.assertTrue( pathlib.Path( writer["fileName"].getValue() ).exists(), "Failed to create file : {}".format( writer["fileName"].getValue() ) )
 
 			resultReader["colorSpace"].setValue( colorSpace )
-			self.assertImagesEqual( resultReader["out"], reader["out"], ignoreMetadata=True, maxDifference=0.0007 )
+			self.assertImagesEqual( resultReader["out"], reader["out"], ignoreMetadata=True, maxDifference=0.0008 )
+
+			# This is a kinda weird test for a very specific bug:  an earlier version of ImageWriter would
+			# only unpremultiply during color processing if the alpha channel came last.  To verify we've
+			#fixed this, we add a channel named Q, write to file, then read back and delete it, and make
+			# sure we unpremulted properly
+			writer["in"].setInput( extraChannel["out"] )
+			writer["task"].execute()
+
+			resultReader["refreshCount"].setValue( resultReader["refreshCount"].getValue() + 1 )
+
+			self.assertEqual( list( resultReader["out"].channelNames() ), [ "R", "G", "B", "A", "Q" ] )
+
+			self.assertImagesEqual( resultWithoutExtra["out"], reader["out"], ignoreMetadata=True, maxDifference=0.0008 )
 
 	def testDependencyNode( self ) :
 
@@ -1221,7 +1360,7 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		# write to a file format that requires consecutive scanlines
 		writer = GafferImage.ImageWriter()
 		writer["in"].setInput( resize["out"] )
-		writer["fileName"].setValue( "{0}/blankScanlines.jpg".format( self.temporaryDirectory() ) )
+		writer["fileName"].setValue( self.temporaryDirectory() / "blankScanlines.jpg" )
 		writer["task"].execute()
 
 		# ensure we wrote the file successfully
@@ -1231,6 +1370,594 @@ class ImageWriterTest( GafferImageTest.ImageTestCase ) :
 		cleanOutput["in"].setInput( writer["in"] )
 		cleanOutput["channels"].setValue( "A" )
 		self.assertImagesEqual( reader["out"], cleanOutput["out"], ignoreMetadata=True, ignoreDataWindow=True, maxDifference=0.05 )
+
+	def testThrowsForEmptyChannels( self ) :
+
+		constant = GafferImage.Constant()
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( constant["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		writer["channels"].setValue( "diffuse.[RGB]" )
+
+		with self.assertRaisesRegex( Gaffer.ProcessException, "No channels to write" ) :
+			writer["task"].execute()
+
+		self.assertFalse( pathlib.Path( writer["fileName"].getValue() ).exists() )
+
+	def testDWACompressionLevel( self ) :
+
+		constant = GafferImage.Constant()
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( constant["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		writer["openexr"]["dwaCompressionLevel"].setValue( 100 )
+
+		reader = GafferImage.ImageReader()
+		reader["fileName"].setInput( writer["fileName"] )
+
+		# Not in DWA mode, so no level specified.
+		writer["task"].execute()
+		self.assertNotIn( "openexr:dwaCompressionLevel", reader["out"].metadata() )
+
+		# DWAA mode should specify level.
+		writer["openexr"]["compression"].setValue( "dwaa" )
+		writer["task"].execute()
+		reader["refreshCount"].setValue( reader["refreshCount"].getValue() + 1 )
+		self.assertEqual( reader["out"].metadata()["openexr:dwaCompressionLevel"].value, 100.0 )
+
+		# As should DWAB.
+		writer["openexr"]["compression"].setValue( "dwab" )
+		writer["openexr"]["dwaCompressionLevel"].setValue( 110 )
+		writer["task"].execute()
+		reader["refreshCount"].setValue( reader["refreshCount"].getValue() + 1 )
+		self.assertEqual( reader["out"].metadata()["openexr:dwaCompressionLevel"].value, 110.0 )
+
+	def testNameMetadata( self ) :
+
+		# Load an image with various layers.
+
+		reader = GafferImage.ImageReader()
+		reader["fileName"].setValue( self.imagesPath() / "multipart.exr" )
+		self.assertEqual(
+			set( reader["out"].channelNames() ),
+			{
+				"customRgb.R", "customRgb.G", "customRgb.B",
+				"customRgba.R", "customRgba.G", "customRgba.B", "customRgba.A",
+				"customDepth.Z",
+			}
+		)
+
+		# Shuffle one of them into the primary RGBA layer.
+
+		shuffle = GafferImage.Shuffle()
+		shuffle["in"].setInput( reader["out"] )
+		shuffle["shuffles"].addChild( Gaffer.ShufflePlug( "customRgba.R", "R" ) )
+		shuffle["shuffles"].addChild( Gaffer.ShufflePlug( "customRgba.G", "G" ) )
+		shuffle["shuffles"].addChild( Gaffer.ShufflePlug( "customRgba.B", "B" ) )
+		shuffle["shuffles"].addChild( Gaffer.ShufflePlug( "customRgba.A", "A" ) )
+
+		# Write the image out and assert that it reads in again the same.
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( shuffle["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		writer["task"].execute()
+
+		rereader = GafferImage.ImageReader()
+		rereader["fileName"].setInput( writer["fileName"] )
+
+		self.assertImagesEqual( writer["in"], rereader["out"], ignoreMetadata = True, ignoreChannelNamesOrder = True )
+
+		# Deliberately introduce some metadata that would confuse OIIO,
+		# and check that it is ignored.
+
+		metadata = GafferImage.ImageMetadata()
+		metadata["in"].setInput( shuffle["out"] )
+		metadata["metadata"].addChild( Gaffer.NameValuePlug( "name", "test" ) )
+		metadata["metadata"].addChild( Gaffer.NameValuePlug( "oiio:subimagename", "test" ) )
+		metadata["metadata"].addChild( Gaffer.NameValuePlug( "oiio:subimages", 1 ) )
+
+		writer["in"].setInput( metadata["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test2.exr" )
+
+		with IECore.CapturingMessageHandler() as mh :
+			writer["task"].execute()
+
+		self.assertImagesEqual( rereader["out"], shuffle["out"], ignoreMetadata = True, ignoreChannelNamesOrder = True )
+
+		warnings = { m.message for m in mh.messages if m.level == IECore.Msg.Level.Warning }
+		self.assertEqual( len( warnings ), 3 )
+		self.assertIn( "Ignoring metadata \"name\" because it conflicts with OpenImageIO.", warnings )
+		self.assertIn( "Ignoring metadata \"oiio:subimagename\" because it conflicts with OpenImageIO.", warnings )
+		self.assertIn( "Ignoring metadata \"oiio:subimages\" because it conflicts with OpenImageIO.", warnings )
+
+	def testReproduceProductionSamples( self ):
+
+		constant = GafferImage.Constant()
+		constant["format"].setValue( GafferImage.Format( 16, 16, 1.000 ) )
+		constant["expression"] = Gaffer.Expression()
+		constant["expression"].setExpression(
+			'import imath; parent["color"] = imath.Color4f( 0.4, 0.5, 0.6, 1 ) if context.get( "collect:layerName", "" ) != "" else imath.Color4f( 0.1, 0.2, 0.3, 0.4 )'
+		)
+
+		deleteChannels = GafferImage.DeleteChannels()
+		deleteChannels["in"].setInput( constant["out"] )
+		deleteChannels["channels"].setValue( '[A]' )
+
+		collect = GafferImage.CollectImages()
+		collect["in"].setInput( deleteChannels["out"] )
+		collect["rootLayers"].setValue( IECore.StringVectorData( [ 'character', '' ] ) )
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( collect["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		writer["layout"]["partName"].setValue( '${imageWriter:standardPartName}.main' )
+		writer["layout"]["channelName"].setValue( '${imageWriter:nukeBaseName}' )
+		writer["task"].execute()
+
+		refReader = GafferImage.ImageReader()
+		refReader["fileName"].setValue( self.imagesPath() / "imitateProductionLayers1.exr" )
+
+		rereader = GafferImage.ImageReader()
+		rereader["channelInterpretation"].setInput( refReader["channelInterpretation"] )
+		rereader["fileName"].setInput( writer["fileName"] )
+
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Legacy )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+
+		shuffleDepth = GafferImage.Shuffle()
+		shuffleDepth["in"].setInput( constant["out"] )
+		shuffleDepth["shuffles"].addChild( Gaffer.ShufflePlug( "A", "depth.Z" ) )
+
+		deleteChannels["in"].setInput( shuffleDepth["out"] )
+		writer["in"].setInput( deleteChannels["out"] )
+		writer["openexr"]["dataType"].setValue( 'float' )
+
+		writer["layout"]["partName"].setValue( '${imageWriter:standardPartName}_main' )
+		writer["expression"] = Gaffer.Expression()
+		writer["expression"].setExpression(
+			'c = context["imageWriter:baseName"]; parent["layout"]["channelName"] = "depth.Z" if c == "Z" else c'
+		)
+		writer["task"].execute()
+
+		refReader["fileName"].setValue( self.imagesPath() / "imitateProductionLayers2.exr" )
+		refReader["refreshCount"].setValue( 2 )
+		rereader["refreshCount"].setValue( 2 )
+
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Legacy )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+
+	def testReproduceWeirdPartNames( self ):
+
+		constant = GafferImage.Constant()
+		constant["format"].setValue( GafferImage.Format( 16, 16, 1.000 ) )
+		constant["expression"] = Gaffer.Expression()
+		constant["expression"].setExpression(
+			'import imath; parent["color"] = imath.Color4f( 0.4, 0.5, 0.6, 1 ) if context.get( "collect:layerName", "" ) != "" else imath.Color4f( 0.1, 0.2, 0.3, 0.4 )'
+		)
+
+		collect = GafferImage.CollectImages()
+		collect["in"].setInput( constant["out"] )
+		collect["rootLayers"].setValue( IECore.StringVectorData( [ 'layer', '' ] ) )
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( collect["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		writer["layout"]["partName"].setValue( '${imageWriter:standardPartName}.main' )
+		writer["layout"]["channelName"].setValue( '${imageWriter:layerName}.${imageWriter:baseName}' )
+		writer["expression"] = Gaffer.Expression()
+		writer["expression"].setExpression(
+			'c = context["imageWriter:baseName"]; l = context["imageWriter:layerName"]; parent["layout"]["partName"] = "part%i" % ( "RGBA".find(c) + 2 * ( l == "layer" ) )'
+		)
+		writer["task"].execute()
+
+		refReader = GafferImage.ImageReader()
+		refReader["fileName"].setValue( self.imagesPath() / "weirdPartNames.exr" )
+
+		rereader = GafferImage.ImageReader()
+		rereader["channelInterpretation"].setInput( refReader["channelInterpretation"] )
+		rereader["fileName"].setInput( writer["fileName"] )
+
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+		refReader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Legacy )
+		self.assertImagesEqual( rereader["out"], refReader["out"], ignoreMetadata = True )
+
+	# Helper function that extracts the part of the header we care about from exrheader
+	def usefulHeader( self, path ):
+		r = subprocess.check_output( ["exrheader", str( path ) ], universal_newlines=True ).splitlines()[2:]
+
+		# Skip header lines that change every run, or between software, and compression ( since we're
+		# not testing for that ), and chunkCount ( since it depends on compression ).  "version" is
+		# something Nuke sets that we're not worrying about.  "ResolutionUnit" is sometimes set by OIIO
+		# automatically if it sees other metadata ... it always sets it to "in" for inches
+		r = [ i for i in r if not (
+			( i + " " ).split( " " )[0] in [ "Artist", "DocumentName", "HostComputer", "Software", "capDate", "compression", "chunkCount", "version", "ResolutionUnit", "textureformat", "preview", "openexr:chunkCount" ] or i.startswith( "nuke" )
+		) ]
+
+		# We don't care about the difference between 16 and 32 bit floats
+		r = [ i.replace( "32-bit floating-point", "16-bit floating-point" ) for i in r ]
+
+		# Now a very hacky part - we need the main part to be first, but otherwise, the order
+		# of parts doesn't matter, so sort the later parts by name
+		parts = [ [] ]
+		partNames = [ "X" ]
+
+		for i in r:
+			if i.startswith( " part " ):
+				if i[6] != "0":
+					parts.append( [] )
+					partNames.append( "X" )
+					continue
+			parts[-1].append( i )
+			if i.startswith( "name " ):
+				partNames[-1] = i
+		parts[-1].append( "" ) # An extra empty line at the end keeps things consistent for the last part
+
+		r = parts[0]
+		partNum = 1
+		for n, p in sorted( zip( partNames[1:], parts[1:] ) ):
+			r.append( " part %i:" % partNum )
+			r += p
+			partNum += 1
+
+		return r
+
+	def testWithChannelTestImage( self ):
+
+		reference = self.channelTestImage()
+
+		writePath = self.temporaryDirectory() / "test.exr"
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( reference["out"] )
+		writer["fileName"].setValue( writePath )
+
+		rereader = GafferImage.ImageReader()
+		rereader["fileName"].setValue( writePath )
+		rereader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+
+		# Test that the presets produce the expected files, including that they match files produced by Nuke
+		# if appropriate
+		for layout, referenceFile in [
+				( "Single Part", "SinglePart" ), ( "Part per Layer", "PartPerLayer" ),
+				( "Nuke/Interleave Channels, Layers and Views", "NukeSinglePart" ), ( "Nuke/Interleave Channels", "NukePartPerLayer" )
+			]:
+
+			Gaffer.NodeAlgo.applyPreset( writer["layout"], layout )
+
+			writer["task"].execute()
+			rereader["refreshCount"].setValue( rereader["refreshCount"].getValue() + 1 )
+			self.assertImagesEqual( rereader["out"], reference["out"], ignoreMetadata = True, maxDifference = 0.0002, ignoreChannelNamesOrder = layout.startswith( "Nuke" ) )
+			header = self.usefulHeader( writePath )
+			refHeader = self.usefulHeader( self.imagesPath() / ( "channelTest" + referenceFile + ".exr" ) )
+
+			self.assertEqual( header, refHeader )
+
+	def testWithMultiViewChannelTestImage( self ):
+
+		reference = self.channelTestImageMultiView()
+
+		writePath = self.temporaryDirectory() / "multiViewTest.exr"
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( reference["out"] )
+		writer["fileName"].setValue( writePath )
+
+		rereader = GafferImage.ImageReader()
+		rereader["fileName"].setValue( writePath )
+		rereader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+
+		# Test that the presets produce the expected files
+		for layout, referenceFile in [
+				( "Single Part", "SinglePart" ), ( "Part per View", "PartPerView" ), ( "Part per Layer", "PartPerLayer" ),
+			]:
+
+			Gaffer.NodeAlgo.applyPreset( writer["layout"], layout )
+
+			writer["task"].execute()
+			rereader["refreshCount"].setValue( rereader["refreshCount"].getValue() + 1 )
+
+			# In "Single Part", we must expand the dataWindow to encompass all views, so we can't get
+			# exactly matching data windows
+			self.assertImagesEqual( rereader["out"], reference["out"], ignoreMetadata = True, maxDifference = 0.0002, ignoreChannelNamesOrder = layout == "Single Part", ignoreDataWindow = layout == "Single Part" )
+
+			header = self.usefulHeader( writePath )
+			refHeader = self.usefulHeader( self.imagesPath() / ( "channelTestMultiView" + referenceFile + ".exr" ) )
+
+			self.assertEqual( header, refHeader )
+
+		# Test for Nuke, which requires expanding data window to match for all views, so we use referenceExpanded
+
+		# Nuke isn't very flexible in handling multiView images.  Don't use different channels in different views
+		reference["DeleteChannels"]["enabled"].setValue( False )
+
+		# Nuke also doesn't support different data windows for different views
+		writer["matchDataWindows"].setValue( True )
+
+		# Note that there is no test for Nuke/Interleave Channels, because Nuke just crashes when
+		# I try to export in that mode to get a reference image
+		for layout, referenceFile in [
+				( "Part per Layer", "NukeCompat" ), ( "Nuke/Interleave Channels, Layers and Views", "NukeSinglePart" ), ( "Nuke/Interleave Channels and Layers", "NukePartPerView" ), ( "Nuke/Interleave Channels", None )
+			]:
+
+			Gaffer.NodeAlgo.applyPreset( writer["layout"], layout )
+
+			writer["task"].execute()
+			rereader["refreshCount"].setValue( rereader["refreshCount"].getValue() + 1 )
+			self.assertImagesEqual( rereader["out"], reference["out"], ignoreMetadata = True, maxDifference = 0.0002, ignoreChannelNamesOrder = layout.startswith( "Nuke" ), ignoreDataWindow = True )
+
+			if layout == "Nuke/Interleave Channels, Layers and Views":
+				# Nuke's implementation of single part multi-view has channel names that don't match the
+				# spec at all, don't bother trying to match them
+				continue
+			if layout == "Nuke/Interleave Channels":
+				# I can't get Nuke to export in this mode without segfaulting, so we don't have "ground truth"
+				# to compare our channel naming too
+				continue
+
+			header = self.usefulHeader( writePath )
+			refHeader = self.usefulHeader( self.imagesPath() / ( "channelTestMultiView" + referenceFile + ".exr" ) )
+
+			if layout == "Nuke/Interleave Channels and Layers":
+				# Swap the order of left and right to match Nuke having arbitrarily reordered
+				# ( We should probably have an actual way of reordering views in Gaffer
+				refHeader = [ i.replace( "left", "right" ) if "left" in i else i.replace( "right", "left" ) for i in refHeader ]
+			self.assertEqual( header, refHeader )
+
+	@unittest.skipIf( not "OPENEXR_IMAGES_DIR" in os.environ, "If you want to run tests using the OpenEXR sample images, then download https://github.com/AcademySoftwareFoundation/openexr-images and set the env var OPENEXR_IMAGES_DIR to the directory" )
+	def testWithEXRSampleImages( self ):
+		self.maxDiff = None
+
+		directory = os.environ["OPENEXR_IMAGES_DIR"] + "/"
+
+		reader = GafferImage.ImageReader()
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( reader["out"] )
+		writer["openexr"]["dataType"].setValue( 'float' )
+
+		writer["partNameForSeparateZ"] = Gaffer.StringPlug()
+		writer["partNameExpression"] = Gaffer.Expression()
+		writer["partNameExpression"].setExpression( inspect.cleandoc(
+			"""
+			v = context.get( "imageWriter:viewName" )
+			parent["partNameForSeparateZ"] = ( "depth" if context.get( "imageWriter:channelName" ) == "Z" else context.get( "imageWriter:standardPartName" ) ) + ( ( "_" + v ) if v else "" )
+			"""
+		) )
+
+		rereader = GafferImage.ImageReader()
+
+		tempFileIndex = 0
+
+
+		for name in [
+			"Beachball/multipart.0001.exr", "Beachball/singlepart.0001.exr", "Chromaticities/Rec709.exr", "Chromaticities/XYZ.exr", "DisplayWindow/t01.exr", "DisplayWindow/t02.exr", "DisplayWindow/t03.exr", "DisplayWindow/t04.exr", "DisplayWindow/t05.exr", "DisplayWindow/t06.exr", "DisplayWindow/t07.exr", "DisplayWindow/t08.exr", "DisplayWindow/t09.exr", "DisplayWindow/t10.exr", "DisplayWindow/t11.exr", "DisplayWindow/t12.exr", "DisplayWindow/t13.exr", "DisplayWindow/t14.exr", "DisplayWindow/t15.exr", "DisplayWindow/t16.exr", "MultiResolution/Bonita.exr", "MultiResolution/ColorCodedLevels.exr", "MultiResolution/Kapaa.exr", "MultiResolution/KernerEnvCube.exr", "MultiResolution/KernerEnvLatLong.exr", "MultiResolution/MirrorPattern.exr", "MultiResolution/OrientationCube.exr", "MultiResolution/OrientationLatLong.exr", "MultiResolution/PeriodicPattern.exr", "MultiResolution/StageEnvCube.exr", "MultiResolution/StageEnvLatLong.exr", "MultiResolution/WavyLinesCube.exr", "MultiResolution/WavyLinesLatLong.exr", "MultiResolution/WavyLinesSphere.exr", "MultiView/Adjuster.exr", "MultiView/Balls.exr", "MultiView/Fog.exr", "MultiView/Impact.exr", "MultiView/LosPadres.exr", "ScanLines/Blobbies.exr", "ScanLines/CandleGlass.exr", "ScanLines/Cannon.exr", "ScanLines/Desk.exr", "ScanLines/MtTamWest.exr", "ScanLines/PrismsLenses.exr", "ScanLines/StillLife.exr", "ScanLines/Tree.exr", "TestImages/AllHalfValues.exr", "TestImages/BrightRings.exr", "TestImages/BrightRingsNanInf.exr", "TestImages/GammaChart.exr", "TestImages/GrayRampsDiagonal.exr", "TestImages/GrayRampsHorizontal.exr", "TestImages/RgbRampsDiagonal.exr", "TestImages/SquaresSwirls.exr", "TestImages/WideColorGamut.exr", "TestImages/WideFloatRange.exr", "Tiles/GoldenGate.exr", "Tiles/Ocean.exr", "Tiles/Spirals.exr", "v2/LeftView/Balls.exr", "v2/LeftView/Ground.exr", "v2/LeftView/Leaves.exr", "v2/LeftView/Trunks.exr", "v2/LowResLeftView/Balls.exr", "v2/LowResLeftView/composited.exr", "v2/LowResLeftView/Ground.exr", "v2/LowResLeftView/Leaves.exr", "v2/LowResLeftView/Trunks.exr", "v2/Stereo/Balls.exr", "v2/Stereo/composited.exr", "v2/Stereo/Ground.exr", "v2/Stereo/Leaves.exr", "v2/Stereo/Trunks.exr"
+		]:
+			reader["fileName"].setValue( directory + name )
+
+			isDeep = reader["out"].deep( reader["out"].viewNames()[0] )
+
+			matchingLayout = "Part per View" if isDeep else "Single Part"
+			if name == "Beachball/singlepart.0001.exr":
+				matchingLayout = "Single Part"
+			if name == "Beachball/multipart.0001.exr":
+				matchingLayout = "Part per Layer"
+			elif name.startswith( "MultiResolution" ):
+				# We can read multi-resolution files, but we don't write them as multi-res, so the headers
+				# won't match
+				matchingLayout = None
+			elif name == "v2/Stereo/composited.exr" :
+				# We don't have a convenient way to write Z in the base layer, but a separate part, so the
+				# headers won't match.  ( We could actually write a matching format using a custom expression
+				# on writer["layout"]["partName"], but I won't worry about that currently )
+				matchingLayout = None
+
+			for layout in [
+					"Single Part", "Part per View", "Part per Layer", "Nuke/Interleave Channels, Layers and Views", "Nuke/Interleave Channels and Layers", "Nuke/Interleave Channels"
+			]:
+				isSinglePart = layout in [ "Single Part", "Nuke/Interleave Channels, Layers and Views" ]
+
+				writer["layout"]["partName"].setInput( None )
+
+				Gaffer.NodeAlgo.applyPreset( writer["layout"], layout )
+
+				if name.startswith( "v2" ) and not name == "v2/LowResLeftView/composited.exr":
+					# Match part naming in sample files
+					writer["layout"]["partName"].setValue( "rgba." + writer["layout"]["partName"].getValue() )
+
+				if name == "Beachball/multipart.0001.exr" and layout == "Part per Layer":
+					writer["layout"]["partName"].setInput( writer["partNameForSeparateZ"] )
+
+				tempFileIndex += 1
+				tempFile = self.temporaryDirectory() / ( "sampleImageTestFile%i.exr" % tempFileIndex )
+				writer["fileName"].setValue( tempFile )
+				rereader["fileName"].setValue( tempFile )
+
+				tiled = name in [ "MultiView/Impact.exr" ] or name.startswith( "Tiles/" )
+				writer['openexr']['mode'].setValue( tiled )
+
+				if isDeep and len( reader["out"].viewNames() ) > 1 and isSinglePart:
+					self.assertRaisesRegex( Gaffer.ProcessException, '^ImageWriter.task : Cannot write views "left" and "right" both to same image part when dealing with deep images$', writer["task"].execute )
+					continue
+				else:
+					writer["task"].execute()
+
+				# If one of our layout presets matches how the file is laid out, the header should match
+				if layout == matchingLayout:
+					header = self.usefulHeader( tempFile )
+					# Some aspects of EXR files we don't currently control, so we hack those aspects to make
+					# sure everything else matches.  It might be nice to be able to actually set tile size
+					# on the writer
+					if name == "MultiView/Impact.exr":
+						header = [ i.replace( "tile size 128 by 128 pixels", "tile size 64 by 64 pixels" ) for i in header ]
+					if name == "Tiles/Spirals.exr":
+						header = [ i.replace( "tile size 128 by 128 pixels", "tile size 287 by 126 pixels" ) for i in header ]
+					if name == "ScanLines/Blobbies.exr":
+						header = [ i.replace( "increasing y", "decreasing y" ) for i in header ]
+
+					refHeader = self.usefulHeader( directory + name )
+
+					# In this example, there is an unnecessary name, plus disparity channels outside of views
+					# that we currently can't load
+					if name == "Beachball/singlepart.0001.exr":
+						refHeader = [ i for i in refHeader if not i.startswith( "name" ) ]
+
+					if name == "Beachball/multipart.0001.exr":
+						# Account for data window being expanded to match for different parts that share a view
+						refHeader = list( map( lambda l :
+							l.replace( "(1070 245) - (1455 1013)", "(654 245) - (1530 1120)" ).replace(
+								"(1106 245) - (1490 1013)", "(688 245) - (1564 1120)" ),
+							refHeader
+						) )
+
+					self.assertEqual( header, refHeader )
+
+				# If we're writing from a multi-part to a single-part, we won't be able to preserve the data
+				# window
+				expandDataWindow = name == "Beachball/multipart.0001.exr" and isSinglePart
+
+				ignoreOrder = name == "Beachball/multipart.0001.exr" or ( name == "Beachball/singlepart.0001.exr" and layout != "Single Part" )
+				rereader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Default )
+				self.assertImagesEqual( rereader["out"], reader["out"], ignoreMetadata = True, ignoreChannelNamesOrder = ignoreOrder, ignoreDataWindow = expandDataWindow )
+
+				if not layout.startswith( "Nuke" ):
+					rereader["channelInterpretation"].setValue( GafferImage.ImageReader.ChannelInterpretation.Specification )
+					self.assertImagesEqual( rereader["out"], reader["out"], ignoreMetadata = True, ignoreChannelNamesOrder = ignoreOrder, ignoreDataWindow = expandDataWindow )
+
+	def channelTypesFromHeader( self, path ):
+		r = subprocess.check_output( ["exrheader", str( path ) ], universal_newlines=True )
+
+		channelText = re.findall( re.compile( r'channels \(type chlist\):\n((    .*\n)+)', re.MULTILINE ), r )
+
+		return [ i.split()[:2] for part in channelText for i in part[0].splitlines()  ]
+
+	def testPerChannelDataType( self ):
+
+		reference = self.channelTestImage()
+
+		writer = GafferImage.ImageWriter()
+		writer["in"].setInput( reference["out"] )
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.tif" )
+
+		# Start with some formats that don't support per channel data types, and check that they fail as
+		# expected
+		writer["dataTypeExpression"] = Gaffer.Expression()
+		writer["dataTypeExpression"].setExpression( 'parent["tiff"]["dataType"] = "uint8" if context.get( "imageWriter:channelName" ) == "R" else "uint16"' )
+
+		with self.assertRaisesRegex( Gaffer.ProcessException, "File format tiff does not support per-channel data types" ) :
+			writer["task"].execute()
+
+		writer["fileName"].setValue( self.temporaryDirectory() / "test.dpx" )
+		writer["dataTypeExpression"].setExpression( 'parent["dpx"]["dataType"] = "uint8" if context.get( "imageWriter:channelName" ) == "R" else "uint16"' )
+
+		with self.assertRaisesRegex( Gaffer.ProcessException, "File format dpx does not support per-channel data types" ) :
+			writer["task"].execute()
+
+		writePath = self.temporaryDirectory() / "test.exr"
+		writer["fileName"].setValue( writePath )
+
+		writer["task"].execute()
+
+		# Default channel types - depthDataType forces Z and ZBack to 32-bit, but not character.Z
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '16-bit'], ['B,', '16-bit'], ['G,', '16-bit'], ['R,', '16-bit'],
+			['Z,', '32-bit'], ['ZBack,', '32-bit'], ['custom,', '16-bit'], ['mask,', '16-bit'],
+			['character.A,', '16-bit'], ['character.B,', '16-bit'], ['character.G,', '16-bit'], ['character.R,', '16-bit'],
+			['character.Z,', '16-bit'], ['character.ZBack,', '16-bit'], ['character.custom,', '16-bit'], ['character.mask,', '16-bit']
+		] )
+
+		writer["openexr"]["depthDataType"].setValue( "" )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '16-bit'], ['B,', '16-bit'], ['G,', '16-bit'], ['R,', '16-bit'],
+			['Z,', '16-bit'], ['ZBack,', '16-bit'], ['custom,', '16-bit'], ['mask,', '16-bit'],
+			['character.A,', '16-bit'], ['character.B,', '16-bit'], ['character.G,', '16-bit'], ['character.R,', '16-bit'],
+			['character.Z,', '16-bit'], ['character.ZBack,', '16-bit'], ['character.custom,', '16-bit'], ['character.mask,', '16-bit']
+		] )
+
+		writer["openexr"]["dataType"].setValue( "float" )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '32-bit'], ['B,', '32-bit'], ['G,', '32-bit'], ['R,', '32-bit'],
+			['Z,', '32-bit'], ['ZBack,', '32-bit'], ['custom,', '32-bit'], ['mask,', '32-bit'],
+			['character.A,', '32-bit'], ['character.B,', '32-bit'], ['character.G,', '32-bit'], ['character.R,', '32-bit'],
+			['character.Z,', '32-bit'], ['character.ZBack,', '32-bit'], ['character.custom,', '32-bit'], ['character.mask,', '32-bit']
+		] )
+
+		# Now, lets actually use some per-channel data types
+		writer["dataTypeExpression"].setExpression( 'parent["openexr"]["dataType"] = "half" if context.get( "imageWriter:channelName" ) == "R" else "float"' )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '32-bit'], ['B,', '32-bit'], ['G,', '32-bit'], ['R,', '16-bit'],
+			['Z,', '32-bit'], ['ZBack,', '32-bit'], ['custom,', '32-bit'], ['mask,', '32-bit'],
+			['character.A,', '32-bit'], ['character.B,', '32-bit'], ['character.G,', '32-bit'], ['character.R,', '32-bit'],
+			['character.Z,', '32-bit'], ['character.ZBack,', '32-bit'], ['character.custom,', '32-bit'], ['character.mask,', '32-bit']
+		] )
+
+		# A weird expression that is basically random
+		# ( Note that I have to read the context outside the call to ord(), somehow our expression parser
+		# fails to find it if it's inside )
+		writer["dataTypeExpression"].setExpression( 'c = context.get( "imageWriter:channelName" ); parent["openexr"]["dataType"] = "float" if ord( c[-1] ) % 2 else "half"' )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '32-bit'], ['B,', '16-bit'], ['G,', '32-bit'], ['R,', '16-bit'],
+			['Z,', '16-bit'], ['ZBack,', '32-bit'], ['custom,', '32-bit'], ['mask,', '32-bit'],
+			['character.A,', '32-bit'], ['character.B,', '16-bit'], ['character.G,', '32-bit'], ['character.R,', '16-bit'],
+			['character.Z,', '16-bit'], ['character.ZBack,', '32-bit'], ['character.custom,', '32-bit'], ['character.mask,', '32-bit']
+		] )
+
+		# A more useful expression might affect one layer
+		writer["dataTypeExpression"].setExpression( 'parent["openexr"]["dataType"] = "float" if context.get( "imageWriter:layerName" ) == "character" else "half"' )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '16-bit'], ['B,', '16-bit'], ['G,', '16-bit'], ['R,', '16-bit'],
+			['Z,', '16-bit'], ['ZBack,', '16-bit'], ['custom,', '16-bit'], ['mask,', '16-bit'],
+			['character.A,', '32-bit'], ['character.B,', '32-bit'], ['character.G,', '32-bit'], ['character.R,', '32-bit'],
+			['character.Z,', '32-bit'], ['character.ZBack,', '32-bit'], ['character.custom,', '32-bit'], ['character.mask,', '32-bit']
+		] )
+
+		# depthDataType still overrides the expression on dataType
+		writer["openexr"]["depthDataType"].setValue( "float" )
+		writer["task"].execute()
+
+		self.assertEqual( self.channelTypesFromHeader( writePath ), [
+			['A,', '16-bit'], ['B,', '16-bit'], ['G,', '16-bit'], ['R,', '16-bit'],
+			['Z,', '32-bit'], ['ZBack,', '32-bit'], ['custom,', '16-bit'], ['mask,', '16-bit'],
+			['character.A,', '32-bit'], ['character.B,', '32-bit'], ['character.G,', '32-bit'], ['character.R,', '32-bit'],
+			['character.Z,', '32-bit'], ['character.ZBack,', '32-bit'], ['character.custom,', '32-bit'], ['character.mask,', '32-bit']
+		] )
+
+	def testOmitFileValidMetadata( self ) :
+
+		testSequence = IECore.FileSequence( str( self.temporaryDirectory() / "incompleteSequence.####.exr" ) )
+		shutil.copyfile( self.__rgbFilePath, testSequence.fileNameForFrame( 1 ) )
+		shutil.copyfile( self.__rgbFilePath, testSequence.fileNameForFrame( 3 ) )
+
+		with Gaffer.Context() as context :
+
+			context.setFrame( 2 )
+
+			imageReader = GafferImage.ImageReader()
+			imageReader["fileName"].setValue( pathlib.Path( testSequence.fileName ) )
+			imageReader["missingFrameMode"].setValue( imageReader.MissingFrameMode.Hold )
+			self.assertEqual( imageReader["out"].metadata()["fileValid"], IECore.BoolData( False ) )
+
+			imageWriter = GafferImage.ImageWriter()
+			imageWriter["in"].setInput( imageReader["out"] )
+			imageWriter["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+			imageWriter["task"].execute()
+
+		imageReader["fileName"].setValue( self.temporaryDirectory() / "test.exr" )
+		self.assertNotIn( "fileValid", imageReader["out"].metadata() )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -34,7 +34,13 @@
 #
 ##########################################################################
 
+import collections
+import functools
+
 import Gaffer
+
+# Import C++ bindings
+from Gaffer._NodeAlgo import *
 
 ##########################################################################
 # Presets
@@ -50,52 +56,80 @@ import Gaffer
 # Presets registered with the "preset:<name>" form take precedence. The
 # "en masse" form can be useful where metadata is computed dynamically
 # and the available presets will vary from instance to instance of a node.
+#
+# For a compound plug, it is considered to have a preset availiable if all
+# child plugs have the same preset available
 def presets( plug ) :
+	if not hasattr( plug, "setValue" ):
+		# For compound plugs, return presets that are present on all children
+		if plug.children():
+			return functools.reduce( __intersectLists, [ __presets( i ).keys() for i in plug.children()] )
+		else:
+			return []
 
-	result = []
-	for n in Gaffer.Metadata.registeredValues( plug ) :
-		if n.startswith( "preset:" ) :
-			result.append( n[7:] )
-
-	result.extend( Gaffer.Metadata.value( plug, "presetNames" ) or [] )
-
-	return result
+	return list( __presets( plug ).keys() )
 
 ## Returns the name of the preset currently applied to the plug.
 # Returns None if no preset is applied.
 def currentPreset( plug ) :
 
+	matchingPresets = []
 	if not hasattr( plug, "getValue" ) :
+		# For compound plugs, this is a bit tricky, since with a compound preset, some child plugs could
+		# have the same value for multiple presets.  This means we can't narrow it down right away - we
+		# need to track all presets that could potentially match the plugs we've considered so far
+		if plug.children():
+			matchingPresets = functools.reduce( __intersectLists, [ __matchingPresets( i ) for i in plug.children()] )
+	else:
+		matchingPresets = __matchingPresets( plug )
+
+	if matchingPresets:
+		return matchingPresets[0]
+	else:
 		return None
-
-	value = plug.getValue()
-	failedNames = set()
-	for n in Gaffer.Metadata.registeredValues( plug ) :
-		if n.startswith( "preset:" ) :
-			presetName = n[7:]
-			if Gaffer.Metadata.value( plug, n ) == value :
-				return presetName
-			else :
-				failedNames.add( presetName )
-
-	presetNames = Gaffer.Metadata.value( plug, "presetNames" )
-	if presetNames is not None :
-		for presetName, presetValue in zip( presetNames, Gaffer.Metadata.value( plug, "presetValues" ) ) :
-			if value == presetValue and presetName not in failedNames :
-				return presetName
-
-	return None
 
 ## Applies the named preset to the plug.
 def applyPreset( plug, presetName ) :
+	if not hasattr( plug, "setValue" ) :
+		for i in plug.children():
+			applyPreset( i, presetName )
+	else:
+		plug.setValue( __presets( plug )[presetName] )
 
-	value = Gaffer.Metadata.value( plug, "preset:" + presetName )
-	if value is None :
-		presetNames = Gaffer.Metadata.value( plug, "presetNames" )
-		presetValues = Gaffer.Metadata.value( plug, "presetValues" )
-		value = presetValues[presetNames.index( presetName )]
+def __presets( plug ) :
 
-	plug.setValue( value )
+	result = collections.OrderedDict()
+
+	for n in Gaffer.Metadata.registeredValues( plug ) :
+		if n.startswith( "preset:" ) :
+			result[n[7:]] = Gaffer.Metadata.value( plug, n )
+
+	presetNames = Gaffer.Metadata.value( plug, "presetNames" )
+	presetValues = Gaffer.Metadata.value( plug, "presetValues" )
+	if presetNames and presetValues :
+		for presetName, presetValue in zip( presetNames, presetValues ) :
+			result.setdefault( presetName, presetValue )
+
+	if result :
+		return result
+
+	# No presets from this plug. See if we can "inherit" them
+	# from a connected plug.
+
+	if plug.direction() == plug.Direction.In :
+		for outputPlug in plug.outputs():
+			outputPresets = __presets( outputPlug )
+			if outputPresets:
+				return outputPresets
+
+	return result
+
+def __matchingPresets( plug ) :
+	value = plug.getValue()
+	return [ k for k, v in __presets( plug ).items() if v == value ]
+
+def __intersectLists( a, b ) :
+	return [ i for i in a if i in b ]
 
 ##########################################################################
 # User defaults
@@ -121,6 +155,12 @@ def isSetToUserDefault( plug ) :
 
 	userDefault = Gaffer.Metadata.value( plug, "userDefault" )
 	if userDefault is None :
+		return False
+
+	if Gaffer.PlugAlgo.dependsOnCompute( plug ) :
+		# Computed values may vary by context, as such there is no
+		# single "current value", so no true concept of whether or not
+		# it's at the user default.
 		return False
 
 	return userDefault == plug.getValue()

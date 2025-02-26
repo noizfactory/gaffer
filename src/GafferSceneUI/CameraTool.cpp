@@ -44,15 +44,20 @@
 #include "Gaffer/StringPlug.h"
 #include "Gaffer/UndoScope.h"
 
+#include "Gaffer/Private/ScopedAssignment.h"
+
 #include "IECore/AngleConversion.h"
 
-#include "OpenEXR/ImathEuler.h"
-#include "OpenEXR/ImathMatrix.h"
+#include "Imath/ImathEuler.h"
+#include "Imath/ImathMatrix.h"
 
 #include "boost/algorithm/string/predicate.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
+
+#include "fmt/format.h"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
@@ -87,7 +92,7 @@ void setValueOrAddKey( Gaffer::FloatPlug *plug, float time, float value )
 	if( Animation::isAnimated( plug ) )
 	{
 		Animation::CurvePlug *curve = Animation::acquire( plug );
-		curve->addKey( new Animation::Key( time, value ) );
+		curve->insertKey( time, value );
 	}
 	else
 	{
@@ -95,13 +100,15 @@ void setValueOrAddKey( Gaffer::FloatPlug *plug, float time, float value )
 	}
 }
 
+bool g_editingTransform = false;
+
 } // namespace
 
 //////////////////////////////////////////////////////////////////////////
 // CameraTool
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CameraTool );
+GAFFER_NODE_DEFINE_TYPE( CameraTool );
 
 CameraTool::ToolDescription<CameraTool, SceneView> CameraTool::g_toolDescription;
 
@@ -112,18 +119,16 @@ CameraTool::CameraTool( SceneView *view, const std::string &name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 
-	connectToViewContext();
-	view->contextChangedSignal().connect( boost::bind( &CameraTool::connectToViewContext, this ) );
-
+	view->contextChangedSignal().connect( boost::bind( &CameraTool::contextChanged, this ) );
 	view->plugDirtiedSignal().connect( boost::bind( &CameraTool::plugDirtied, this, ::_1 ) );
 	plugDirtiedSignal().connect( boost::bind( &CameraTool::plugDirtied, this, ::_1 ) );
 
-	// Snoop on the signals used for interaction with the viewport. We connect with group 0
+	// Snoop on the signals used for interaction with the viewport. We connect at the front
 	// so that we are called before everything else.
-	view->viewportGadget()->dragBeginSignal().connect( 0, boost::bind( &CameraTool::viewportDragBegin, this, ::_2 ) );
-	view->viewportGadget()->wheelSignal().connect( 0, boost::bind( &CameraTool::viewportWheel, this, ::_2 ) );
-	view->viewportGadget()->keyPressSignal().connect( 0, boost::bind( &CameraTool::viewportKeyPress, this, ::_2 ) );
-	view->viewportGadget()->buttonPressSignal().connect( 0, boost::bind( &CameraTool::viewportButtonPress, this, ::_2 ) );
+	view->viewportGadget()->dragBeginSignal().connectFront( boost::bind( &CameraTool::viewportDragBegin, this, ::_2 ) );
+	view->viewportGadget()->wheelSignal().connectFront( boost::bind( &CameraTool::viewportWheel, this, ::_2 ) );
+	view->viewportGadget()->keyPressSignal().connectFront( boost::bind( &CameraTool::viewportKeyPress, this, ::_2 ) );
+	view->viewportGadget()->buttonPressSignal().connectFront( boost::bind( &CameraTool::viewportButtonPress, this, ::_2 ) );
 	// Connect to `cameraChangedSignal()` so we can turn the viewport interaction into
 	// camera edits in the node graph itself.
 	m_viewportCameraChangedConnection = view->viewportGadget()->cameraChangedSignal().connect(
@@ -132,7 +137,7 @@ CameraTool::CameraTool( SceneView *view, const std::string &name )
 
 	// Connect to the preRender signal so we can coordinate ourselves with the work
 	// that the SceneView::Camera class does to look through the camera we will be editing.
-	view->viewportGadget()->preRenderSignal().connect( 0, boost::bind( &CameraTool::preRenderBegin, this ) );
+	view->viewportGadget()->preRenderSignal().connectFront( boost::bind( &CameraTool::preRenderBegin, this ) );
 	view->viewportGadget()->preRenderSignal().connect( boost::bind( &CameraTool::preRenderEnd, this ) );
 }
 
@@ -155,18 +160,10 @@ const Gaffer::StringPlug *CameraTool::lookThroughCameraPlug() const
 	return view()->descendant<StringPlug>( "camera.lookThroughCamera" );
 }
 
-void CameraTool::connectToViewContext()
+void CameraTool::contextChanged()
 {
-	m_contextChangedConnection = view()->getContext()->changedSignal().connect( boost::bind( &CameraTool::contextChanged, this, ::_2 ) );
-}
-
-void CameraTool::contextChanged( const IECore::InternedString &name )
-{
-	if( !boost::starts_with( name.string(), "ui:" ) )
-	{
-		m_cameraSelectionDirty = true;
-		view()->viewportGadget()->renderRequestSignal()( view()->viewportGadget() );
-	}
+	m_cameraSelectionDirty = true;
+	view()->viewportGadget()->renderRequestSignal()( view()->viewportGadget() );
 }
 
 void CameraTool::plugDirtied( const Gaffer::Plug *plug )
@@ -177,10 +174,21 @@ void CameraTool::plugDirtied( const Gaffer::Plug *plug )
 		plug == scenePlug()->transformPlug() ||
 		plug == scenePlug()->globalsPlug() ||
 		plug == lookThroughEnabledPlug() ||
-		plug == lookThroughCameraPlug()
+		plug == lookThroughCameraPlug() ||
+		plug == view()->editScopePlug()
 	)
 	{
-		m_cameraSelectionDirty = true;
+		if( !g_editingTransform )
+		{
+			m_cameraSelectionDirty = true;
+		}
+		else
+		{
+			// If the scene is dirtied as a result of an edit we make,
+			// we do not expect it to invalidate our selection. Nor do we
+			// want the performance hit of selection updates during dragging,
+			// so we simply don't dirty the selection.
+		}
 		view()->viewportGadget()->renderRequestSignal()( view()->viewportGadget() );
 	}
 }
@@ -200,7 +208,7 @@ GafferScene::ScenePlug::ScenePath CameraTool::cameraPath() const
 	string cameraPath = lookThroughCameraPlug()->getValue();
 	if( cameraPath.empty() )
 	{
-		Context::Scope scopedContext( view()->getContext() );
+		Context::Scope scopedContext( view()->context() );
 		IECore::ConstCompoundObjectPtr globals = view()->inPlug<ScenePlug>()->globals();
 		if( auto *cameraData = globals->member<StringData>( "option:render:camera" ) )
 		{
@@ -224,11 +232,20 @@ const TransformTool::Selection &CameraTool::cameraSelection()
 	ScenePlug::ScenePath cameraPath = this->cameraPath();
 	if( !cameraPath.empty() )
 	{
-		m_cameraSelection = TransformTool::Selection(
+		TransformTool::Selection candidateSelection(
 			scenePlug(),
 			cameraPath,
-			view()->getContext()
+			view()->context(),
+			view()->editScope()
 		);
+		// TransformTool::Selection will fall back to editing
+		// a parent path if it can't edit the `cameraPath`.
+		// Parent edits are not suitable for the camera tool, so
+		// we reject them.
+		if( candidateSelection.path() == cameraPath )
+		{
+			m_cameraSelection = candidateSelection;
+		}
 	}
 
 	m_cameraSelectionDirty = false;
@@ -242,46 +259,52 @@ void CameraTool::preRenderBegin()
 	// trying to reflect that update back into the graph.
 	/// \todo Should we have a more explicit synchronisation between
 	/// SceneView::Camera and CameraTool?
-	m_viewportCameraChangedConnection.block();
+	m_viewportCameraChangedConnection.setBlocked( true );
 }
 
 void CameraTool::preRenderEnd()
 {
 	const TransformTool::Selection &selection = cameraSelection();
 	bool selectionEditable = false;
-	if( selection.transformPlug )
+	if( selection.editable() )
 	{
 		selectionEditable = true;
-		for( FloatPlugIterator it( selection.transformPlug->translatePlug() ); !it.done(); ++it )
+		if( auto edit = selection.acquireTransformEdit( /* createIfNecessary = */ false ) )
 		{
-			if( !canSetValueOrAddKey( it->get() ) )
+			for( auto &p : FloatPlug::Range( *edit->translate ) )
 			{
-				selectionEditable = false;
-				break;
+				if( !canSetValueOrAddKey( p.get() ) )
+				{
+					selectionEditable = false;
+					break;
+				}
 			}
-		}
 
-		for( FloatPlugIterator it( selection.transformPlug->rotatePlug() ); !it.done(); ++it )
-		{
-			if( !canSetValueOrAddKey( it->get() ) )
+			for( auto &p : FloatPlug::Range( *edit->rotate ) )
 			{
-				selectionEditable = false;
-				break;
+				if( !canSetValueOrAddKey( p.get() ) )
+				{
+					selectionEditable = false;
+					break;
+				}
 			}
 		}
 	}
 
-	view()->viewportGadget()->setCameraEditable(
-		!lookThroughEnabledPlug()->getValue() ||
-		selectionEditable
+	const bool lookThroughEnabled = lookThroughEnabledPlug()->getValue();
+	view()->viewportGadget()->setCameraEditable( !lookThroughEnabled || selectionEditable );
+	// We can't "dolly" an orthographic camera because that modifies the aperture,
+	// and we can't currently reflect aperture edits into the node graph.
+	view()->viewportGadget()->setDollyingEnabled(
+		!lookThroughEnabled || view()->viewportGadget()->getCamera()->getProjection() == "perspective"
 	);
 
 	if( selectionEditable )
 	{
 		view()->viewportGadget()->setCenterOfInterest(
-			getCameraCenterOfInterest( selection.path )
+			getCameraCenterOfInterest( selection.path() )
 		);
-		m_viewportCameraChangedConnection.unblock();
+		m_viewportCameraChangedConnection.setBlocked( false );
 	}
 }
 
@@ -290,14 +313,14 @@ IECore::RunTimeTypedPtr CameraTool::viewportDragBegin( const GafferUI::DragDropE
 	// The viewport may be performing a camera drag. Set up our undo group
 	// so that all the steps of the drag will be collapsed into a single undoable
 	// block.
-	m_undoGroup = boost::str( boost::format( "CameraTool%1%Drag%2%" ) % this % m_dragId++ );
+	m_undoGroup = fmt::format( "CameraTool{}Drag{}", fmt::ptr( this ), m_dragId++ );
 	return nullptr;
 }
 
 bool CameraTool::viewportWheel( const GafferUI::ButtonEvent &event )
 {
 	// Merge all wheel events into a single undo.
-	m_undoGroup = boost::str( boost::format( "CameraTool%1%Wheel" ) % this );
+	m_undoGroup = fmt::format( "CameraTool{}Wheel", fmt::ptr( this ) );
 	return false;
 }
 
@@ -318,7 +341,7 @@ bool CameraTool::viewportButtonPress( const GafferUI::ButtonEvent &event )
 void CameraTool::viewportCameraChanged()
 {
 	const TransformTool::Selection &selection = cameraSelection();
-	if( !selection.transformPlug )
+	if( !selection.editable() )
 	{
 		return;
 	}
@@ -330,12 +353,14 @@ void CameraTool::viewportCameraChanged()
 
 	// Figure out the offset from where the camera is in the scene
 	// to where the user has just moved the viewport camera.
+	// Note: The ViewportGadget will have removed any scale/shear from
+	// the matrix.
 
 	const M44f viewportCameraTransform = view()->viewportGadget()->getCameraTransform();
 	M44f cameraTransform;
 	{
-		Context::Scope scopedContext( selection.context.get() );
-		cameraTransform = selection.scene->fullTransform( selection.path );
+		Context::Scope scopedContext( selection.context() );
+		cameraTransform = selection.scene()->fullTransform( selection.path() );
 	}
 
 	if( cameraTransform == viewportCameraTransform )
@@ -355,42 +380,44 @@ void CameraTool::viewportCameraChanged()
 
 	// Now apply this offset to the current value on the transform plug.
 
+	Gaffer::Private::ScopedAssignment<bool> editingScope( g_editingTransform, true );
+	UndoScope undoScope( view()->scriptNode(), UndoScope::Enabled, m_undoGroup );
+	auto edit = selection.acquireTransformEdit();
+
 	M44f plugTransform;
 	{
-		Context::Scope scopedContext( selection.upstreamContext.get() );
-		plugTransform = selection.transformPlug->matrix();
+		Context::Scope scopedContext( selection.upstreamContext() );
+		plugTransform = edit->matrix();
 	}
 	plugTransform = plugTransform * transformSpaceOffset;
 	const V3f t = plugTransform.translation();
 
 	Eulerf e; e.extract( plugTransform );
-	e.makeNear( degreesToRadians( selection.transformPlug->rotatePlug()->getValue() ) );
+	e.makeNear( degreesToRadians( edit->rotate->getValue() ) );
 	const V3f r = radiansToDegrees( V3f( e ) );
-
-	UndoScope undoScope( selection.transformPlug->ancestor<ScriptNode>(), UndoScope::Enabled, m_undoGroup );
 
 	for( int i = 0; i < 3; ++i )
 	{
-		setValueOrAddKey( selection.transformPlug->rotatePlug()->getChild( i ), selection.context->getTime(), r[i] );
-		setValueOrAddKey( selection.transformPlug->translatePlug()->getChild( i ), selection.context->getTime(), t[i] );
+		setValueOrAddKey( edit->rotate->getChild( i ), selection.context()->getTime(), r[i] );
+		setValueOrAddKey( edit->translate->getChild( i ), selection.context()->getTime(), t[i] );
 	}
 
 	// Create an action to save/restore the current center of interest, so that
 	// when the user undos a framing action, they get back to the old center of
 	// interest as well as the old transform.
 	Action::enact(
-		selection.transformPlug,
+		edit->translate,
 		// Do
 		boost::bind(
 			&CameraTool::setCameraCenterOfInterest,
-			CameraToolPtr( this ), selection.path,
+			CameraToolPtr( this ), selection.path(),
 			view()->viewportGadget()->getCenterOfInterest()
 		),
 		// Undo
 		boost::bind(
 			&CameraTool::setCameraCenterOfInterest,
-			CameraToolPtr( this ), selection.path,
-			getCameraCenterOfInterest( selection.path )
+			CameraToolPtr( this ), selection.path(),
+			getCameraCenterOfInterest( selection.path() )
 		)
 	);
 }

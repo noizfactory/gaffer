@@ -217,5 +217,59 @@ class LightTest( GafferSceneTest.SceneTestCase ) :
 			imath.Box3f( imath.V3f( -0.5 ), imath.V3f( 0.5 ) ),
 		)
 
+	def testVisualisationAttributes( self ) :
+
+		l = GafferSceneTest.TestLight()
+
+		# Test not set by default
+
+		a = l["out"].attributes( "/light" )
+
+		self.assertFalse( "gl:light:drawingMode" in a.keys() )
+		self.assertFalse( "gl:visualiser:scale" in a.keys() )
+		self.assertFalse( "gl:visualiser:maxTextureResolution" in a.keys() )
+		self.assertFalse( "gl:visualiser:frustum" in a.keys() )
+		self.assertFalse( "gl:light:frustumScale" in a.keys() )
+
+		# Test attribute mapping
+
+		l["visualiserAttributes"]["lightDrawingMode"]["enabled"].setValue( True )
+		l["visualiserAttributes"]["lightDrawingMode"]["value"].setValue( "color" )
+		l["visualiserAttributes"]["scale"]["enabled"].setValue( True )
+		l["visualiserAttributes"]["scale"]["value"].setValue( 12.3 )
+		l["visualiserAttributes"]["maxTextureResolution"]["enabled"].setValue( True )
+		l["visualiserAttributes"]["maxTextureResolution"]["value"].setValue( 123 )
+		l["visualiserAttributes"]["frustum"]["enabled"].setValue( True )
+		l["visualiserAttributes"]["frustum"]["value"].setValue( "off" )
+		l["visualiserAttributes"]["lightFrustumScale"]["enabled"].setValue( True )
+		l["visualiserAttributes"]["lightFrustumScale"]["value"].setValue( 1.23 )
+
+		a = l["out"].attributes( "/light" )
+
+		self.assertEqual( a["gl:light:drawingMode"], IECore.StringData( "color" ) )
+		self.assertEqual( a["gl:visualiser:scale"], IECore.FloatData( 12.3 ) )
+		self.assertEqual( a["gl:visualiser:maxTextureResolution"], IECore.IntData( 123 ) )
+		self.assertEqual( a["gl:visualiser:frustum"], IECore.StringData( "off" ) )
+		self.assertEqual( a["gl:light:frustumScale"], IECore.FloatData( 1.23 ) )
+
+	def testMute( self ) :
+
+		l = GafferSceneTest.TestLight()
+
+		self.assertNotIn( "light:mute", l["out"].attributes( "/light" ) )
+
+		l["mute"]["value"].setValue( True )
+		l["mute"]["enabled"].setValue( True )
+
+		self.assertIn( "light:mute", l["out"].attributes( "/light" ) )
+		self.assertEqual( l["out"].attributes( "/light" )["light:mute"], IECore.BoolData( True ) )
+
+		l["mute"]["value"].setValue( False )
+		self.assertIn( "light:mute", l["out"].attributes( "/light" ) )
+		self.assertEqual( l["out"].attributes( "/light" )["light:mute"], IECore.BoolData( False ) )
+
+		l["mute"]["enabled"].setValue( False )
+		self.assertNotIn( "light:mute", l["out"].attributes( "/light" ) )
+
 if __name__ == "__main__":
 	unittest.main()

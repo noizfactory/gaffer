@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_LOOP_H
-#define GAFFER_LOOP_H
+#pragma once
 
 #include "Gaffer/ComputeNode.h"
 #include "Gaffer/NumericPlug.h"
@@ -45,14 +44,14 @@
 namespace Gaffer
 {
 
-class IECORE_EXPORT Loop : public ComputeNode
+class GAFFER_API Loop : public ComputeNode
 {
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::Loop, LoopTypeId, ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::Loop, LoopTypeId, ComputeNode );
 
-		Loop( const std::string &name=GraphComponent::defaultName<Loop>() );
+		explicit Loop( const std::string &name=GraphComponent::defaultName<Loop>() );
 		~Loop() override;
 
 		/// \undoable
@@ -82,6 +81,11 @@ class IECORE_EXPORT Loop : public ComputeNode
 		Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) override;
 		const Gaffer::Plug *correspondingInput( const Gaffer::Plug *output ) const override;
 
+		/// Returns the input plug and context that form the previous iteration of the loop
+		/// with respect to the `output` plug and the current context. Returns `{ nullptr, nullptr }`
+		/// if there is no such iteration.
+		std::pair<const ValuePlug *, ContextPtr> previousIteration( const ValuePlug *output ) const;
+
 		void affects( const Plug *input, DependencyNode::AffectedPlugsContainer &outputs ) const override;
 
 	protected :
@@ -94,6 +98,8 @@ class IECORE_EXPORT Loop : public ComputeNode
 		size_t m_inPlugIndex;
 		size_t m_outPlugIndex;
 		size_t m_firstPlugIndex;
+
+		Signals::Connection m_childAddedConnection;
 
 		void childAdded();
 		bool setupPlugs();
@@ -108,5 +114,3 @@ class IECORE_EXPORT Loop : public ComputeNode
 IE_CORE_DECLAREPTR( Loop )
 
 } // namespace Gaffer
-
-#endif // GAFFER_LOOP_H

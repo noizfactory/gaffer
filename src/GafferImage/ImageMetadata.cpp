@@ -42,7 +42,7 @@ using namespace Gaffer;
 namespace GafferImage
 {
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ImageMetadata );
+GAFFER_NODE_DEFINE_TYPE( ImageMetadata );
 
 size_t ImageMetadata::g_firstPlugIndex = 0;
 
@@ -51,6 +51,7 @@ ImageMetadata::ImageMetadata( const std::string &name )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new CompoundDataPlug( "metadata" ) );
+	addChild( new AtomicCompoundDataPlug( "extraMetadata", Plug::In, new CompoundData() ) );
 }
 
 ImageMetadata::~ImageMetadata()
@@ -67,11 +68,24 @@ const Gaffer::CompoundDataPlug *ImageMetadata::metadataPlug() const
 	return getChild<CompoundDataPlug>( g_firstPlugIndex );
 }
 
+Gaffer::AtomicCompoundDataPlug *ImageMetadata::extraMetadataPlug()
+{
+	return getChild<AtomicCompoundDataPlug>( g_firstPlugIndex + 1 );
+}
+
+const Gaffer::AtomicCompoundDataPlug *ImageMetadata::extraMetadataPlug() const
+{
+	return getChild<AtomicCompoundDataPlug>( g_firstPlugIndex + 1 );
+}
+
 void ImageMetadata::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
 {
 	MetadataProcessor::affects( input, outputs );
 
-	if ( input == inPlug()->metadataPlug() )
+	if(
+		metadataPlug()->isAncestorOf( input ) ||
+		input == extraMetadataPlug()
+	)
 	{
 		outputs.push_back( outPlug()->metadataPlug() );
 	}
@@ -80,12 +94,14 @@ void ImageMetadata::affects( const Gaffer::Plug *input, AffectedPlugsContainer &
 void ImageMetadata::hashProcessedMetadata( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
 	metadataPlug()->hash( h );
+	extraMetadataPlug()->hash( h );
 }
 
 IECore::ConstCompoundDataPtr ImageMetadata::computeProcessedMetadata( const Gaffer::Context *context, const IECore::CompoundData *inputMetadata ) const
 {
 	const CompoundDataPlug *p = metadataPlug();
-	if ( !p->children().size() )
+	IECore::ConstCompoundDataPtr extraMetadata = extraMetadataPlug()->getValue();
+	if ( !p->children().size() && !extraMetadata->readable().size() )
 	{
 		return inputMetadata;
 	}
@@ -98,13 +114,18 @@ IECore::ConstCompoundDataPtr ImageMetadata::computeProcessedMetadata( const Gaff
 	result->writable() = inputMetadata->readable();
 
 	std::string name;
-	for ( NameValuePlugIterator it( p ); !it.done(); ++it )
+	for( NameValuePlug::Iterator it( p ); !it.done(); ++it )
 	{
 		IECore::DataPtr d = p->memberDataAndName( it->get(), name );
 		if ( d )
 		{
 			result->writable()[name] = d;
 		}
+	}
+
+	for( const auto &e : extraMetadata->readable() )
+	{
+		result->writable()[e.first] = e.second;
 	}
 
 	return result;

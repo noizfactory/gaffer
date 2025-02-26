@@ -34,10 +34,14 @@
 #
 ##########################################################################
 
+import time
 import unittest
 import imath
 
+import IECore
+
 import Gaffer
+import GafferTest
 import GafferUI
 import GafferUITest
 import GafferImage
@@ -91,15 +95,55 @@ class ImageGadgetTest( GafferUITest.TestCase ) :
 		g.setImage( s["b"]["out"] )
 
 		with GafferUI.Window() as w :
-			GafferUI.GadgetWidget( g )
+			gw = GafferUI.GadgetWidget( g )
 
+		cs = GafferTest.CapturingSlot( gw.getViewportGadget().preRenderSignal() )
 		w.setVisible( True )
-
-		self.waitForIdle( 1000 )
+		while not len( cs ) :
+			self.waitForIdle( 1 )
 
 		del g, w
 		del s
 
+	def testStateChangedSignal( self ) :
+
+		image = GafferImage.Constant()
+		gadget = GafferImageUI.ImageGadget()
+		gadget.setImage( image["out"] )
+		self.assertNotEqual( gadget.state(), gadget.State.Paused )
+
+		cs = GafferTest.CapturingSlot( gadget.stateChangedSignal() )
+		gadget.setPaused( True )
+		self.assertEqual( len( cs ), 1 )
+		self.assertEqual( gadget.state(), gadget.State.Paused )
+
+		gadget.setPaused( False )
+		self.assertEqual( len( cs ), 2 )
+		self.assertNotEqual( gadget.state(), gadget.State.Paused )
+
+	def testNoUnecessaryUpdates( self ) :
+
+		script = Gaffer.ScriptNode()
+		script["image"] = GafferImage.Checkerboard()
+		script["image"]["format"].setValue( GafferImage.Format( GafferImage.ImagePlug.tileSize(), GafferImage.ImagePlug.tileSize() ) )
+
+		gadget = GafferImageUI.ImageGadget()
+		gadget.setImage( script["image"]["out"] )
+		gadget.setContext( script.context() )
+
+		with GafferUI.Window() as window :
+			GafferUI.GadgetWidget( gadget )
+
+		GafferImageUI.ImageGadget.resetTileUpdateCount()
+		window.setVisible( True )
+		while GafferImageUI.ImageGadget.tileUpdateCount() < 4 :
+			self.waitForIdle()
+
+		for frame in range( 2, 4 ) :
+			script.context().setFrame( frame )
+			time.sleep( 0.5 )
+			self.waitForIdle()
+			self.assertEqual( GafferImageUI.ImageGadget.tileUpdateCount(), 4 )
+
 if __name__ == "__main__":
 	unittest.main()
-

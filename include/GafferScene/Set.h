@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SET_H
-#define GAFFERSCENE_SET_H
+#pragma once
 
 #include "GafferScene/FilteredSceneProcessor.h"
 
@@ -58,10 +57,10 @@ class GAFFERSCENE_API Set : public FilteredSceneProcessor
 
 	public :
 
-		Set( const std::string &name=defaultName<Set>() );
+		explicit Set( const std::string &name=defaultName<Set>() );
 		~Set() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Set, SetTypeId, FilteredSceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Set, SetTypeId, FilteredSceneProcessor );
 
 		enum Mode
 		{
@@ -76,6 +75,10 @@ class GAFFERSCENE_API Set : public FilteredSceneProcessor
 		Gaffer::StringPlug *namePlug();
 		const Gaffer::StringPlug *namePlug() const;
 
+		Gaffer::StringPlug *setVariablePlug();
+		const Gaffer::StringPlug *setVariablePlug() const;
+
+		/// \deprecated
 		Gaffer::StringVectorDataPlug *pathsPlug();
 		const Gaffer::StringVectorDataPlug *pathsPlug() const;
 
@@ -107,5 +110,3 @@ class GAFFERSCENE_API Set : public FilteredSceneProcessor
 IE_CORE_DECLAREPTR( Set );
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SET_H

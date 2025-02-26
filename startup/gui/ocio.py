@@ -35,107 +35,57 @@
 #
 ##########################################################################
 
-import functools
-import imath
-
 import IECore
-
-import GafferImage # this sets the OCIO environment variable
-import PyOpenColorIO as OCIO
 
 import Gaffer
 import GafferUI
+import GafferImage
 import GafferImageUI
 
-# get default display setup
+# Make sure every script has a config plug added to it, and that we update
+# the View and Widget display transforms appropriately when the config is changed.
 
-config = OCIO.GetCurrentConfig()
-defaultDisplay = config.getDefaultDisplay()
+GafferImageUI.OpenColorIOConfigPlugUI.connectToApplication( application )
 
-# add preferences plugs
+Gaffer.Metadata.registerValue( GafferUI.View, "displayTransform.name", "plugValueWidget:type", "GafferImageUI.OpenColorIOConfigPlugUI.DisplayTransformPlugValueWidget" )
+Gaffer.Metadata.registerValue( GafferUI.View, "displayTransform.name", "layout:minimumWidth", 150 )
+Gaffer.Metadata.registerValue( GafferUI.View, "displayTransform.name", "userDefault", "__default__" )
 
-preferences = application.root()["preferences"]
-preferences["displayColorSpace"] = Gaffer.Plug()
-preferences["displayColorSpace"]["view"] = Gaffer.StringPlug( defaultValue = config.getDefaultView( defaultDisplay ) )
+# Add "Roles" submenus to various colorspace plugs. The OCIO UX guidelines suggest we
+# shouldn't do this, but they do seem like they might be useful, and historically they
+# have been available in Gaffer. They can be disabled by overwriting the metadata in
+# a custom config file.
 
-# configure ui for preferences plugs
+for node, plug in [
+	( GafferImage.ColorSpace, "inputSpace" ),
+	( GafferImage.ColorSpace, "outputSpace" ),
+	( GafferImage.DisplayTransform, "inputColorSpace" ),
+	( GafferImage.ImageReader, "colorSpace" ),
+	( GafferImage.ImageWriter, "colorSpace" ),
+] :
+	Gaffer.Metadata.registerValue( node, plug, "openColorIO:includeRoles", True )
 
-Gaffer.Metadata.registerValue( preferences["displayColorSpace"], "plugValueWidget:type", "GafferUI.LayoutPlugValueWidget", persistent = False )
-Gaffer.Metadata.registerValue( preferences["displayColorSpace"], "layout:section", "Display Color Space", persistent = False )
+# Set up Arnold colour manager with metadata that integrates with our OCIO configs.
 
-Gaffer.Metadata.registerValue( preferences["displayColorSpace"]["view"], "plugValueWidget:type", "GafferUI.PresetsPlugValueWidget", persistent = False )
+with IECore.IgnoredExceptions( ImportError ) :
 
-for view in config.getViews( defaultDisplay ) :
-	Gaffer.Metadata.registerValue( preferences["displayColorSpace"]["view"], "preset:" + view, view, persistent = False )
+	import GafferArnold
 
-# update the display transform from the plugs
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "userDefault", "${ocio:config}" )
 
-def __setDisplayTransform() :
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "plugValueWidget:type", "GafferUI.PresetsPlugValueWidget" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "preset:$OCIO", "" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "preset:ACES 1.3 - CG Config", "ocio://cg-config-v1.0.0_aces-v1.3_ocio-v2.1" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "preset:ACES 1.3 - Studio Config", "ocio://studio-config-v1.0.0_aces-v1.3_ocio-v2.1" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "preset:Legacy (Gaffer 1.2)", "${GAFFER_ROOT}/openColorIO/config.ocio" )
 
-	d = OCIO.DisplayTransform()
-	d.setInputColorSpaceName( OCIO.Constants.ROLE_SCENE_LINEAR )
-	d.setDisplay( defaultDisplay )
-	d.setView( preferences["displayColorSpace"]["view"].getValue() )
-	processor = config.getProcessor( d )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "presetsPlugValueWidget:allowCustom", True )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "presetsPlugValueWidget:customWidgetType", "GafferUI.FileSystemPathPlugValueWidget" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "fileSystemPath:extensions", "ocio" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "path:leaf", True )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.config", "path:valid", True )
 
-	def f( c ) :
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.color_space_linear", "userDefault", "${ocio:workingSpace}" )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.color_space_linear", "preset:Working Space", "${ocio:workingSpace}" )
 
-		cc = processor.applyRGB( [ c.r, c.g, c.b ] )
-		return imath.Color3f( *cc )
-
-	GafferUI.DisplayTransform.set( f )
-
-__setDisplayTransform()
-
-# and connect to plug changed to update things again when the user asks
-
-def __plugSet( plug ) :
-
-	if plug.relativeName( plug.node() ) != "displayColorSpace" :
-		return
-
-	__setDisplayTransform()
-	__updateDefaultDisplayTransforms()
-
-preferences.plugSetSignal().connect( __plugSet, scoped = False )
-
-# register display transforms with the image viewer
-
-def __displayTransformCreator( name ) :
-
-	result = GafferImage.DisplayTransform()
-	result["channels"].setValue( "[RGB] *.[RGB]" )
-	result["inputColorSpace"].setValue( config.getColorSpace( OCIO.Constants.ROLE_SCENE_LINEAR ).getName() )
-	result["display"].setValue( defaultDisplay )
-	result["view"].setValue( name )
-
-	return result
-
-for name in config.getViews( defaultDisplay ) :
-	GafferImageUI.ImageView.registerDisplayTransform( name, functools.partial( __displayTransformCreator, name ) )
-
-# and register a special "Default" display transform which tracks the
-# global settings from the preferences
-
-__defaultDisplayTransforms = []
-
-def __updateDefaultDisplayTransforms() :
-
-	view = preferences["displayColorSpace"]["view"].getValue()
-	for node in __defaultDisplayTransforms :
-		node["view"].setValue( view )
-
-def __defaultDisplayTransformCreator() :
-
-	result = GafferImage.DisplayTransform()
-	result["channels"].setValue( "[RGB] *.[RGB]" )
-	result["inputColorSpace"].setValue( config.getColorSpace( OCIO.Constants.ROLE_SCENE_LINEAR ).getName() )
-	result["display"].setValue( defaultDisplay )
-	result["view"].setValue( config.getDefaultView( defaultDisplay ) )
-
-	__defaultDisplayTransforms.append( result )
-	__updateDefaultDisplayTransforms()
-
-	return result
-
-GafferImageUI.ImageView.registerDisplayTransform( "Default", __defaultDisplayTransformCreator )
+	Gaffer.Metadata.registerValue( GafferArnold.ArnoldColorManager, "parameters.color_space_narrow", "userDefault", "matte_paint" )

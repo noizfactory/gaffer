@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENETEST_TYPEIDS_H
-#define GAFFERSCENETEST_TYPEIDS_H
+#pragma once
 
 namespace GafferSceneTest
 {
@@ -46,10 +45,9 @@ enum TypeId
 	CompoundObjectSourceTypeId = 110701,
 	TestShaderTypeId = 110702,
 	TestLightTypeId = 110703,
+	TestLightFilterTypeId = 110704,
 
 	LastTypeId = 110749
 };
 
 } // namespace GafferSceneTest
-
-#endif // GAFFERSCENETEST_TYPEIDS_H

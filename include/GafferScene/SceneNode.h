@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENENODE_H
-#define GAFFERSCENE_SCENENODE_H
+#pragma once
 
 #include "GafferScene/Export.h"
 #include "GafferScene/ScenePlug.h"
@@ -53,10 +52,10 @@ class GAFFERSCENE_API SceneNode : public Gaffer::ComputeNode
 
 	public :
 
-		SceneNode( const std::string &name=defaultName<SceneNode>() );
+		explicit SceneNode( const std::string &name=defaultName<SceneNode>() );
 		~SceneNode() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::SceneNode, SceneNodeTypeId, Gaffer::ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::SceneNode, SceneNodeTypeId, Gaffer::ComputeNode );
 
 		/// All SceneNodes have at least one output ScenePlug for passing on their result. More
 		/// may be added by derived classes if necessary.
@@ -72,7 +71,7 @@ class GAFFERSCENE_API SceneNode : public Gaffer::ComputeNode
 
 	protected :
 
-		typedef ScenePlug::ScenePath ScenePath;
+		using ScenePath = ScenePlug::ScenePath;
 
 		/// Implemented to call the hash*() methods below whenever output is part of a ScenePlug and the node is enabled.
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
@@ -119,16 +118,31 @@ class GAFFERSCENE_API SceneNode : public Gaffer::ComputeNode
 		/// it, and that makes computation quicker, as we don't need to access setNamesPlug() at all in many common cases.
 		virtual IECore::ConstPathMatcherDataPtr computeSet( const IECore::InternedString &setName, const Gaffer::Context *context, const ScenePlug *parent ) const;
 
-		/// Convenience function to compute the correct bounding box for a path from the bounding box and transforms of its
-		/// children. Using this from computeBound() should be a last resort, as it implies peeking inside children to determine
-		/// information about the parent - the last thing we want to be doing when defining large scenes procedurally. If
-		/// `out->childNames()` has been computed already for some reason, then it may be passed to avoid recomputing it
-		/// internally.
+		/// \deprecated Use `ScenePlug::childBounds()` instead.
 		Imath::Box3f unionOfTransformedChildBounds( const ScenePath &path, const ScenePlug *out, const IECore::InternedStringVectorData *childNames = nullptr ) const;
-		/// A hash for the result of the computation in unionOfTransformedChildBounds().
+		/// \deprecated Use `ScenePlug::childBoundsHash()` instead.
 		IECore::MurmurHash hashOfTransformedChildBounds( const ScenePath &path, const ScenePlug *out, const IECore::InternedStringVectorData *childNames = nullptr ) const;
 
+		Gaffer::ValuePlug::CachePolicy hashCachePolicy( const Gaffer::ValuePlug *output ) const override;
+		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
+
+		/// Returns `enabledPlug()->getValue()` evaluated in a global context.
+		/// Disabling is handled automatically by the SceneNode and SceneProcessor
+		/// base classes, so there should be little need to call this.
+		bool enabled( const Gaffer::Context *context ) const;
+
 	private :
+
+		void plugInputChanged( Gaffer::Plug *plug );
+
+		void hashExists( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const;
+		bool computeExists( const Gaffer::Context *context, const ScenePlug *parent ) const;
+
+		void hashSortedChildNames( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const;
+		IECore::ConstInternedStringVectorDataPtr computeSortedChildNames( const Gaffer::Context *context, const ScenePlug *parent ) const;
+
+		void hashChildBounds( const Gaffer::Context *context, const ScenePlug *parent, IECore::MurmurHash &h ) const;
+		Imath::Box3f computeChildBounds( const Gaffer::Context *context, const ScenePlug *parent ) const;
 
 		static size_t g_firstPlugIndex;
 
@@ -137,5 +151,3 @@ class GAFFERSCENE_API SceneNode : public Gaffer::ComputeNode
 IE_CORE_DECLAREPTR( SceneNode )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENENODE_H

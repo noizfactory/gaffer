@@ -64,6 +64,12 @@ Gaffer.Metadata.registerNode(
 
 		],
 
+		"attributes.*" : [
+
+			"nameValuePlugPlugValueWidget:ignoreNamePlug", False,
+
+		],
+
 		"attributes.*.name" : [
 
 			"ui:scene:acceptsAttributeName", True,
@@ -102,7 +108,7 @@ def __attributePopupMenu( menuDefinition, plugValueWidget ) :
 	if not acceptsAttributeName and not acceptsAttributeNames :
 		return
 
-	selectedPaths = GafferSceneUI.ContextAlgo.getSelectedPaths( plugValueWidget.getContext() ).paths()
+	selectedPaths = GafferSceneUI.ScriptNodeAlgo.getSelectedPaths( plugValueWidget.scriptNode() ).paths()
 	if not selectedPaths :
 		return
 
@@ -113,7 +119,7 @@ def __attributePopupMenu( menuDefinition, plugValueWidget ) :
 		nodes = [ node ]
 
 	attributeNames = set()
-	with plugValueWidget.getContext() :
+	with plugValueWidget.context() :
 
 		if acceptsAttributeNames :
 			currentNames = set( plug.getValue().split() )
@@ -144,8 +150,8 @@ def __attributePopupMenu( menuDefinition, plugValueWidget ) :
 			{
 				"command" : functools.partial( __setValue, plug, " ".join( sorted( newNames ) ) ),
 				"checkBox" : attributeName in currentNames,
-				"active" : plug.settable() and not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ),
+				"active" : plug.settable() and not Gaffer.MetadataAlgo.readOnly( plug ),
 			}
 		)
 
-__attributesPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __attributePopupMenu )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __attributePopupMenu )

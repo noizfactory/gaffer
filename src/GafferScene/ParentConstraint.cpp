@@ -39,7 +39,7 @@
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ParentConstraint );
+GAFFER_NODE_DEFINE_TYPE( ParentConstraint );
 
 size_t ParentConstraint::g_firstPlugIndex = 0;
 
@@ -66,15 +66,26 @@ const Gaffer::TransformPlug *ParentConstraint::relativeTransformPlug() const
 
 bool ParentConstraint::affectsConstraint( const Gaffer::Plug *input ) const
 {
-	return relativeTransformPlug()->isAncestorOf( input );
+	return
+		input == keepReferencePositionPlug() ||
+		relativeTransformPlug()->isAncestorOf( input )
+	;
 }
 
 void ParentConstraint::hashConstraint( const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
-	relativeTransformPlug()->hash( h );
+	if( !keepReferencePositionPlug()->getValue() )
+	{
+		relativeTransformPlug()->hash( h );
+	}
 }
 
 Imath::M44f ParentConstraint::computeConstraint( const Imath::M44f &fullTargetTransform, const Imath::M44f &fullInputTransform, const Imath::M44f &inputTransform ) const
 {
-	return inputTransform * relativeTransformPlug()->matrix() * fullTargetTransform;
+	Imath::M44f relativeMatrix;
+	if( !keepReferencePositionPlug()->getValue() )
+	{
+		relativeMatrix = relativeTransformPlug()->matrix();
+	}
+	return inputTransform * relativeMatrix * fullTargetTransform;
 }

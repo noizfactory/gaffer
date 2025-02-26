@@ -38,16 +38,16 @@
 #include "GafferUI/Gadget.h"
 
 #include "GafferUI/Style.h"
+#include "GafferUI/ViewportGadget.h"
 
 #include "IECoreGL/GL.h"
-#include "IECoreGL/NameStateComponent.h"
 #include "IECoreGL/Selector.h"
 
 #include "IECore/SimpleTypedData.h"
 
-#include "OpenEXR/ImathBoxAlgo.h"
+#include "Imath/ImathBoxAlgo.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/lexical_cast.hpp"
 
 using namespace GafferUI;
@@ -56,23 +56,56 @@ using namespace std;
 
 GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Gadget );
 
-Gadget::Gadget( const std::string &name )
-	:	GraphComponent( name ), m_style( nullptr ), m_visible( true ), m_enabled( true ), m_highlighted( false ), m_toolTip( "" )
-{
-	std::string n = "__Gaffer::Gadget::" + boost::lexical_cast<std::string>( (size_t)this );
-	m_glName = IECoreGL::NameStateComponent::glNameFromName( n, true );
-}
+//////////////////////////////////////////////////////////////////////////
+// Gadget::Signals
+//
+// We allocate these lazily because they have a significant overhead
+// in both memory and construction time, and for many Gadget
+// instances they are never actually used.
+//////////////////////////////////////////////////////////////////////////
 
-GadgetPtr Gadget::select( GLuint id )
+struct Gadget::MemberSignals : boost::noncopyable
 {
-	const std::string &name = IECoreGL::NameStateComponent::nameFromGLName( id );
-	if( name.compare( 0, 18, "__Gaffer::Gadget::" ) )
+
+	VisibilityChangedSignal visibilityChangedSignal;
+
+	ButtonSignal buttonPressSignal;
+	ButtonSignal buttonReleaseSignal;
+	ButtonSignal buttonDoubleClickSignal;
+	ButtonSignal wheelSignal;
+
+	EnterLeaveSignal enterSignal;
+	EnterLeaveSignal leaveSignal;
+	ButtonSignal mouseMoveSignal;
+
+	DragBeginSignal dragBeginSignal;
+	DragDropSignal dragEnterSignal;
+	DragDropSignal dragMoveSignal;
+	DragDropSignal dragLeaveSignal;
+	DragDropSignal dragEndSignal;
+	DragDropSignal dropSignal;
+
+	KeySignal keyPressSignal;
+	KeySignal keyReleaseSignal;
+
+	// Utility to emit a signal if it has been created, but do nothing
+	// if it hasn't.
+	template<typename SignalMemberPointer, typename... Args>
+	static void emitLazily( MemberSignals *signals, SignalMemberPointer signalMemberPointer, Args&&... args )
 	{
-		return nullptr;
+		if( !signals )
+		{
+			return;
+		}
+		auto &signal = signals->*signalMemberPointer;
+		signal( std::forward<Args>( args )... );
 	}
-	std::string address = name.c_str() + 18;
-	size_t a = boost::lexical_cast<size_t>( address );
-	return reinterpret_cast<Gadget *>( a );
+
+};
+
+Gadget::Gadget( const std::string &name )
+	:	GraphComponent( name ), m_style( nullptr ), m_visible( true ), m_enabled( true ), m_highlighted( false ), m_layoutDirty( false ), m_toolTip( "" )
+{
 }
 
 Gadget::~Gadget()
@@ -93,16 +126,17 @@ void Gadget::setStyle( ConstStylePtr style )
 {
 	if( style!=m_style )
 	{
-		if( m_style )
-		{
-			const_cast<Style *>( m_style.get() )->changedSignal().disconnect( boost::bind( &Gadget::styleChanged, this ) );
-		}
+		m_styleChangedConnection.disconnect();
 		m_style = style;
 		if( m_style )
 		{
-			const_cast<Style *>( m_style.get() )->changedSignal().connect( boost::bind( &Gadget::styleChanged, this ) );
+			m_styleChangedConnection = const_cast<Style *>( style.get() )->changedSignal().connect(
+				boost::bind( &Gadget::styleChanged, this )
+			);
 		}
- 		requestRender();
+		// Style affects the bounding box of text,
+		// so we need Layout rather than just Render.
+		dirty( DirtyType::Layout );
 	}
 }
 
@@ -137,14 +171,17 @@ void Gadget::setVisible( bool visible )
 	if( !p || p->visible() )
 	{
 		emitDescendantVisibilityChanged();
-		visibilityChangedSignal()( this );
+		MemberSignals::emitLazily( m_signals.get(), &MemberSignals::visibilityChangedSignal, this );
 	}
- 	requestRender();
+	if( p )
+	{
+		p->dirty( DirtyType::Layout );
+	}
 }
 
 void Gadget::emitDescendantVisibilityChanged()
 {
-	for( GadgetIterator it( this ); !it.done(); ++it )
+	for( Gadget::Iterator it( this ); !it.done(); ++it )
 	{
 		if( !(*it)->getVisible() )
 		{
@@ -153,13 +190,8 @@ void Gadget::emitDescendantVisibilityChanged()
 			continue;
 		}
 		(*it)->emitDescendantVisibilityChanged();
-		(*it)->visibilityChangedSignal()( it->get() );
+		MemberSignals::emitLazily( (*it)->m_signals.get(), &MemberSignals::visibilityChangedSignal, it->get() );
 	}
-}
-
-bool Gadget::getVisible() const
-{
-	return m_visible;
 }
 
 bool Gadget::visible( Gadget *relativeTo ) const
@@ -178,7 +210,7 @@ bool Gadget::visible( Gadget *relativeTo ) const
 
 Gadget::VisibilityChangedSignal &Gadget::visibilityChangedSignal()
 {
-	return m_visibilityChangedSignal;
+	return signals()->visibilityChangedSignal;
 }
 
 void Gadget::setEnabled( bool enabled )
@@ -188,7 +220,7 @@ void Gadget::setEnabled( bool enabled )
 		return;
 	}
 	m_enabled = enabled;
-	requestRender();
+	dirty( DirtyType::Render );
 }
 
 bool Gadget::getEnabled() const
@@ -218,7 +250,7 @@ void Gadget::setHighlighted( bool highlighted )
 	}
 
 	m_highlighted = highlighted;
- 	requestRender();
+	dirty( DirtyType::Render );
 }
 
 bool Gadget::getHighlighted() const
@@ -231,7 +263,10 @@ void Gadget::setTransform( const Imath::M44f &matrix )
 	if( matrix!=m_transform )
 	{
 		m_transform = matrix;
- 		requestRender();
+		if( auto p = parent<Gadget>() )
+		{
+			p->dirty( DirtyType::Layout );
+		}
 	}
 }
 
@@ -253,86 +288,61 @@ Imath::M44f Gadget::fullTransform( const Gadget *ancestor ) const
 	return result;
 }
 
-void Gadget::render() const
-{
-	for( int layer = (int)Layer::Back; layer <= (int)Layer::Front; ++layer )
-	{
-		renderLayer( (Layer)layer, /* currentStyle = */ nullptr );
-	}
-}
-
-void Gadget::renderLayer( Layer layer, const Style *currentStyle ) const
-{
-	const bool haveTransform = m_transform != M44f();
-	if( haveTransform )
-	{
-		glPushMatrix();
-		glMultMatrixf( m_transform.getValue() );
-	}
-
-		if( !currentStyle )
-		{
-			currentStyle = style();
-			currentStyle->bind();
-		}
-		else
-		{
-			if( m_style )
-			{
-				m_style->bind();
-				currentStyle = m_style.get();
-			}
-		}
-
-		if( IECoreGL::Selector *selector = IECoreGL::Selector::currentSelector() )
-		{
-			selector->loadName( m_glName );
-		}
-
-		doRenderLayer( layer, currentStyle );
-
-		for( ChildContainer::const_iterator it=children().begin(); it!=children().end(); it++ )
-		{
-			// Cast is safe because of the guarantees acceptsChild() gives us
-			const Gadget *c = static_cast<const Gadget *>( it->get() );
-			if( !c->getVisible() )
-			{
-				continue;
-			}
-			if( c->hasLayer( layer ) )
-			{
-				c->renderLayer( layer, currentStyle );
-			}
-		}
-
-	if( haveTransform )
-	{
-		glPopMatrix();
-	}
-}
-
-void Gadget::requestRender()
+void Gadget::dirty( DirtyType dirtyType )
 {
 	Gadget *g = this;
 	while( g )
 	{
-		g->renderRequestSignal()( g );
-		g = g->parent<Gadget>();
+		if( dirtyType == DirtyType::Layout )
+		{
+			g->m_layoutDirty = true;
+		}
+		if( dirtyType == DirtyType::Bound )
+		{
+			// Bounds changes in children require layout updates in parents.
+			dirtyType = DirtyType::Layout;
+		}
+		Gadget *p = g->parent<Gadget>();
+		if( !p )
+		{
+			// Found top level gadget, maybe it's a ViewportGadget
+			if( auto viewportGadget = IECore::runTimeCast<ViewportGadget>( g ) )
+			{
+				viewportGadget->childDirtied( dirtyType );
+			}
+		}
+		g = p;
 	}
 }
 
-void Gadget::doRenderLayer( Layer layer, const Style *style ) const
+void Gadget::updateLayout() const
 {
 }
 
-bool Gadget::hasLayer( Layer layer ) const
+void Gadget::renderLayer( Layer layer, const Style *style, RenderReason reason ) const
 {
-	return true;
 }
+
+unsigned Gadget::layerMask() const
+{
+	return 0;
+}
+
+Imath::Box3f Gadget::renderBound() const
+{
+	return Box3f();
+}
+
 
 Imath::Box3f Gadget::bound() const
 {
-	Box3f result;
+	if( !m_layoutDirty )
+	{
+		return m_bound;
+	}
+
+	updateLayout();
+	m_bound = Box3f();
 	for( ChildContainer::const_iterator it=children().begin(); it!=children().end(); it++ )
 	{
 		// cast is safe because of the guarantees acceptsChild() gives us
@@ -343,9 +353,11 @@ Imath::Box3f Gadget::bound() const
 		}
 		Imath::Box3f b = c->bound();
 		b = Imath::transform( b, c->getTransform() );
-		result.extendBy( b );
+		m_bound.extendBy( b );
 	}
-	return result;
+
+	m_layoutDirty = false;
+	return m_bound;
 }
 
 Imath::Box3f Gadget::transformedBound() const
@@ -360,11 +372,6 @@ Imath::Box3f Gadget::transformedBound( const Gadget *ancestor ) const
 	return transform( b, fullTransform( ancestor ) );
 }
 
-Gadget::RenderRequestSignal &Gadget::renderRequestSignal()
-{
-	return m_renderRequestSignal;
-}
-
 std::string Gadget::getToolTip( const IECore::LineSegment3f &position ) const
 {
 	return m_toolTip;
@@ -377,95 +384,110 @@ void Gadget::setToolTip( const std::string &toolTip )
 
 Gadget::ButtonSignal &Gadget::buttonPressSignal()
 {
-	return m_buttonPressSignal;
+	return signals()->buttonPressSignal;
 }
 
 Gadget::ButtonSignal &Gadget::buttonReleaseSignal()
 {
-	return m_buttonReleaseSignal;
+	return signals()->buttonReleaseSignal;
 }
 
 Gadget::ButtonSignal &Gadget::buttonDoubleClickSignal()
 {
-	return m_buttonDoubleClickSignal;
+	return signals()->buttonDoubleClickSignal;
 }
 
 Gadget::ButtonSignal &Gadget::wheelSignal()
 {
-	return m_wheelSignal;
+	return signals()->wheelSignal;
 }
 
 Gadget::EnterLeaveSignal &Gadget::enterSignal()
 {
-	return m_enterSignal;
+	return signals()->enterSignal;
 }
 
 Gadget::EnterLeaveSignal &Gadget::leaveSignal()
 {
-	return m_leaveSignal;
+	return signals()->leaveSignal;
 }
 
 Gadget::ButtonSignal &Gadget::mouseMoveSignal()
 {
-	return m_mouseMoveSignal;
+	return signals()->mouseMoveSignal;
 }
 
 Gadget::DragBeginSignal &Gadget::dragBeginSignal()
 {
-	return m_dragBeginSignal;
+	return signals()->dragBeginSignal;
 }
 
 Gadget::DragDropSignal &Gadget::dragMoveSignal()
 {
-	return m_dragMoveSignal;
+	return signals()->dragMoveSignal;
 }
 
 Gadget::DragDropSignal &Gadget::dragEnterSignal()
 {
-	return m_dragEnterSignal;
+	return signals()->dragEnterSignal;
 }
 
 Gadget::DragDropSignal &Gadget::dragLeaveSignal()
 {
-	return m_dragLeaveSignal;
+	return signals()->dragLeaveSignal;
 }
 
 Gadget::DragDropSignal &Gadget::dropSignal()
 {
-	return m_dropSignal;
+	return signals()->dropSignal;
 }
 
 Gadget::DragDropSignal &Gadget::dragEndSignal()
 {
-	return m_dragEndSignal;
+	return signals()->dragEndSignal;
 }
 
 Gadget::KeySignal &Gadget::keyPressSignal()
 {
-	return m_keyPressSignal;
+	return signals()->keyPressSignal;
 }
 
 Gadget::KeySignal &Gadget::keyReleaseSignal()
 {
-	return m_keyReleaseSignal;
+	return signals()->keyReleaseSignal;
+}
+
+Gadget::MemberSignals *Gadget::signals()
+{
+	if( !m_signals )
+	{
+		m_signals = std::make_unique<MemberSignals>();
+	}
+	return m_signals.get();
 }
 
 Gadget::IdleSignal &Gadget::idleSignal()
 {
-	static IdleSignal g_idleSignal;
+	// Deliberately leaking here, as the alternative is for `g_idleSignal`
+	// to be destroyed during shutdown when static destructors are run.
+	// Static destructors are run _after_ Python has shut down, so we are
+	// not in a position to destroy any slots that might still be holding
+	// on to Python objects.
+	static IdleSignal *g_idleSignal = new IdleSignal;
 	idleSignalAccessedSignal()();
-	return g_idleSignal;
+	return *g_idleSignal;
 }
 
 Gadget::IdleSignal &Gadget::idleSignalAccessedSignal()
 {
-	static IdleSignal g_idleSignalAccessedSignal;
-	return g_idleSignalAccessedSignal;
+	// See above.
+	static IdleSignal *g_idleSignalAccessedSignal = new IdleSignal;
+	return *g_idleSignalAccessedSignal;
 }
 
 void Gadget::styleChanged()
 {
-	requestRender();
+	dirty( DirtyType::Layout );
 }
 
 void Gadget::parentChanged( GraphComponent *oldParent )
@@ -474,10 +496,10 @@ void Gadget::parentChanged( GraphComponent *oldParent )
 
 	if( Gadget *oldParentGadget = IECore::runTimeCast<Gadget>( oldParent ) )
 	{
-		oldParentGadget->requestRender();
+		oldParentGadget->dirty( DirtyType::Layout );
 	}
 	if( Gadget *parentGadget = parent<Gadget>() )
 	{
-		parentGadget->requestRender();
+		parentGadget->dirty( DirtyType::Layout );
 	}
 }

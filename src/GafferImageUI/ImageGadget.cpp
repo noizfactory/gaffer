@@ -38,6 +38,7 @@
 
 #include "GafferImage/ImageAlgo.h"
 #include "GafferImage/ImagePlug.h"
+#include "GafferImage/OpenColorIOTransform.h"
 
 #include "GafferUI/Style.h"
 #include "GafferUI/ViewportGadget.h"
@@ -45,7 +46,10 @@
 #include "Gaffer/BackgroundTask.h"
 #include "Gaffer/Context.h"
 #include "Gaffer/Node.h"
+#include "Gaffer/Process.h"
 #include "Gaffer/ScriptNode.h"
+
+#include "IECore/MessageHandler.h"
 
 #include "IECoreGL/GL.h"
 #include "IECoreGL/IECoreGL.h"
@@ -54,11 +58,14 @@
 #include "IECoreGL/Shader.h"
 #include "IECoreGL/ShaderLoader.h"
 
+#include "OpenColorIO/OpenColorIO.h"
+
 #include "boost/algorithm/string/predicate.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/lexical_cast.hpp"
 
 using namespace std;
+using namespace boost::placeholders;
 using namespace boost;
 using namespace Imath;
 using namespace IECore;
@@ -67,6 +74,230 @@ using namespace Gaffer;
 using namespace GafferUI;
 using namespace GafferImage;
 using namespace GafferImageUI;
+
+namespace {
+void findUsableTextureFormats( GLenum &monochromeFormat, GLenum &colorFormat )
+{
+	static bool g_textureFormatsInitialized = false;
+	static GLenum g_monochromeFormat = GL_RED;
+	static GLenum g_colorFormat = GL_RGB;
+
+	if( !g_textureFormatsInitialized )
+	{
+		std::string extensions( (char*)glGetString( GL_EXTENSIONS ) );
+		if( extensions.find( "GL_ARB_texture_float" ) != string::npos )
+		{
+			g_monochromeFormat = GL_INTENSITY16F_ARB;
+			g_colorFormat = GL_RGB16F_ARB;
+		}
+		g_textureFormatsInitialized = true;
+	}
+
+	monochromeFormat = g_monochromeFormat;
+	colorFormat = g_colorFormat;
+}
+
+uint64_t g_tileUpdateCount;
+
+//////////////////////////////////////////////////////////////////////////
+// TileShader
+//////////////////////////////////////////////////////////////////////////
+
+// Manages an OpenGL shader suitable for rendering tiles
+class TileShader
+{
+
+	public :
+
+		TileShader()
+		{
+
+			std::string colorTransformCode;
+			OCIO_NAMESPACE::GpuShaderDescRcPtr shaderDesc;
+
+			// Build and compile GLSL shader
+			std::string combinedFragmentCode;
+			if( glslVersion() >= 330 )
+			{
+				// the __VERSION__ define is a workaround for the fact that cortex's source preprocessing doesn't
+				// define it correctly in the same way as the OpenGL shader preprocessing would.
+				combinedFragmentCode = "#version 330 compatibility\n #define __VERSION__ 330\n\n";
+			}
+			combinedFragmentCode += colorTransformCode + fragmentSource();
+
+			m_shader = ShaderLoader::defaultShaderLoader()->create( vertexSource(), "", combinedFragmentCode );
+
+			// Query shader parameters
+
+			m_channelTextureUnits[0] = m_shader->uniformParameter( "redTexture" )->textureUnit;
+			m_channelTextureUnits[1] = m_shader->uniformParameter( "greenTexture" )->textureUnit;
+			m_channelTextureUnits[2] = m_shader->uniformParameter( "blueTexture" )->textureUnit;
+			m_channelTextureUnits[3] = m_shader->uniformParameter( "alphaTexture" )->textureUnit;
+
+			m_activeParameterLocation = m_shader->uniformParameter( "activeParam" )->location;
+		}
+
+		~TileShader()
+		{
+		}
+
+		// Binds shader and provides `loadTile()` method to update
+		// parameters for a specific tile.
+		struct ScopedBinding : PushAttrib
+		{
+
+			ScopedBinding( const TileShader &tileShader, V2f wipePos, V2f wipeDir, ImageGadget::BlendMode blendMode )
+				:	PushAttrib( GL_COLOR_BUFFER_BIT ), m_tileShader( tileShader )
+			{
+				glGetIntegerv( GL_CURRENT_PROGRAM, &m_previousProgram );
+				glUseProgram( m_tileShader.m_shader->program() );
+
+				glEnable( GL_TEXTURE_2D );
+
+				glGetIntegerv( GL_BLEND_SRC, &m_prevBlendSrc );
+				glGetIntegerv( GL_BLEND_DST, &m_prevBlendDst );
+
+				bool negative = false;
+				if( blendMode == ImageGadget::BlendMode::Over )
+				{
+					glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+				}
+				else if( blendMode == ImageGadget::BlendMode::Under )
+				{
+					glBlendFunc( GL_ONE_MINUS_DST_ALPHA, GL_ONE );
+				}
+				else if( blendMode == ImageGadget::BlendMode::Difference )
+				{
+					negative = true;
+					glBlendFunc( GL_ONE, GL_ONE );
+				}
+				else
+				{
+					glBlendFunc( GL_ONE, GL_ZERO );
+				}
+
+				glUniform2f( tileShader.m_shader->uniformParameter( "wipePos" )->location, wipePos.x, wipePos.y );
+				glUniform2f( tileShader.m_shader->uniformParameter( "wipeDir" )->location, wipeDir.x, wipeDir.y );
+
+				glUniform1i( tileShader.m_shader->uniformParameter( "redTexture" )->location, tileShader.m_channelTextureUnits[0] );
+				glUniform1i( tileShader.m_shader->uniformParameter( "greenTexture" )->location, tileShader.m_channelTextureUnits[1] );
+				glUniform1i( tileShader.m_shader->uniformParameter( "blueTexture" )->location, tileShader.m_channelTextureUnits[2] );
+				glUniform1i( tileShader.m_shader->uniformParameter( "alphaTexture" )->location, tileShader.m_channelTextureUnits[3] );
+				glUniform1i( tileShader.m_shader->uniformParameter( "negative" )->location, negative );
+
+			}
+
+			~ScopedBinding()
+			{
+				glUseProgram( m_previousProgram );
+				glBlendFunc( m_prevBlendSrc, m_prevBlendDst );
+			}
+
+			void loadTile( IECoreGL::ConstTexturePtr channelTextures[4], bool active )
+			{
+				for( int i = 0; i < 4; ++i )
+				{
+					glActiveTexture( GL_TEXTURE0 + m_tileShader.m_channelTextureUnits[i] );
+					channelTextures[i]->bind();
+				}
+				glUniform1i( m_tileShader.m_activeParameterLocation, active );
+			}
+
+			private :
+
+				const TileShader &m_tileShader;
+				GLint m_previousProgram;
+				GLint m_prevBlendSrc, m_prevBlendDst;
+		};
+
+	private :
+
+		IECoreGL::ShaderPtr m_shader;
+
+		GLuint m_channelTextureUnits[4];
+		GLint m_activeParameterLocation;
+
+		static const char *vertexSource()
+		{
+			static const char *g_vertexSource =
+			"void main()"
+			"{"
+			"	gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;"
+			"	gl_TexCoord[0] = gl_MultiTexCoord0;"
+			"	gl_TexCoord[1] = gl_MultiTexCoord1;"
+			"}";
+
+			return g_vertexSource;
+		}
+
+		static const std::string &fragmentSource()
+		{
+			static std::string g_fragmentSource;
+			if( g_fragmentSource.empty() )
+			{
+				g_fragmentSource =
+
+				"uniform sampler2D redTexture;\n"
+				"uniform sampler2D greenTexture;\n"
+				"uniform sampler2D blueTexture;\n"
+				"uniform sampler2D alphaTexture;\n"
+
+				"uniform bool activeParam;\n"
+				"uniform bool negative;\n"
+				"uniform vec2 wipePos;\n"
+				"uniform vec2 wipeDir;\n"
+
+				"#if __VERSION__ >= 330\n"
+
+				"layout( location=0 ) out vec4 outColor;\n"
+				"#define OUTCOLOR outColor\n"
+
+				"#else\n"
+
+				"#define OUTCOLOR gl_FragColor\n"
+
+				"#endif\n"
+
+				"#define ACTIVE_CORNER_RADIUS 0.3\n"
+
+				"void main()"
+				"{"
+				"	if( dot( gl_TexCoord[1].xy - wipePos, wipeDir ) > 0.0 )\n"
+				"	{\n"
+				"		discard;\n"
+				"	}\n"
+				"	OUTCOLOR = vec4(\n"
+				"		texture2D( redTexture, gl_TexCoord[0].xy ).r,\n"
+				"		texture2D( greenTexture, gl_TexCoord[0].xy ).r,\n"
+				"		texture2D( blueTexture, gl_TexCoord[0].xy ).r,\n"
+				"		texture2D( alphaTexture, gl_TexCoord[0].xy ).r\n"
+				"	);\n"
+				"	OUTCOLOR *= negative ? -1.0 : 1.0;\n"
+				"	if( activeParam )\n"
+				"	{\n"
+				"		vec2 pixelWidth = vec2( dFdx( gl_TexCoord[0].x ), dFdy( gl_TexCoord[0].y ) );\n"
+				"		float aspect = pixelWidth.x / pixelWidth.y;\n"
+				"		vec2 p = abs( gl_TexCoord[0].xy - vec2( 0.5 ) );\n"
+				"		float eX = step( 0.5 - pixelWidth.x, p.x ) * step( 0.5 - ACTIVE_CORNER_RADIUS, p.y );\n"
+				"		float eY = step( 0.5 - pixelWidth.y, p.y ) * step( 0.5 - ACTIVE_CORNER_RADIUS * aspect, p.x );\n"
+				"		float e = eX + eY - eX * eY;\n"
+				"		OUTCOLOR += vec4( 0.15 ) * e;\n"
+				"	}\n"
+				"}";
+			}
+			return g_fragmentSource;
+		}
+
+};
+
+const TileShader *tileShader()
+{
+	static const TileShader *g_tileShader = new TileShader();
+	return g_tileShader;
+}
+
+} // namespace
+
 
 //////////////////////////////////////////////////////////////////////////
 // ImageGadget implementation
@@ -78,8 +309,10 @@ ImageGadget::ImageGadget()
 		m_soloChannel( -1 ),
 		m_labelsVisible( true ),
 		m_paused( false ),
+		m_wipeEnabled( false ),
 		m_dirtyFlags( AllDirty ),
-		m_renderRequestPending( false )
+		m_renderRequestPending( false ),
+		m_blendMode( BlendMode::Over )
 {
 	m_rgbaChannels[0] = "R";
 	m_rgbaChannels[1] = "G";
@@ -98,7 +331,7 @@ ImageGadget::~ImageGadget()
 	m_tilesTask.reset();
 }
 
-void ImageGadget::setImage( GafferImage::ConstImagePlugPtr image )
+void ImageGadget::setImage( GafferImage::ImagePlugPtr image )
 {
 	if( image == m_image )
 	{
@@ -106,6 +339,7 @@ void ImageGadget::setImage( GafferImage::ConstImagePlugPtr image )
 	}
 
 	m_image = image;
+
 	if( Gaffer::Node *node = const_cast<Gaffer::Node *>( image->node() ) )
 	{
 		m_plugDirtiedConnection = node->plugDirtiedSignal().connect( boost::bind( &ImageGadget::plugDirtied, this, ::_1 ) );
@@ -123,7 +357,7 @@ const GafferImage::ImagePlug *ImageGadget::getImage() const
 	return m_image.get();
 }
 
-void ImageGadget::setContext( Gaffer::ContextPtr context )
+void ImageGadget::setContext( Gaffer::ConstContextPtr context )
 {
 	if( context == m_context )
 	{
@@ -131,14 +365,11 @@ void ImageGadget::setContext( Gaffer::ContextPtr context )
 	}
 
 	m_context = context;
-	m_contextChangedConnection = m_context->changedSignal().connect( boost::bind( &ImageGadget::contextChanged, this, ::_2 ) );
+	m_contextChangedConnection = const_cast<Context *>( m_context.get() )->changedSignal().connect(
+		boost::bind( &ImageGadget::contextChanged, this, ::_2 )
+	);
 
 	dirty( AllDirty );
-}
-
-Gaffer::Context *ImageGadget::getContext()
-{
-	return m_context.get();
 }
 
 const Gaffer::Context *ImageGadget::getContext() const
@@ -174,21 +405,23 @@ void ImageGadget::setSoloChannel( int index )
 	{
 		return;
 	}
-	if( index < -1 || index > 3 )
+	if( index < -2 || index > 3 )
 	{
 		throw Exception( "Invalid index" );
 	}
 
-	m_soloChannel = index;
-	if( m_soloChannel == -1 )
+	if( m_soloChannel >= 0 )
 	{
 		// Last time we called updateTiles(), we
 		// only updated the solo channel, so now
-		// we need to trigger a pass over all the
-		// channels.
+		// we need to trigger a pass over the
+		// channels we're going to use now.
 		dirty( TilesDirty );
 	}
-	requestRender();
+
+	m_soloChannel = index;
+
+	Gadget::dirty( DirtyType::Render );
 }
 
 int ImageGadget::getSoloChannel() const
@@ -203,7 +436,7 @@ void ImageGadget::setLabelsVisible( bool visible )
 		return;
 	}
 	m_labelsVisible = visible;
-	requestRender();
+	Gadget::dirty( DirtyType::Render );
 }
 
 bool ImageGadget::getLabelsVisible() const
@@ -221,17 +454,37 @@ void ImageGadget::setPaused( bool paused )
 	if( m_paused )
 	{
 		m_tilesTask.reset();
-		stateChangedSignal()( this );
 	}
 	else if( m_dirtyFlags )
 	{
-		requestRender();
+		Gadget::dirty( DirtyType::Render );
 	}
+	stateChangedSignal()( this );
 }
 
 bool ImageGadget::getPaused() const
 {
 	return m_paused;
+}
+
+uint64_t ImageGadget::tileUpdateCount()
+{
+	return g_tileUpdateCount;
+}
+
+void ImageGadget::resetTileUpdateCount()
+{
+	g_tileUpdateCount = 0;
+}
+
+void ImageGadget::setBlendMode( BlendMode blendMode )
+{
+	m_blendMode = blendMode;
+}
+
+ImageGadget::BlendMode ImageGadget::getBlendMode() const
+{
+	return m_blendMode;
 }
 
 ImageGadget::State ImageGadget::state() const
@@ -257,6 +510,36 @@ Imath::V2f ImageGadget::pixelAt( const IECore::LineSegment3f &lineInGadgetSpace 
 	}
 
 	return V2f( i.x / format().getPixelAspect(), i.y );
+}
+
+void ImageGadget::setWipeEnabled( bool enabled )
+{
+	m_wipeEnabled = enabled;
+}
+
+bool ImageGadget::getWipeEnabled() const
+{
+	return m_wipeEnabled;
+}
+
+void ImageGadget::setWipePosition( const Imath::V2f &position )
+{
+	m_wipePos = position;
+}
+
+const Imath::V2f &ImageGadget::getWipePosition() const
+{
+	return m_wipePos;
+}
+
+void ImageGadget::setWipeAngle( float angle )
+{
+	m_wipeAngle = angle;
+}
+
+float  ImageGadget::getWipeAngle() const
+{
+	return m_wipeAngle;
 }
 
 Imath::Box3f ImageGadget::bound() const
@@ -324,7 +607,9 @@ void ImageGadget::dirty( unsigned flags )
 	}
 
 	m_dirtyFlags |= flags;
-	requestRender();
+	Gadget::dirty(
+		( FormatDirty | DataWindowDirty ) ? DirtyType::Bound : DirtyType::Render
+	);
 }
 
 const GafferImage::Format &ImageGadget::format() const
@@ -395,6 +680,9 @@ IECoreGL::Texture *blackTexture()
 	static IECoreGL::TexturePtr g_texture;
 	if( !g_texture )
 	{
+		GLenum monochromeTextureFormat, colorTextureFormat;
+		findUsableTextureFormats( monochromeTextureFormat, colorTextureFormat );
+
 		GLuint texture;
 		glGenTextures( 1, &texture );
 		g_texture = new Texture( texture );
@@ -402,7 +690,7 @@ IECoreGL::Texture *blackTexture()
 
 		const float black = 0;
 		glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE, /* width = */ 1, /* height = */ 1, 0, GL_LUMINANCE,
+		glTexImage2D( GL_TEXTURE_2D, 0, monochromeTextureFormat, /* width = */ 1, /* height = */ 1, 0, GL_RED,
 			GL_FLOAT, &black );
 	}
 	return g_texture.get();
@@ -424,7 +712,7 @@ ImageGadget::Tile::Update ImageGadget::Tile::computeUpdate( const GafferImage::I
 	Mutex::scoped_lock lock( m_mutex );
 	if( m_channelDataHash != MurmurHash() && m_channelDataHash == h )
 	{
-		return Update{ nullptr, nullptr, MurmurHash() };
+		return Update{ this, nullptr, MurmurHash() };
 	}
 
 	m_active = true;
@@ -438,29 +726,29 @@ void ImageGadget::Tile::applyUpdates( const std::vector<Update> &updates )
 {
 	for( const auto &u : updates )
 	{
-		if( u.tile )
-		{
-			u.tile->m_mutex.lock();
-		}
+		u.tile->m_mutex.lock();
 	}
 
 	for( const auto &u : updates )
 	{
-		if( u.tile )
+		if( u.channelData )
 		{
 			u.tile->m_channelDataToConvert = u.channelData;
 			u.tile->m_channelDataHash = u.channelDataHash;
-			u.tile->m_active = false;
 		}
+		u.tile->m_active = false;
 	}
 
 	for( const auto &u : updates )
 	{
-		if( u.tile )
-		{
-			u.tile->m_mutex.unlock();
-		}
+		u.tile->m_mutex.unlock();
 	}
+}
+
+void ImageGadget::Tile::resetActive()
+{
+	Mutex::scoped_lock lock( m_mutex );
+	m_active = false;
 }
 
 const IECoreGL::Texture *ImageGadget::Tile::texture( bool &active )
@@ -480,33 +768,37 @@ const IECoreGL::Texture *ImageGadget::Tile::texture( bool &active )
 
 	if( channelDataToConvert )
 	{
-		GLuint texture;
-		glGenTextures( 1, &texture );
-		m_texture = new Texture( texture ); // Lock not needed, because this is only touched on the UI thread.
-		Texture::ScopedBinding binding( *m_texture );
+		GLenum monochromeTextureFormat, colorTextureFormat;
+		findUsableTextureFormats( monochromeTextureFormat, colorTextureFormat );
+		if( !m_texture )
+		{
+			GLuint texture;
+			glGenTextures( 1, &texture );
+			m_texture = new Texture( texture ); // Lock not needed, because this is only touched on the UI thread.
+			Texture::ScopedBinding binding( *m_texture );
 
+			glTexImage2D(
+				GL_TEXTURE_2D, 0, monochromeTextureFormat, ImagePlug::tileSize(), ImagePlug::tileSize(), 0, GL_RED,
+				GL_FLOAT, nullptr
+			);
+
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		}
+
+		Texture::ScopedBinding binding( *m_texture );
 		glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-		glTexImage2D(
-			GL_TEXTURE_2D, 0, GL_LUMINANCE, ImagePlug::tileSize(), ImagePlug::tileSize(), 0, GL_LUMINANCE,
+		glTexSubImage2D(
+			GL_TEXTURE_2D, 0, 0, 0, ImagePlug::tileSize(), ImagePlug::tileSize(), GL_RED,
 			GL_FLOAT, channelDataToConvert->readable().data()
 		);
 
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		g_tileUpdateCount++;
 	}
 
 	return m_texture ? m_texture.get() : blackTexture();
-}
-
-// Needed to allow TileIndex to be used as a key in concurrent_unordered_map.
-inline size_t GafferImageUI::tbb_hasher( const ImageGadget::TileIndex &tileIndex )
-{
-	return
-		tbb::tbb_hasher( tileIndex.tileOrigin.x ) ^
-		tbb::tbb_hasher( tileIndex.tileOrigin.y ) ^
-		tbb::tbb_hasher( tileIndex.channelName.c_str() );
 }
 
 void ImageGadget::updateTiles()
@@ -542,7 +834,7 @@ void ImageGadget::updateTiles()
 	{
 		if( find( m_rgbaChannels.begin(), m_rgbaChannels.end(), *it ) != m_rgbaChannels.end() )
 		{
-			if( m_soloChannel == -1 || m_rgbaChannels[m_soloChannel] == *it )
+			if( m_soloChannel < 0 || m_rgbaChannels[m_soloChannel] == *it || m_rgbaChannels[3] == *it )
 			{
 				channelsToCompute.push_back( *it );
 			}
@@ -556,28 +848,43 @@ void ImageGadget::updateTiles()
 
 	auto tileFunctor = [this, channelsToCompute] ( const ImagePlug *image, const V2i &tileOrigin ) {
 
-		vector<Tile::Update> updates;
-		ImagePlug::ChannelDataScope channelScope( Context::current() );
-		for( auto &channelName : channelsToCompute )
+		try
 		{
-			channelScope.setChannelName( channelName );
-			Tile &tile = m_tiles[TileIndex(tileOrigin, channelName)];
-			updates.push_back( tile.computeUpdate( image ) );
+			vector<Tile::Update> updates;
+			ImagePlug::ChannelDataScope channelScope( Context::current() );
+			for( auto &channelName : channelsToCompute )
+			{
+				channelScope.setChannelName( &channelName );
+				Tile &tile = m_tiles[TileIndex(tileOrigin, channelName)];
+				updates.push_back( tile.computeUpdate( image ) );
+			}
+
+			Tile::applyUpdates( updates );
+
+			if( refCount() && !m_renderRequestPending.exchange( true ) )
+			{
+				// Must hold a reference to stop us dying before our UI thread call is scheduled.
+				ImageGadgetPtr thisRef = this;
+				ParallelAlgo::callOnUIThread(
+					[thisRef] {
+						thisRef->m_renderRequestPending = false;
+						thisRef->Gadget::dirty( DirtyType::Render );
+					}
+				);
+			}
+		}
+		catch( ... )
+		{
+			// We don't want to call `Tile::applyUpdates()` because we won't have
+			// a complete set of updates for all channels. But we do need to turn off
+			// the active flag for each tile.
+			for( auto &channelName : channelsToCompute )
+			{
+				m_tiles[TileIndex(tileOrigin, channelName)].resetActive();
+			}
+			throw;
 		}
 
-		Tile::applyUpdates( updates );
-
-		if( refCount() && !m_renderRequestPending.exchange( true ) )
-		{
-			// Must hold a reference to stop us dying before our UI thread call is scheduled.
-			ImageGadgetPtr thisRef = this;
-			ParallelAlgo::callOnUIThread(
-				[thisRef] {
-					thisRef->m_renderRequestPending = false;
-					thisRef->requestRender();
-				}
-			);
-		}
 	};
 
 	Context::Scope scopedContext( m_context.get() );
@@ -586,9 +893,25 @@ void ImageGadget::updateTiles()
 		m_image.get(),
 		// OK to capture `this` via raw pointer, because ~ImageGadget waits for
 		// the background process to complete.
-		[this, channelsToCompute, dataWindow, tileFunctor] {
-			ImageAlgo::parallelProcessTiles( m_image.get(), tileFunctor, dataWindow );
-			m_dirtyFlags &= ~TilesDirty;
+		[ this, channelsToCompute, dataWindow, tileFunctor ] {
+
+			try
+			{
+				ImageAlgo::parallelProcessTiles( m_image.get(), tileFunctor, dataWindow );
+				m_dirtyFlags &= ~TilesDirty;
+			}
+			catch( const Gaffer::ProcessException & )
+			{
+				// No point starting a new compute if it's just
+				// going to error again.
+				m_dirtyFlags &= ~TilesDirty;
+			}
+			catch( const IECore::Cancelled & )
+			{
+				// Don't clear dirty flag, so that we restart
+				// on the next redraw.
+			}
+
 			if( refCount() )
 			{
 				ImageGadgetPtr thisRef = this;
@@ -598,6 +921,7 @@ void ImageGadget::updateTiles()
 					}
 				);
 			}
+
 		}
 	);
 
@@ -632,91 +956,6 @@ void ImageGadget::removeOutOfBoundsTiles() const
 // Rendering
 //////////////////////////////////////////////////////////////////////////
 
-namespace
-{
-
-const char *vertexSource()
-{
-	static const char *g_vertexSource =
-	"void main()"
-	"{"
-	"	gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;"
-	"	gl_TexCoord[0] = gl_MultiTexCoord0;"
-	"}";
-
-	return g_vertexSource;
-}
-
-const std::string &fragmentSource()
-{
-	static std::string g_fragmentSource;
-	if( g_fragmentSource.empty() )
-	{
-		g_fragmentSource =
-
-		"uniform sampler2D redTexture;\n"
-		"uniform sampler2D greenTexture;\n"
-		"uniform sampler2D blueTexture;\n"
-		"uniform sampler2D alphaTexture;\n"
-
-		"uniform bool activeParam;\n"
-
-		"#if __VERSION__ >= 330\n"
-
-		"layout( location=0 ) out vec4 outColor;\n"
-		"#define OUTCOLOR outColor\n"
-
-		"#else\n"
-
-		"#define OUTCOLOR gl_FragColor\n"
-
-		"#endif\n"
-
-		"#define ACTIVE_CORNER_RADIUS 0.3\n"
-
-		"void main()"
-		"{"
-		"	OUTCOLOR = vec4(\n"
-		"		texture2D( redTexture, gl_TexCoord[0].xy ).r,\n"
-		"		texture2D( greenTexture, gl_TexCoord[0].xy ).r,\n"
-		"		texture2D( blueTexture, gl_TexCoord[0].xy ).r,\n"
-		"		texture2D( alphaTexture, gl_TexCoord[0].xy ).r\n"
-		"	);\n"
-
-		"	if( activeParam )\n"
-		"	{\n"
-		"		vec2 pixelWidth = vec2( dFdx( gl_TexCoord[0].x ), dFdy( gl_TexCoord[0].y ) );\n"
-		"		float aspect = pixelWidth.x / pixelWidth.y;\n"
-		"		vec2 p = abs( gl_TexCoord[0].xy - vec2( 0.5 ) );\n"
-		"		float eX = step( 0.5 - pixelWidth.x, p.x ) * step( 0.5 - ACTIVE_CORNER_RADIUS, p.y );\n"
-		"		float eY = step( 0.5 - pixelWidth.y, p.y ) * step( 0.5 - ACTIVE_CORNER_RADIUS * aspect, p.x );\n"
-		"		float e = eX + eY - eX * eY;\n"
-		"		OUTCOLOR += vec4( 0.15 ) * e;\n"
-		"	}\n"
-		"}";
-
-		if( glslVersion() >= 330 )
-		{
-			// the __VERSION__ define is a workaround for the fact that cortex's source preprocessing doesn't
-			// define it correctly in the same way as the OpenGL shader preprocessing would.
-			g_fragmentSource = "#version 330 compatibility\n #define __VERSION__ 330\n\n" + g_fragmentSource;
-		}
-	}
-	return g_fragmentSource;
-}
-
-IECoreGL::Shader *shader()
-{
-	static IECoreGL::ShaderPtr g_shader;
-	if( !g_shader )
-	{
-		g_shader = ShaderLoader::defaultShaderLoader()->create( vertexSource(), "", fragmentSource() );
-	}
-	return g_shader.get();
-}
-
-} // namespace
-
 void ImageGadget::visibilityChanged()
 {
 	if( !visible() )
@@ -727,33 +966,16 @@ void ImageGadget::visibilityChanged()
 
 void ImageGadget::renderTiles() const
 {
-	GLint previousProgram;
-	glGetIntegerv( GL_CURRENT_PROGRAM, &previousProgram );
-
-	PushAttrib pushAttrib( GL_COLOR_BUFFER_BIT );
-
-	Shader *shader = ::shader();
-	glUseProgram( shader->program() );
-
-	glEnable( GL_TEXTURE_2D );
-
-	glEnable( GL_BLEND );
-	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
-
-	GLuint textureUnits[4];
-	textureUnits[0] = shader->uniformParameter( "redTexture" )->textureUnit;
-	textureUnits[1] = shader->uniformParameter( "greenTexture" )->textureUnit;
-	textureUnits[2] = shader->uniformParameter( "blueTexture" )->textureUnit;
-	textureUnits[3] = shader->uniformParameter( "alphaTexture" )->textureUnit;
-
-	glUniform1i( shader->uniformParameter( "redTexture" )->location, textureUnits[0] );
-	glUniform1i( shader->uniformParameter( "greenTexture" )->location, textureUnits[1] );
-	glUniform1i( shader->uniformParameter( "blueTexture" )->location, textureUnits[2] );
-	glUniform1i( shader->uniformParameter( "alphaTexture" )->location, textureUnits[3] );
-
-	GLint activeParameterLocation = shader->uniformParameter( "activeParam" )->location;
-
+	float radians = m_wipeAngle * M_PI / 180.0f;
 	const Box2i dataWindow = this->dataWindow();
+
+	TileShader::ScopedBinding shaderBinding(
+		*tileShader(),
+		m_wipeEnabled ? m_wipePos : V2f( dataWindow.min.x, dataWindow.min.y ),
+		m_wipeEnabled ? V2f( cosf( radians ), sinf( radians ) ) : V2f( -1, 0 ),
+		m_blendMode
+	);
+
 	const float pixelAspect = this->format().getPixelAspect();
 
 	V2i tileOrigin = ImagePlug::tileOrigin( dataWindow.min );
@@ -762,22 +984,21 @@ void ImageGadget::renderTiles() const
 		for( tileOrigin.x = ImagePlug::tileOrigin( dataWindow.min ).x; tileOrigin.x < dataWindow.max.x; tileOrigin.x += ImagePlug::tileSize() )
 		{
 			bool active = false;
+			IECoreGL::ConstTexturePtr channelTextures[4];
 			for( int i = 0; i < 4; ++i )
 			{
-				glActiveTexture( GL_TEXTURE0 + textureUnits[i] );
-				const InternedString channelName = m_soloChannel == -1 ? m_rgbaChannels[i] : m_rgbaChannels[m_soloChannel];
+				const InternedString channelName = ( m_soloChannel < 0 || i == 3 ) ? m_rgbaChannels[i] : m_rgbaChannels[m_soloChannel];
 				Tiles::const_iterator it = m_tiles.find( TileIndex( tileOrigin, channelName ) );
 				if( it != m_tiles.end() )
 				{
-					it->second.texture( active )->bind();
+					channelTextures[i] = it->second.texture( active );
 				}
 				else
 				{
-					blackTexture()->bind();
+					channelTextures[i] = blackTexture();
 				}
 			}
-
-			glUniform1i( activeParameterLocation, active );
+			shaderBinding.loadTile( channelTextures, active );
 
 			const Box2i tileBound( tileOrigin, tileOrigin + V2i( ImagePlug::tileSize() ) );
 			const Box2i validBound = BufferAlgo::intersection( tileBound, dataWindow );
@@ -795,23 +1016,25 @@ void ImageGadget::renderTiles() const
 			glBegin( GL_QUADS );
 
 				glTexCoord2f( uvBound.min.x, uvBound.min.y  );
+				glMultiTexCoord2f( GL_TEXTURE1, validBound.min.x, validBound.min.y  );
 				glVertex2f( validBound.min.x * pixelAspect, validBound.min.y );
 
 				glTexCoord2f( uvBound.min.x, uvBound.max.y  );
+				glMultiTexCoord2f( GL_TEXTURE1, validBound.min.x, validBound.max.y  );
 				glVertex2f( validBound.min.x * pixelAspect, validBound.max.y );
 
 				glTexCoord2f( uvBound.max.x, uvBound.max.y  );
+				glMultiTexCoord2f( GL_TEXTURE1, validBound.max.x, validBound.max.y  );
 				glVertex2f( validBound.max.x * pixelAspect, validBound.max.y );
 
 				glTexCoord2f( uvBound.max.x, uvBound.min.y  );
+				glMultiTexCoord2f( GL_TEXTURE1, validBound.max.x, validBound.min.y  );
 				glVertex2f( validBound.max.x * pixelAspect, validBound.min.y );
 
 			glEnd();
 
 		}
 	}
-
-	glUseProgram( previousProgram );
 }
 
 void ImageGadget::renderText( const std::string &text, const Imath::V2f &position, const Imath::V2f &alignment, const GafferUI::Style *style ) const
@@ -831,9 +1054,9 @@ void ImageGadget::renderText( const std::string &text, const Imath::V2f &positio
 	style->renderText( Style::LabelText, text );
 }
 
-void ImageGadget::doRenderLayer( Layer layer, const GafferUI::Style *style ) const
+void ImageGadget::renderLayer( Layer layer, const GafferUI::Style *style, RenderReason reason ) const
 {
-	if( layer != Layer::Main )
+	if( !( layer == Layer::Back || layer == Layer::Main || layer == Layer::Front )  )
 	{
 		return;
 	}
@@ -877,23 +1100,34 @@ void ImageGadget::doRenderLayer( Layer layer, const GafferUI::Style *style ) con
 		V2f( dataWindow.max ) * V2f( format.getPixelAspect(), 1.0f )
 	);
 
-	glColor3f( 0.0f, 0.0f, 0.0f );
-	style->renderSolidRectangle( displayWindowF );
-	if( !BufferAlgo::empty( dataWindow ) )
+	if( layer == Layer::Back )
 	{
-		style->renderSolidRectangle( dataWindowF );
+		glColor3f( 0.0f, 0.0f, 0.0f );
+		style->renderSolidRectangle( displayWindowF );
+		if( !BufferAlgo::empty( dataWindow ) )
+		{
+			style->renderSolidRectangle( dataWindowF );
+		}
+		return;
 	}
 
 	// Draw the image tiles over the top.
 
-	if( IECoreGL::Selector::currentSelector() )
+	if( isSelectionRender( reason ) )
 	{
 		// The rectangle we drew above is sufficient for
 		// selection rendering.
 		return;
 	}
 
-	renderTiles();
+	if( layer == Layer::Main )
+	{
+		renderTiles();
+		return;
+	}
+
+	// We've already handled Back and Main, so this must be the Front Layer
+	// Time for overlays and labels
 
 	// And add overlays for the display and data windows.
 
@@ -939,4 +1173,18 @@ void ImageGadget::doRenderLayer( Layer layer, const GafferUI::Style *style ) con
 			renderText( lexical_cast<string>( dataWindow.max ), dataWindowF.max, V2f( 0, -0.5 ), style );
 		}
 	}
+}
+
+unsigned ImageGadget::layerMask() const
+{
+	return (unsigned)Layer::Back | Layer::Main | Layer::Front;
+}
+
+Imath::Box3f ImageGadget::renderBound() const
+{
+	// The render bound can extend beyond the display window, and there isn't much to gain by
+	// culling ImageGadgets, so just return an infinite bound
+	Box3f b;
+	b.makeInfinite();
+	return b;
 }

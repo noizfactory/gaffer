@@ -84,10 +84,10 @@ class NumericPlugTest( GafferTest.TestCase ) :
 		f = Gaffer.FloatPlug()
 		i = Gaffer.IntPlug()
 
-		self.assert_( f.isInstanceOf( Gaffer.FloatPlug.staticTypeId() ) )
-		self.assert_( not f.isInstanceOf( Gaffer.IntPlug.staticTypeId() ) )
-		self.assert_( not i.isInstanceOf( Gaffer.FloatPlug.staticTypeId() ) )
-		self.assert_( i.isInstanceOf( Gaffer.IntPlug.staticTypeId() ) )
+		self.assertTrue( f.isInstanceOf( Gaffer.FloatPlug.staticTypeId() ) )
+		self.assertFalse( f.isInstanceOf( Gaffer.IntPlug.staticTypeId() ) )
+		self.assertFalse( i.isInstanceOf( Gaffer.FloatPlug.staticTypeId() ) )
+		self.assertTrue( i.isInstanceOf( Gaffer.IntPlug.staticTypeId() ) )
 
 	def testAcceptsInput( self ) :
 
@@ -95,13 +95,13 @@ class NumericPlugTest( GafferTest.TestCase ) :
 		o = Gaffer.IntPlug( direction=Gaffer.Plug.Direction.Out )
 		s = Gaffer.StringPlug( direction=Gaffer.Plug.Direction.Out )
 
-		self.failUnless( i.acceptsInput( o ) )
-		self.failIf( i.acceptsInput( s ) )
+		self.assertTrue( i.acceptsInput( o ) )
+		self.assertFalse( i.acceptsInput( s ) )
 
 	def testAcceptsNoneInput( self ) :
 
 		p = Gaffer.IntPlug( "hello" )
-		self.failUnless( p.acceptsInput( None ) )
+		self.assertTrue( p.acceptsInput( None ) )
 
 	def testAppliesMinMaxInSetValue( self ) :
 
@@ -160,7 +160,7 @@ class NumericPlugTest( GafferTest.TestCase ) :
 		self.assertEqual( n2["op1"].getValue(), 1010 )
 
 		n2["op1"].setInput( n1["sum"] )
-		self.failUnless( n2["op1"].getInput().isSame( n1["sum"] ) )
+		self.assertTrue( n2["op1"].getInput().isSame( n1["sum"] ) )
 		self.assertEqual( n2["op1"].getValue(), 0 )
 
 		n2["op1"].setInput( None )
@@ -179,7 +179,7 @@ class NumericPlugTest( GafferTest.TestCase ) :
 		n2["op1"].setInput( None )
 
 		self.assertEqual( len( set ), 1 )
-		self.failUnless( set[0][0].isSame( n2["op1"] ) )
+		self.assertTrue( set[0][0].isSame( n2["op1"] ) )
 
 	def testDefaultValue( self ) :
 
@@ -450,17 +450,14 @@ class NumericPlugTest( GafferTest.TestCase ) :
 		self.assertEqual( n.numComputeCalls, 1 )
 
 		h = n["sum"].hash()
-		numHashCalls = n.numHashCalls
-		# Accept either 1 or 2 - it would be reasonable for the ValuePlug
-		# to have either cached the hash or not, but that's not what we're
-		# testing here.
-		self.assertTrue( numHashCalls == 1 or numHashCalls == 2 )
+		self.assertEqual( n.numHashCalls, 1 )
 		self.assertEqual( n.numComputeCalls, 1 )
 
-		# What we care about is that calling getValue() with a precomputed hash
-		# definitely doesn't recompute the hash again.
+		# Calling `getValue()`` with a precomputed hash shouldn't recompute the
+		# hash again, even if it has been cleared from the cache.
+		Gaffer.ValuePlug.clearHashCache()
 		self.assertEqual( n["sum"].getValue( _precomputedHash = h ), 30 )
-		self.assertEqual( n.numHashCalls, numHashCalls )
+		self.assertEqual( n.numHashCalls, 1 )
 		self.assertEqual( n.numComputeCalls, 1 )
 
 	def testIsSetToDefault( self ) :
@@ -526,6 +523,11 @@ class NumericPlugTest( GafferTest.TestCase ) :
 			list( Gaffer.FloatPlug.RecursiveRange( n ) ),
 			[ n["c4"]["gc2"] ]
 		)
+
+	def testValueType( self ) :
+
+		self.assertIs( Gaffer.IntPlug.ValueType, int )
+		self.assertIs( Gaffer.FloatPlug.ValueType, float )
 
 if __name__ == "__main__":
 	unittest.main()

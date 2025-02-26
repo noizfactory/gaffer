@@ -41,13 +41,16 @@
 #include "GafferImage/Checkerboard.h"
 #include "GafferImage/ImageReader.h"
 #include "GafferImage/ImageWriter.h"
-#include "GafferImage/ObjectToImage.h"
 #include "GafferImage/OpenImageIOReader.h"
 #include "GafferImage/Ramp.h"
 
 #include "GafferDispatchBindings/TaskNodeBinding.h"
 
 #include "GafferBindings/DependencyNodeBinding.h"
+
+#include "OpenColorIO/OpenColorIO.h"
+
+#include "boost/mpl/vector.hpp"
 
 using namespace std;
 using namespace boost::python;
@@ -66,13 +69,18 @@ struct DefaultColorSpaceFunction
 	{
 	}
 
-	string operator()( const std::string &fileName, const std::string &fileFormat, const std::string &dataType, const IECore::CompoundData *metadata )
+	string operator()( const std::string &fileName, const std::string &fileFormat, const std::string &dataType, const IECore::CompoundData *metadata, const OCIO_NAMESPACE::ConstConfigRcPtr &config )
 	{
 
 		IECorePython::ScopedGILLock gilock;
-		string result = extract<string>( m_fn( fileName, fileFormat, dataType, IECore::CompoundDataPtr( const_cast<IECore::CompoundData *>( metadata ) ) ) );
-		return result;
-
+		try
+		{
+			return extract<string>( m_fn( fileName, fileFormat, dataType, IECore::CompoundDataPtr( const_cast<IECore::CompoundData *>( metadata ) ), config ) );
+		}
+		catch( const error_already_set & )
+		{
+			IECorePython::ExceptionAlgo::translatePythonException();
+		}
 	}
 
 	private:
@@ -92,7 +100,7 @@ object getDefaultColorSpaceFunction()
 	return make_function(
 		T::getDefaultColorSpaceFunction(),
 		default_call_policies(),
-		boost::mpl::vector<string, const string &, const string &, const string &, const IECore::CompoundData *>()
+		boost::mpl::vector<string, const string &, const string &, const string &, const IECore::CompoundData *, const OCIO_NAMESPACE::ConstConfigRcPtr &>()
 	);
 }
 
@@ -116,15 +124,16 @@ boost::python::list supportedExtensions()
 void GafferImageModule::bindIO()
 {
 
-	DependencyNodeClass<ImagePrimitiveNode>();
-	DependencyNodeClass<ImagePrimitiveProcessor>();
-	DependencyNodeClass<ObjectToImage>();
 	DependencyNodeClass<Constant>();
 	DependencyNodeClass<Checkerboard>();
 	DependencyNodeClass<Ramp>();
 
 	{
 		scope s = GafferBindings::DependencyNodeClass<OpenImageIOReader>()
+			.def( "setOpenFilesLimit", &OpenImageIOReader::setOpenFilesLimit )
+			.staticmethod( "setOpenFilesLimit" )
+			.def( "getOpenFilesLimit", &OpenImageIOReader::getOpenFilesLimit )
+			.staticmethod( "getOpenFilesLimit" )
 			.def( "supportedExtensions", &supportedExtensions<OpenImageIOReader> )
 			.staticmethod( "supportedExtensions" )
 		;
@@ -154,13 +163,20 @@ void GafferImageModule::bindIO()
 
 		enum_<ImageReader::FrameMaskMode>( "FrameMaskMode" )
 			.value( "None", ImageReader::None )
+			.value( "None_", ImageReader::None )
 			.value( "BlackOutside", ImageReader::BlackOutside )
 			.value( "ClampToFrame", ImageReader::ClampToFrame )
+		;
+
+		enum_<ImageReader::ChannelInterpretation>( "ChannelInterpretation" )
+			.value( "Legacy", ImageReader::ChannelInterpretation::Legacy )
+			.value( "Default", ImageReader::ChannelInterpretation::Default )
+			.value( "Specification", ImageReader::ChannelInterpretation::Specification )
 		;
 	}
 
 	{
-		typedef TaskNodeWrapper<ImageWriter> ImageWriterWrapper;
+		using ImageWriterWrapper = TaskNodeWrapper<ImageWriter>;
 
 		scope s = TaskNodeClass<ImageWriter, ImageWriterWrapper>()
 			.def( "currentFileFormat", &ImageWriter::currentFileFormat )

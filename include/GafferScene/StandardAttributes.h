@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_STANDARDATTRIBUTES_H
-#define GAFFERSCENE_STANDARDATTRIBUTES_H
+#pragma once
 
 #include "GafferScene/Attributes.h"
 
@@ -47,19 +46,13 @@ class GAFFERSCENE_API StandardAttributes : public Attributes
 
 	public :
 
-		StandardAttributes( const std::string &name=defaultName<StandardAttributes>() );
+		explicit StandardAttributes( const std::string &name=defaultName<StandardAttributes>() );
 		~StandardAttributes() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::StandardAttributes, StandardAttributesTypeId, Attributes );
-
-	private:
-
-		void plugSet( Gaffer::Plug *plug );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::StandardAttributes, StandardAttributesTypeId, Attributes );
 
 };
 
 IE_CORE_DECLAREPTR( StandardAttributes )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_STANDARDATTRIBUTES_H

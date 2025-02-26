@@ -34,13 +34,12 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_BUFFERALGO_H
-#define GAFFERIMAGE_BUFFERALGO_H
+#pragma once
 
 #include "IECore/Export.h"
 
 IECORE_PUSH_DEFAULT_VISIBILITY
-#include "OpenEXR/ImathBox.h"
+#include "Imath/ImathBox.h"
 IECORE_POP_DEFAULT_VISIBILITY
 
 namespace GafferImage
@@ -56,30 +55,28 @@ namespace BufferAlgo
 ////////////////////////////////////////////////////////////////////////////
 
 /// Returns true if the window contains no pixels, and false otherwise.
-inline bool empty( const Imath::Box2i &window );
+bool empty( const Imath::Box2i &window );
 
 /// Returns true if the image windows intersect.
-inline bool intersects( const Imath::Box2i &window1, const Imath::Box2i &window2 );
+bool intersects( const Imath::Box2i &window1, const Imath::Box2i &window2 );
 
 /// Return the intersection of the two image windows.
-inline Imath::Box2i intersection( const Imath::Box2i &window1, const Imath::Box2i &window2 );
+Imath::Box2i intersection( const Imath::Box2i &window1, const Imath::Box2i &window2 );
 
 /// Returns true if the given point is inside the window.
-inline bool contains( const Imath::Box2i &window, const Imath::V2i &point );
+bool contains( const Imath::Box2i &window, const Imath::V2i &point );
 
 /// Returns true if the given area is inside the window.
-inline bool contains( const Imath::Box2i &window, const Imath::Box2i &area );
+bool contains( const Imath::Box2i &window, const Imath::Box2i &area );
 
 /// Clamps the point so that it is contained inside the window.
-inline Imath::V2i clamp( const Imath::V2i &point, const Imath::Box2i &window );
+Imath::V2i clamp( const Imath::V2i &point, const Imath::Box2i &window );
 
 /// Returns the index of point p within a buffer with bounds b.
-inline size_t index( const Imath::V2i &p, const Imath::Box2i &b );
+size_t index( const Imath::V2i &p, const Imath::Box2i &b );
 
 } // namespace BufferAlgo
 
 } // namespace GafferImage
 
 #include "GafferImage/BufferAlgo.inl"
-
-#endif // GAFFERIMAGE_BUFFERALGO_H

@@ -108,16 +108,16 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		n2["op1"].setInput( n1["sum"] )
 		self.assertEqual( len( dirtied ), 2 )
-		self.failUnless( dirtied[0][0].isSame( n2["op1"] ) )
-		self.failUnless( dirtied[1][0].isSame( n2["sum"] ) )
+		self.assertTrue( dirtied[0][0].isSame( n2["op1"] ) )
+		self.assertTrue( dirtied[1][0].isSame( n2["sum"] ) )
 
 		del dirtied[:]
 		n1["op1"].setValue( 10 )
 		self.assertEqual( len( dirtied ), 4 )
-		self.failUnless( dirtied[0][0].isSame( n1["op1"] ) )
-		self.failUnless( dirtied[1][0].isSame( n1["sum"] ) )
-		self.failUnless( dirtied[2][0].isSame( n2["op1"] ) )
-		self.failUnless( dirtied[3][0].isSame( n2["sum"] ) )
+		self.assertTrue( dirtied[0][0].isSame( n1["op1"] ) )
+		self.assertTrue( dirtied[1][0].isSame( n1["sum"] ) )
+		self.assertTrue( dirtied[2][0].isSame( n2["op1"] ) )
+		self.assertTrue( dirtied[3][0].isSame( n2["sum"] ) )
 
 		self.assertEqual( n2.getChild( "sum" ).getValue(), 10 )
 
@@ -224,7 +224,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		# the objects should be one and the same, as the second computation
 		# should have shortcut and returned a cached result.
-		self.failUnless( v1.isSame( v2 ) )
+		self.assertTrue( v1.isSame( v2 ) )
 
 		n["out"].setFlags( Gaffer.Plug.Flags.Cacheable, False )
 		v3 = n["out"].getValue( _copy=False )
@@ -234,7 +234,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		# we disabled caching, so the two values should
 		# be distinct objects, even though they are equal.
-		self.failIf( v3.isSame( v1 ) )
+		self.assertFalse( v3.isSame( v1 ) )
 
 	def testConnectedPlugsShareHashesAndCacheEntries( self ) :
 
@@ -290,7 +290,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 				self.assertEqual( nOut["oOut"].getValue(), IECore.IntData( i ) )
 
 				self.assertEqual( nIn["oIn"].hash(), nOut["oOut"].hash() )
-				self.failUnless( nIn["oIn"].getValue( _copy=False ).isSame( nOut["oOut"].getValue( _copy=False ) ) )
+				self.assertTrue( nIn["oIn"].getValue( _copy=False ).isSame( nOut["oOut"].getValue( _copy=False ) ) )
 
 				# even though iIn and fOut are connected, they should have
 				# different hashes and different values, because type conversion
@@ -348,7 +348,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 		n = self.PassThrough()
 		n["in"].setValue( IECore.IntVectorData( [ 1, 2, 3 ] ) )
 
-		self.failUnless( n["in"].getValue( _copy=False ).isSame( n["out"].getValue( _copy=False ) ) )
+		self.assertTrue( n["in"].getValue( _copy=False ).isSame( n["out"].getValue( _copy=False ) ) )
 
 	def testInternalConnections( self ) :
 
@@ -442,7 +442,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 			self.fRan = True
 
 		n = GafferTest.BadNode()
-		c = n.errorSignal().connect( f )
+		c = n.errorSignal().connect( f, scoped = True )
 
 		with IECore.IgnoredExceptions( Exception ) :
 			n["out1"].getValue()
@@ -495,9 +495,9 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		s["n"] = GafferTest.AddNode()
 		s["e1"] = Gaffer.Expression()
-		s["e1"].setExpression( "import time; time.sleep( 1 ); parent['n']['op1'] = 10" )
+		s["e1"].setExpression( "import time; time.sleep( 0.9 ); parent['n']['op1'] = 10" )
 		s["e2"] = Gaffer.Expression()
-		s["e2"].setExpression( "import time; time.sleep( 1 ); parent['n']['op2'] = 20" )
+		s["e2"].setExpression( "import time; time.sleep( 0.9 ); parent['n']['op2'] = 20" )
 
 		cs = GafferTest.CapturingSlot( s["n"].errorSignal() )
 
@@ -560,9 +560,55 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 		# is not an error.
 		self.assertEqual( len( cs ), 0 )
 
+	def testSlowCancellationWarnings( self ) :
+
+		s = Gaffer.ScriptNode()
+
+		s["n"] = GafferTest.AddNode()
+		s["e"] = Gaffer.Expression()
+		s["e"].setExpression( inspect.cleandoc(
+			"""
+			import time
+			parent['n']['op1'] = 10
+			time.sleep( 1.5 )
+			"""
+		) )
+
+		messageHandler = IECore.CapturingMessageHandler()
+
+		def f( context ) :
+
+			with context, messageHandler :
+				s["n"]["sum"].getValue()
+
+		canceller = IECore.Canceller()
+		thread = threading.Thread(
+			target = f,
+			args = [  Gaffer.Context( s.context(), canceller ) ]
+		)
+		thread.start()
+
+		# Give the background thread time to get into the infinite
+		# loop in the Expression, and then cancel it.
+		time.sleep( 0.1 )
+		canceller.cancel()
+		thread.join()
+
+		# Check that we have been warned about the slow cancellation.
+		# Currently we're not smart enough to omit a message only for
+		# the problematic compute - there is a message for each parent
+		# process too.
+		self.assertEqual( len( messageHandler.messages ), 3 )
+		self.assertEqual( messageHandler.messages[0].level, IECore.Msg.Level.Warning )
+		self.assertEqual( messageHandler.messages[0].context, "Process::~Process" )
+		self.assertTrue( messageHandler.messages[0].message.startswith( "Cancellation for `ScriptNode.e.__execute` (computeNode:compute) took" ) )
+
 	class ThrowingNode( Gaffer.ComputeNode ) :
 
 		def __init__( self, name="ThrowingNode" ) :
+
+			self.hashFail = False
+			self.cachePolicy = Gaffer.ValuePlug.CachePolicy.Standard
 
 			Gaffer.ComputeNode.__init__( self, name )
 
@@ -580,7 +626,10 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 		def hash( self, plug, context, h ) :
 
 			if plug == self["out"] :
-				self["in"].hash( h )
+				if self.hashFail :
+					raise RuntimeError( "HashEeek!" )
+				else:
+					self["in"].hash( h )
 
 		def compute( self, plug, context ) :
 
@@ -591,11 +640,11 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		def hashCachePolicy( self, plug ) :
 
-			return Gaffer.ValuePlug.CachePolicy.Standard
+			return self.cachePolicy
 
 		def computeCachePolicy( self, plug ) :
 
-			return Gaffer.ValuePlug.CachePolicy.Standard
+			return self.cachePolicy
 
 	IECore.registerRunTimeTyped( ThrowingNode )
 
@@ -612,7 +661,7 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 
 		with Gaffer.Context() as context :
 			context["test"] = 1
-			with self.assertRaisesRegexp( Gaffer.ProcessException, r'thrower.out : [\s\S]*Eeek!' ) as raised :
+			with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower.out : [\s\S]*Eeek!' ) as raised :
 				add["sum"].getValue()
 
 		# And we want to be able to retrieve details of the problem
@@ -622,34 +671,104 @@ class ComputeNodeTest( GafferTest.TestCase ) :
 		self.assertEqual( raised.exception.context(), context )
 		self.assertEqual( raised.exception.processType(), "computeNode:compute" )
 
+		# Make sure hash failures are reported correctly as well
+
+		thrower.hashFail = True
+		with Gaffer.Context() as context :
+			context["test"] = 2
+			with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower.out : [\s\S]*HashEeek!' ) as raised :
+				add["sum"].getValue()
+
+		self.assertEqual( raised.exception.plug(), thrower["out"] )
+		self.assertEqual( raised.exception.context(), context )
+		self.assertEqual( raised.exception.processType(), "computeNode:hash" )
+
 	def testProcessExceptionNotShared( self ) :
 
-		thrower1 = self.ThrowingNode( "thrower1" )
-		thrower2 = self.ThrowingNode( "thrower2" )
+		for policy in Gaffer.ValuePlug.CachePolicy.names.values() :
+			with self.subTest( policy = policy ) :
 
-		with self.assertRaisesRegexp( Gaffer.ProcessException, r'thrower1.out : [\s\S]*Eeek!' ) as raised :
-			thrower1["out"].getValue()
+				Gaffer.ValuePlug.clearCache()
 
-		self.assertEqual( raised.exception.plug(), thrower1["out"] )
+				thrower1 = self.ThrowingNode( "thrower1" )
+				thrower1.cachePolicy = policy
+				thrower2 = self.ThrowingNode( "thrower2" )
+				thrower2.cachePolicy = policy
 
-		with self.assertRaisesRegexp( Gaffer.ProcessException, r'thrower2.out : [\s\S]*Eeek!' ) as raised :
-			thrower2["out"].getValue()
+				with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower1.out : [\s\S]*Eeek!' ) as raised :
+					thrower1["out"].getValue()
 
-		self.assertEqual( raised.exception.plug(), thrower2["out"] )
+				self.assertEqual( raised.exception.plug(), thrower1["out"] )
+
+				with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower2.out : [\s\S]*Eeek!' ) as raised :
+					thrower2["out"].getValue()
+
+				self.assertEqual( raised.exception.plug(), thrower2["out"] )
 
 	def testProcessExceptionRespectsNameChanges( self ) :
 
 		thrower = self.ThrowingNode( "thrower1" )
-		with self.assertRaisesRegexp( Gaffer.ProcessException, r'thrower1.out : [\s\S]*Eeek!' ) as raised :
+		with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower1.out : [\s\S]*Eeek!' ) as raised :
 			thrower["out"].getValue()
 
 		self.assertEqual( raised.exception.plug(), thrower["out"] )
 
 		thrower.setName( "thrower2" )
-		with self.assertRaisesRegexp( Gaffer.ProcessException, r'thrower2.out : [\s\S]*Eeek!' ) as raised :
+		with self.assertRaisesRegex( Gaffer.ProcessException, r'thrower2.out : [\s\S]*Eeek!' ) as raised :
 			thrower["out"].getValue()
 
 		self.assertEqual( raised.exception.plug(), thrower["out"] )
+
+	def testUsePlugNameInCompute( self ) :
+
+		class NameSensitiveComputeNode( Gaffer.ComputeNode ) :
+
+			def __init__( self, name="PassThrough" ) :
+
+				Gaffer.ComputeNode.__init__( self, name )
+
+				self.plug = Gaffer.StringPlug( "out", Gaffer.Plug.Direction.Out )
+				self.addChild( self.plug )
+
+			# No need to override `hash()`, because the base class includes
+			# the plug name in the hash anyway.
+
+			def compute( self, plug, context ) :
+
+				plug.setValue( plug.getName() )
+
+		IECore.registerRunTimeTyped( NameSensitiveComputeNode )
+
+		n = NameSensitiveComputeNode()
+		h1 = n.plug.hash()
+		self.assertEqual( n.plug.getValue(), "out" )
+
+		n.plug.setName( "out2" )
+		h2 = n.plug.hash()
+		self.assertNotEqual( h2, h1 )
+		self.assertEqual( n.plug.getValue(), "out2" )
+
+	def testInterleavedEditsAndComputes( self ) :
+
+		n = GafferTest.AddNode()
+
+		with Gaffer.DirtyPropagationScope() :
+			for i in range( 0, 100 ) :
+				n["op1"].setValue( i )
+				self.assertEqual( n["sum"].getValue(), i )
+
+	def testCacheSharedBetweenNodes( self ) :
+
+		n1 = GafferTest.AddNode()
+		n2 = GafferTest.AddNode()
+
+		with Gaffer.PerformanceMonitor() as pm :
+
+			self.assertEqual( n1["sum"].getValue(), 0 )
+			self.assertEqual( n2["sum"].getValue(), 0 )
+
+		self.assertEqual( pm.plugStatistics( n1["sum"] ).computeCount, 1 )
+		self.assertEqual( pm.plugStatistics( n2["sum"] ).computeCount, 0 )
 
 if __name__ == "__main__":
 	unittest.main()

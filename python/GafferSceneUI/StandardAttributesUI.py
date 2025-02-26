@@ -45,6 +45,16 @@ def __attributesSummary( plug ) :
 		info.append( "Visible" if plug["visibility"]["value"].getValue() else "Invisible" )
 	if plug["doubleSided"]["enabled"].getValue() :
 		info.append( "Double Sided" if plug["doubleSided"]["value"].getValue() else "Single Sided" )
+	if plug["displayColor"]["enabled"].getValue() :
+		info.append( "Display Color" )
+
+	return ", ".join( info )
+
+def __instancingSummary( plug ) :
+
+	info = []
+	if plug["automaticInstancing"]["enabled"].getValue() :
+		info.append( "Automatic Instancing " + ( "On" if plug["automaticInstancing"]["value"].getValue() else "Off" ) )
 
 	return ", ".join( info )
 
@@ -81,6 +91,7 @@ Gaffer.Metadata.registerNode(
 		"attributes" : [
 
 			"layout:section:Attributes:summary", __attributesSummary,
+			"layout:section:Instancing:summary", __instancingSummary,
 			"layout:section:Motion Blur:summary", __motionBlurSummary,
 
 		],
@@ -111,6 +122,22 @@ Gaffer.Metadata.registerNode(
 			Whether or not the object can be seen from both sides.
 			Single sided objects appear invisible when seen from
 			the back.
+			""",
+
+			"layout:section", "Attributes",
+
+		],
+
+		"attributes.displayColor" : [
+
+			"description",
+			"""
+			The default colour used to display the object in the absence
+			of a specific shader assignment. Commonly used to control
+			basic object appearance in the Viewer.
+
+			> Tip : For more detailed control of object appearance in the
+			> Viewer, use the OpenGLAttributes node.
 			""",
 
 			"layout:section", "Attributes",
@@ -166,8 +193,8 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The number of segments of transform animation to
-			pass to the renderer when transformBlur is on.
+			The number of segments of deformation animation to
+			pass to the renderer when deformationBlur is on.
 			""",
 
 			"layout:section", "Motion Blur",
@@ -179,10 +206,25 @@ Gaffer.Metadata.registerNode(
 
 			"description",
 			"""
-			The lights to be linked to this object. Accepts a
-			set expression or a space separated list of lights.
-			Use \"defaultLights\" to refer to all lights that
-			contribute to illumination by default.
+			The lights to be linked to this object. Accepts a set expression or
+			a space separated list of lights. Use \"defaultLights\" to refer to
+			all lights that contribute to illumination by default.
+
+			Examples
+			--------
+
+			All the default lights plus the lights in the `characterLights` set
+			:
+
+			`defaultLights | characterLights`
+
+			All the default lights, but without the lights in the `interiorLights`
+			set :
+
+			`defaultLights - interiorLights`
+
+			> Info : Lights can be added to sets either by using the `sets` plug
+			> on the light node itself, or by using a separate Set node.
 			""",
 
 			"layout:section", "Light Linking",
@@ -193,6 +235,7 @@ Gaffer.Metadata.registerNode(
 		"attributes.linkedLights.value" : [
 
 			"ui:scene:acceptsSetExpression", True,
+			"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
 
 		],
 
@@ -214,6 +257,25 @@ Gaffer.Metadata.registerNode(
 		"attributes.filteredLights.value" : [
 
 			"ui:scene:acceptsSetExpression", True,
+			"plugValueWidget:type", "GafferSceneUI.SetExpressionPlugValueWidget",
+
+		],
+
+		# Instancing
+
+		"attributes.automaticInstancing" : [
+
+			"description",
+			"""
+			By default, if Gaffer sees two objects are identical, it will pass them
+			to the renderer only once, saving a lot of memory. You can set this to
+			false to disable that, losing the memory savings. This can be useful
+			in certain cases like using world space displacement and wanting multiple
+			copies to displace differently. Disabling is currently only supported by
+			the Arnold render backend.
+			""",
+
+			"layout:section", "Instancing",
 
 		],
 

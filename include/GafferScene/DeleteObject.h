@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_DELETEOBJECT_H
-#define GAFFERSCENE_DELETEOBJECT_H
+#pragma once
 
-#include "GafferScene/SceneElementProcessor.h"
+#include "GafferScene/FilteredSceneProcessor.h"
 
 namespace GafferScene
 {
@@ -47,10 +46,10 @@ class GAFFERSCENE_API DeleteObject : public FilteredSceneProcessor
 
 	public :
 
-		DeleteObject( const std::string &name=defaultName<DeleteObject>() );
+		explicit DeleteObject( const std::string &name=defaultName<DeleteObject>() );
 		~DeleteObject() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeleteObject, DeleteObjectTypeId, FilteredSceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeleteObject, DeleteObjectTypeId, FilteredSceneProcessor );
 
 		Gaffer::BoolPlug *adjustBoundsPlug();
 		const Gaffer::BoolPlug *adjustBoundsPlug() const;
@@ -74,5 +73,3 @@ class GAFFERSCENE_API DeleteObject : public FilteredSceneProcessor
 IE_CORE_DECLAREPTR( DeleteObject )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETEOBJECT_H

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_PLUGGADGET_H
-#define GAFFERUI_PLUGGADGET_H
+#pragma once
 
 #include "GafferUI/ContainerGadget.h"
 
@@ -59,7 +58,7 @@ class GAFFERUI_API PlugGadget : public ContainerGadget
 
 	public :
 
-		PlugGadget( Gaffer::PlugPtr plug );
+		explicit PlugGadget( Gaffer::PlugPtr plug );
 		~PlugGadget() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::PlugGadget, PlugGadgetTypeId, Gadget );
@@ -84,9 +83,9 @@ class GAFFERUI_API PlugGadget : public ContainerGadget
 		void contextChanged( const Gaffer::Context *context, const IECore::InternedString &name );
 		void updateContextConnection();
 
-		boost::signals::scoped_connection m_plugDirtiedConnection;
-		boost::signals::scoped_connection m_plugInputChangedConnection;
-		boost::signals::scoped_connection m_contextChangedConnection;
+		Gaffer::Signals::ScopedConnection m_plugDirtiedConnection;
+		Gaffer::Signals::ScopedConnection m_plugInputChangedConnection;
+		Gaffer::Signals::ScopedConnection m_contextChangedConnection;
 		Gaffer::PlugPtr m_plug;
 		Gaffer::ContextPtr m_context;
 
@@ -94,11 +93,6 @@ class GAFFERUI_API PlugGadget : public ContainerGadget
 
 IE_CORE_DECLAREPTR( PlugGadget )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<PlugGadget> > PlugGadgetIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<PlugGadget> > RecursivePlugGadgetIterator;
-
 } // namespace GafferUI
 
 #include "GafferUI/PlugGadget.inl"
-
-#endif // GAFFERUI_PLUGGADGET_H

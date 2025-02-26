@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEFILTERPATHFILTER_H
-#define GAFFERSCENE_SCENEFILTERPATHFILTER_H
+#pragma once
 
 #include "GafferScene/Export.h"
 #include "GafferScene/TypeIds.h"
@@ -54,14 +53,14 @@ class GAFFERSCENE_API SceneFilterPathFilter : public Gaffer::PathFilter
 
 	public :
 
-		SceneFilterPathFilter( FilterPtr sceneFilter, IECore::CompoundDataPtr userData = nullptr );
+		explicit SceneFilterPathFilter( FilterPtr sceneFilter, IECore::CompoundDataPtr userData = nullptr );
 		~SceneFilterPathFilter() override;
 
 		IE_CORE_DECLARERUNTIMETYPEDEXTENSION( GafferScene::SceneFilterPathFilter, SceneFilterPathFilterTypeId, Gaffer::PathFilter );
 
 	protected :
 
-		void doFilter( std::vector<Gaffer::PathPtr> &paths ) const override;
+		void doFilter( std::vector<Gaffer::PathPtr> &paths, const IECore::Canceller *canceller ) const override;
 
 	private :
 
@@ -70,12 +69,10 @@ class GAFFERSCENE_API SceneFilterPathFilter : public Gaffer::PathFilter
 		struct Remove;
 
 		FilterPtr m_sceneFilter;
-		boost::signals::scoped_connection m_plugDirtiedConnection;
+		Gaffer::Signals::ScopedConnection m_plugDirtiedConnection;
 
 };
 
 IE_CORE_DECLAREPTR( SceneFilterPathFilter )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEFILTERPATHFILTER_H

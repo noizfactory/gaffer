@@ -41,7 +41,7 @@
 
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( TimeWarp );
+GAFFER_NODE_DEFINE_TYPE( TimeWarp );
 
 size_t TimeWarp::g_firstPlugIndex;
 
@@ -82,7 +82,7 @@ bool TimeWarp::affectsContext( const Plug *input ) const
 	return input == speedPlug() || input == offsetPlug();
 }
 
-void TimeWarp::processContext( Context::EditableScope &scope ) const
+void TimeWarp::processContext( Context::EditableScope &scope, IECore::ConstRefCountedPtr &storage ) const
 {
 	scope.setFrame(
 		scope.context()->getFrame() * speedPlug()->getValue() + offsetPlug()->getValue()

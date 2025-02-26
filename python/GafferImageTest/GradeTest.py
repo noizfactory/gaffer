@@ -47,7 +47,7 @@ import GafferImageTest
 
 class GradeTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	# Test that when gamma == 0 that the coresponding channel isn't modified.
 	def testChannelEnable( self ) :
@@ -175,7 +175,7 @@ class GradeTest( GafferImageTest.ImageTestCase ) :
 		c["color"].setValue( imath.Color4f( 0.125, 0.25, 0.5, 0.75 ) )
 
 		s = GafferImage.Shuffle()
-		s["channels"].addChild( GafferImage.Shuffle.ChannelPlug( 'customChannel', '__white' ) )
+		s["shuffles"].addChild( Gaffer.ShufflePlug( "__white", "customChannel" ) )
 		s["in"].setInput( c["out"] )
 
 		g = GafferImage.Grade()
@@ -248,3 +248,61 @@ class GradeTest( GafferImageTest.ImageTestCase ) :
 
 		sampler["channels"].setValue( IECore.StringVectorData( [ "B.R", "B.G", "B.B", "B.A" ] ) )
 		self.assertEqual( sampler["color"].getValue(), imath.Color4f( 1 ) )
+
+	def testUnpremultiplied( self ) :
+
+		i = GafferImage.ImageReader()
+		i["fileName"].setValue( self.checkerFile )
+
+		shuffleAlpha = GafferImage.Shuffle()
+		shuffleAlpha["shuffles"].addChild( Gaffer.ShufflePlug( "R", "A" ) )
+		shuffleAlpha["in"].setInput( i["out"] )
+
+		gradeAlpha = GafferImage.Grade()
+		gradeAlpha["in"].setInput( shuffleAlpha["out"] )
+		gradeAlpha["channels"].setValue( '[RGBA]' )
+		gradeAlpha["offset"].setValue( imath.Color4f( 0, 0, 0, 0.1 ) )
+
+		unpremultipliedGrade = GafferImage.Grade()
+		unpremultipliedGrade["in"].setInput( gradeAlpha["out"] )
+		unpremultipliedGrade["processUnpremultiplied"].setValue( True )
+		unpremultipliedGrade["gamma"].setValue( imath.Color4f( 2, 2, 2, 1.0 ) )
+
+		unpremultiply = GafferImage.Unpremultiply()
+		unpremultiply["in"].setInput( gradeAlpha["out"] )
+
+		bareGrade = GafferImage.Grade()
+		bareGrade["in"].setInput( unpremultiply["out"] )
+		bareGrade["gamma"].setValue( imath.Color4f( 2, 2, 2, 1.0 ) )
+
+		premultiply = GafferImage.Premultiply()
+		premultiply["in"].setInput( bareGrade["out"] )
+
+		# Assert that with a non-zero alpha, processUnpremultiplied is identical to:
+		# unpremult, grade, and premult
+		self.assertImagesEqual( unpremultipliedGrade["out"], premultiply["out"] )
+
+
+		# Assert that grading alpha to 0 inside the grade still premults at the end correctly
+		unpremultipliedGrade["channels"].setValue( '[RGBA]' )
+		unpremultipliedGrade["multiply"].setValue( imath.Color4f( 1, 1, 1, 0 ) )
+
+		zeroGrade = GafferImage.Grade()
+		zeroGrade["channels"].setValue( '[RGBA]' )
+		zeroGrade["in"].setInput( gradeAlpha["out"] )
+		zeroGrade["multiply"].setValue( imath.Color4f( 0, 0, 0, 0 ) )
+
+		self.assertImagesEqual( unpremultipliedGrade["out"], zeroGrade["out"] )
+
+		unpremultipliedGrade["multiply"].setValue( imath.Color4f( 1, 1, 1, 1 ) )
+
+		# Assert that when input alpha is zero, processUnpremultiplied doesn't affect the result
+
+		gradeAlpha["multiply"].setValue( imath.Color4f( 1, 1, 1, 0.0 ) )
+		gradeAlpha["offset"].setValue( imath.Color4f( 0, 0, 0, 0.0 ) )
+
+		defaultGrade = GafferImage.Grade()
+		defaultGrade["in"].setInput( gradeAlpha["out"] )
+		defaultGrade["gamma"].setValue( imath.Color4f( 2, 2, 2, 1.0 ) )
+
+		self.assertImagesEqual( unpremultipliedGrade["out"], defaultGrade["out"] )

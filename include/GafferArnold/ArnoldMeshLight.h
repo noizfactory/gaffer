@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERARNOLD_ARNOLDMESHLIGHT_H
-#define GAFFERARNOLD_ARNOLDMESHLIGHT_H
+#pragma once
 
 #include "GafferArnold/Export.h"
 #include "GafferArnold/TypeIds.h"
@@ -50,10 +49,10 @@ class GAFFERARNOLD_API ArnoldMeshLight : public GafferScene::FilteredSceneProces
 
 	public :
 
-		ArnoldMeshLight( const std::string &name=defaultName<ArnoldMeshLight>() );
+		explicit ArnoldMeshLight( const std::string &name=defaultName<ArnoldMeshLight>() );
 		~ArnoldMeshLight() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferArnold::ArnoldMeshLight, ArnoldMeshLightTypeId, FilteredSceneProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferArnold::ArnoldMeshLight, ArnoldMeshLightTypeId, FilteredSceneProcessor );
 
 	private :
 
@@ -64,5 +63,3 @@ class GAFFERARNOLD_API ArnoldMeshLight : public GafferScene::FilteredSceneProces
 IE_CORE_DECLAREPTR( ArnoldMeshLight )
 
 } // namespace GafferArnold
-
-#endif // GAFFERARNOLD_ARNOLDMESHLIGHT_H

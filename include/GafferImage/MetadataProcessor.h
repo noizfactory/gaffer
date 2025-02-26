@@ -34,12 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_METADATAPROCESSOR_H
-#define GAFFERIMAGE_METADATAPROCESSOR_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
-
-#include "Gaffer/CompoundDataPlug.h"
 
 namespace GafferImage
 {
@@ -51,10 +48,10 @@ class GAFFERIMAGE_API MetadataProcessor : public ImageProcessor
 
 	public :
 
-		MetadataProcessor( const std::string &name=defaultName<MetadataProcessor>() );
+		explicit MetadataProcessor( const std::string &name=defaultName<MetadataProcessor>() );
 		~MetadataProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::MetadataProcessor, MetadataProcessorTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::MetadataProcessor, MetadataProcessorTypeId, ImageProcessor );
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -75,5 +72,3 @@ class GAFFERIMAGE_API MetadataProcessor : public ImageProcessor
 IE_CORE_DECLAREPTR( MetadataProcessor );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_METADATAPROCESSOR_H

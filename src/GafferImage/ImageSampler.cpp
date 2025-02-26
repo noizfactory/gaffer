@@ -39,13 +39,15 @@
 #include "GafferImage/ImagePlug.h"
 #include "GafferImage/Sampler.h"
 
+#include <limits>
+
 using namespace std;
 using namespace Imath;
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferImage;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ImageSampler );
+GAFFER_NODE_DEFINE_TYPE( ImageSampler );
 
 size_t ImageSampler::g_firstPlugIndex = 0;
 
@@ -56,6 +58,7 @@ ImageSampler::ImageSampler( const std::string &name )
 	storeIndexOfNextChild( g_firstPlugIndex );
 
 	addChild( new ImagePlug( "image" ) );
+	addChild( new StringPlug( "view", Plug::In, "default" ) );
 
 	IECore::StringVectorDataPtr defaultChannelsData = new IECore::StringVectorData;
 	vector<string> &defaultChannels = defaultChannelsData->writable();
@@ -66,8 +69,22 @@ ImageSampler::ImageSampler( const std::string &name )
 	addChild( new StringVectorDataPlug( "channels", Plug::In, defaultChannelsData ) );
 
 	addChild( new V2fPlug( "pixel" ) );
-	addChild( new Color4fPlug( "color", Plug::Out ) );
+	addChild( new BoolPlug( "interpolate", Plug::In, true ) );
 
+	addChild( new Color4fPlug("color", Plug::Out, Imath::Color4f( 0.0f ),
+		// Override the standard limits on FloatPlug - if there is an inf value in the image,
+		// ImageSampler should be able to report that
+		Imath::Color4f( -std::numeric_limits<float>::infinity() ), Imath::Color4f( std::numeric_limits<float>::infinity() )
+	) );
+
+	addChild( new ImagePlug( "__flattenedIn", Plug::In, Plug::Default & ~Plug::Serialisable ) );
+
+	DeepStatePtr deepStateNode = new DeepState( "__deepState" );
+	addChild( deepStateNode );
+
+	deepStateNode->inPlug()->setInput( imagePlug() );
+	deepStateNode->deepStatePlug()->setValue( int( DeepState::TargetState::Flat ) );
+	flattenedInPlug()->setInput( deepStateNode->outPlug() );
 }
 
 ImageSampler::~ImageSampler()
@@ -84,34 +101,74 @@ const ImagePlug *ImageSampler::imagePlug() const
 	return getChild<ImagePlug>( g_firstPlugIndex );
 }
 
+Gaffer::StringPlug *ImageSampler::viewPlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
+const Gaffer::StringPlug *ImageSampler::viewPlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 1 );
+}
+
 Gaffer::StringVectorDataPlug *ImageSampler::channelsPlug()
 {
-	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 1 );
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 2 );
 }
 
 const Gaffer::StringVectorDataPlug *ImageSampler::channelsPlug() const
 {
-	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 1 );
+	return getChild<StringVectorDataPlug>( g_firstPlugIndex + 2 );
 }
 
 Gaffer::V2fPlug *ImageSampler::pixelPlug()
 {
-	return getChild<V2fPlug>( g_firstPlugIndex + 2 );
+	return getChild<V2fPlug>( g_firstPlugIndex + 3 );
 }
 
 const Gaffer::V2fPlug *ImageSampler::pixelPlug() const
 {
-	return getChild<V2fPlug>( g_firstPlugIndex + 2 );
+	return getChild<V2fPlug>( g_firstPlugIndex + 3 );
+}
+
+Gaffer::BoolPlug *ImageSampler::interpolatePlug()
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 4 );
+}
+
+const Gaffer::BoolPlug *ImageSampler::interpolatePlug() const
+{
+	return getChild<BoolPlug>( g_firstPlugIndex + 4 );
 }
 
 Gaffer::Color4fPlug *ImageSampler::colorPlug()
 {
-	return getChild<Color4fPlug>( g_firstPlugIndex + 3 );
+	return getChild<Color4fPlug>( g_firstPlugIndex + 5 );
 }
 
 const Gaffer::Color4fPlug *ImageSampler::colorPlug() const
 {
-	return getChild<Color4fPlug>( g_firstPlugIndex + 3 );
+	return getChild<Color4fPlug>( g_firstPlugIndex + 5 );
+}
+
+ImagePlug *ImageSampler::flattenedInPlug()
+{
+	return getChild<ImagePlug>( g_firstPlugIndex + 6 );
+}
+
+const ImagePlug *ImageSampler::flattenedInPlug() const
+{
+	return getChild<ImagePlug>( g_firstPlugIndex + 6 );
+}
+
+DeepState *ImageSampler::deepState()
+{
+	return getChild<DeepState>( g_firstPlugIndex + 7 );
+}
+
+const DeepState *ImageSampler::deepState() const
+{
+	return getChild<DeepState>( g_firstPlugIndex + 7 );
 }
 
 void ImageSampler::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
@@ -119,14 +176,17 @@ void ImageSampler::affects( const Gaffer::Plug *input, AffectedPlugsContainer &o
 	ComputeNode::affects( input, outputs );
 
 	if(
-		input == imagePlug()->dataWindowPlug() ||
-		input == imagePlug()->channelDataPlug() ||
-		input == imagePlug()->channelNamesPlug() ||
+		input == flattenedInPlug()->viewNamesPlug() ||
+		input == flattenedInPlug()->dataWindowPlug() ||
+		input == flattenedInPlug()->channelDataPlug() ||
+		input == flattenedInPlug()->channelNamesPlug() ||
+		input == viewPlug() ||
 		input == channelsPlug() ||
-		input->parent<Plug>() == pixelPlug()
+		input->parent<Plug>() == pixelPlug() ||
+		input == interpolatePlug()
 	)
 	{
-		for( ValuePlugIterator componentIt( colorPlug() ); !componentIt.done(); ++componentIt )
+		for( ValuePlug::Iterator componentIt( colorPlug() ); !componentIt.done(); ++componentIt )
 		{
 			outputs.push_back( componentIt->get() );
 		}
@@ -139,17 +199,26 @@ void ImageSampler::hash( const Gaffer::ValuePlug *output, const Gaffer::Context 
 
 	if( output->parent<Plug>() == colorPlug() )
 	{
+		ImagePlug::ViewScope viewScope( context );
+
+		std::string view = viewPlug()->getValue();
+		if( !view.size() )
+		{
+			view = context->get<std::string>( ImagePlug::viewNameContextName, ImagePlug::defaultViewName );
+		}
+		viewScope.setViewNameChecked( &view, flattenedInPlug()->viewNames().get() );
+
 		std::string channel = channelName( output );
 		if( channel.size() )
 		{
 			V2f pixel = pixelPlug()->getValue();
-			Box2i sampleWindow;
-			sampleWindow.extendBy( V2i( pixel ) - V2i( 1 ) );
-			sampleWindow.extendBy( V2i( pixel ) + V2i( 1 ) );
-			Sampler sampler( imagePlug(), channel, sampleWindow );
+			V2i intPixel( floorf( pixel.x ), floorf( pixel.y ) );
+			Box2i sampleWindow( intPixel, intPixel + V2i( 1 ) );
+			Sampler sampler( flattenedInPlug(), channel, sampleWindow );
 
 			sampler.hash( h );
 			h.append( pixel );
+			interpolatePlug()->hash( h );
 		}
 	}
 }
@@ -158,17 +227,33 @@ void ImageSampler::compute( Gaffer::ValuePlug *output, const Gaffer::Context *co
 {
 	if( output->parent<Plug>() == colorPlug() )
 	{
+		ImagePlug::ViewScope viewScope( context );
+
+		std::string view = viewPlug()->getValue();
+		if( !view.size() )
+		{
+			view = context->get<std::string>( ImagePlug::viewNameContextName, ImagePlug::defaultViewName );
+		}
+		viewScope.setViewNameChecked( &view, flattenedInPlug()->viewNames().get() );
+
 		float sample = 0;
 
 		std::string channel = channelName( output );
 		if( channel.size() )
 		{
 			V2f pixel = pixelPlug()->getValue();
-			Box2i sampleWindow;
-			sampleWindow.extendBy( V2i( pixel ) - V2i( 1 ) );
-			sampleWindow.extendBy( V2i( pixel ) + V2i( 1 ) );
-			Sampler sampler( imagePlug(), channel, sampleWindow );
-			sample = sampler.sample( pixel.x, pixel.y );
+			V2i intPixel( floorf( pixel.x ), floorf( pixel.y ) );
+			Box2i sampleWindow( intPixel, intPixel + V2i( 1 ) );
+			Sampler sampler( flattenedInPlug(), channel, sampleWindow );
+
+			if( interpolatePlug()->getValue() )
+			{
+				sample = sampler.sample( pixel.x, pixel.y );
+			}
+			else
+			{
+				sample = sampler.sample( intPixel.x, intPixel.y );
+			}
 		}
 
 		static_cast<FloatPlug *>( output )->setValue( sample );
@@ -198,7 +283,7 @@ std::string ImageSampler::channelName( const Gaffer::ValuePlug *output ) const
 		return "";
 	}
 
-	ConstStringVectorDataPtr channelNamesData = imagePlug()->channelNamesPlug()->getValue();
+	ConstStringVectorDataPtr channelNamesData = flattenedInPlug()->channelNamesPlug()->getValue();
 	const vector<string> &channelNames = channelNamesData->readable();
 	if( find( channelNames.begin(), channelNames.end(), channels[index] ) != channelNames.end() )
 	{

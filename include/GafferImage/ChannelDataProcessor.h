@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_CHANNELDATAPROCESSOR_H
-#define GAFFERIMAGE_CHANNELDATAPROCESSOR_H
+#pragma once
 
 #include "GafferImage/ImageProcessor.h"
 
@@ -52,15 +51,18 @@ class GAFFERIMAGE_API ChannelDataProcessor : public ImageProcessor
 
 	public :
 
-		ChannelDataProcessor( const std::string &name=defaultName<ChannelDataProcessor>() );
+		explicit ChannelDataProcessor( const std::string &name=defaultName<ChannelDataProcessor>(), bool premultiplyPlug = false );
 		~ChannelDataProcessor() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::ChannelDataProcessor, ChannelDataProcessorTypeId, ImageProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::ChannelDataProcessor, ChannelDataProcessorTypeId, ImageProcessor );
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
 		Gaffer::StringPlug *channelsPlug();
 		const Gaffer::StringPlug *channelsPlug() const;
+
+		Gaffer::BoolPlug *processUnpremultipliedPlug();
+		const Gaffer::BoolPlug *processUnpremultipliedPlug() const;
 
 	protected :
 
@@ -79,7 +81,10 @@ class GAFFERIMAGE_API ChannelDataProcessor : public ImageProcessor
 		/// @param outData The tile where the result of the operation should be written. It is initialized with the coresponding tile data from inPlug() which should be used as the input data.
 		virtual void processChannelData( const Gaffer::Context *context, const ImagePlug *parent, const std::string &channel, IECore::FloatVectorDataPtr outData ) const = 0;
 
+		void hashChannelData( const GafferImage::ImagePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
+
 	private :
+		bool m_hasUnpremultPlug;
 
 		static size_t g_firstPlugIndex;
 
@@ -88,5 +93,3 @@ class GAFFERIMAGE_API ChannelDataProcessor : public ImageProcessor
 IE_CORE_DECLAREPTR( ChannelDataProcessor )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_CHANNELDATAPROCESSOR_H

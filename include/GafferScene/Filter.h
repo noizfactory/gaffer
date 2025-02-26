@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_FILTER_H
-#define GAFFERSCENE_FILTER_H
+#pragma once
 
 #include "GafferScene/FilterPlug.h"
 #include "GafferScene/TypeIds.h"
@@ -58,9 +57,9 @@ class GAFFERSCENE_API Filter : public Gaffer::ComputeNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Filter, FilterTypeId, Gaffer::ComputeNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Filter, FilterTypeId, Gaffer::ComputeNode );
 
-		Filter( const std::string &name=defaultName<Filter>() );
+		explicit Filter( const std::string &name=defaultName<Filter>() );
 		~Filter() override;
 
 		Gaffer::BoolPlug *enabledPlug() override;
@@ -69,9 +68,12 @@ class GAFFERSCENE_API Filter : public Gaffer::ComputeNode
 		FilterPlug *outPlug();
 		const FilterPlug *outPlug() const;
 
+		/// > Note : `affects()` receives special treatment for Filter nodes. In addition to the
+		/// > regular calls where `input` is a plug belonging to the filter, calls are also made
+		/// > where `input` is a child of a ScenePlug that will later be provided to `computeMatch()`.
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
-		/// \deprecated Use FilterPlug::SceneScope instead.
+		/// \deprecated Use FilterPlug::SceneScope or FilterPlug::match instead.
 		static void setInputScene( Gaffer::Context *context, const ScenePlug *scenePlug );
 		/// \deprecated
 		static const ScenePlug *getInputScene( const Gaffer::Context *context );
@@ -86,8 +88,6 @@ class GAFFERSCENE_API Filter : public Gaffer::ComputeNode
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 		/// Implemented to disable compute caching for the filter result.
 		Gaffer::ValuePlug::CachePolicy computeCachePolicy( const Gaffer::ValuePlug *output ) const override;
-
-		virtual bool sceneAffectsMatch( const ScenePlug *scene, const Gaffer::ValuePlug *child ) const;
 
 		/// Hash method for outPlug(). A derived class must either :
 		///
@@ -113,6 +113,8 @@ class GAFFERSCENE_API Filter : public Gaffer::ComputeNode
 
 	private :
 
+		bool enabled( const Gaffer::Context *context ) const;
+
 		friend class FilterPlug;
 
 		static size_t g_firstPlugIndex;
@@ -122,5 +124,3 @@ class GAFFERSCENE_API Filter : public Gaffer::ComputeNode
 IE_CORE_DECLAREPTR( Filter )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_FILTER_H

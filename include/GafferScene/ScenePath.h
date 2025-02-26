@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_SCENEPATH_H
-#define GAFFERSCENE_SCENEPATH_H
+#pragma once
 
 #include "GafferScene/Export.h"
 #include "GafferScene/TypeIds.h"
@@ -62,7 +61,7 @@ class GAFFERSCENE_API ScenePath : public Gaffer::Path
 
 	public :
 
-		ScenePath( ScenePlugPtr scene, Gaffer::ContextPtr context, Gaffer::PathFilterPtr filter = nullptr );
+		explicit ScenePath( ScenePlugPtr scene, Gaffer::ContextPtr context, Gaffer::PathFilterPtr filter = nullptr );
 		ScenePath( ScenePlugPtr scene, Gaffer::ContextPtr context, const std::string &path, Gaffer::PathFilterPtr filter = nullptr );
 		ScenePath( ScenePlugPtr scene, Gaffer::ContextPtr context, const Names &names, const IECore::InternedString &root = "/", Gaffer::PathFilterPtr filter = nullptr );
 
@@ -78,15 +77,19 @@ class GAFFERSCENE_API ScenePath : public Gaffer::Path
 		Gaffer::Context *getContext();
 		const Gaffer::Context *getContext() const;
 
-		bool isValid() const override;
-		bool isLeaf() const override;
+		bool isValid( const IECore::Canceller *canceller = nullptr ) const override;
+		bool isLeaf( const IECore::Canceller *canceller = nullptr ) const override;
 		Gaffer::PathPtr copy() const override;
+
+		const Gaffer::Plug *cancellationSubject() const override;
+
+		Gaffer::ContextPtr inspectionContext( const IECore::Canceller *canceller = nullptr ) const override;
 
 		static Gaffer::PathFilterPtr createStandardFilter( const std::vector<std::string> &setNames = std::vector<std::string>(), const std::string &setsLabel = "" );
 
 	protected :
 
-		void doChildren( std::vector<Gaffer::PathPtr> &children ) const override;
+		void doChildren( std::vector<Gaffer::PathPtr> &children, const IECore::Canceller *canceller ) const override;
 		void pathChangedSignalCreated() override;
 
 	private :
@@ -97,11 +100,11 @@ class GAFFERSCENE_API ScenePath : public Gaffer::Path
 		Gaffer::NodePtr m_node;
 		ScenePlugPtr m_scene;
 		Gaffer::ContextPtr m_context;
+		Gaffer::Signals::ScopedConnection m_plugDirtiedConnection;
+		Gaffer::Signals::ScopedConnection m_contextChangedConnection;
 
 };
 
 IE_CORE_DECLAREPTR( ScenePath )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_SCENEPATH_H

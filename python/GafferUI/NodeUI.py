@@ -59,6 +59,7 @@ Gaffer.Metadata.registerNode(
 	""",
 
 	"documentation:url", __documentationURL,
+	"renameable", True,
 
 	plugs = {
 
@@ -83,13 +84,23 @@ Gaffer.Metadata.registerNode(
 
 		"user.*" : (
 
-			"labelPlugValueWidget:renameable", True,
+			"deletable", True,
+			"renameable", True,
 
 		),
 
 		"*" : (
 
 			"layout:section", "Settings"
+
+		),
+
+		"..." : (
+
+			# Just because a plug is renameable and/or deletable on one node
+			# does not mean it should still be when promoted to another.
+			"renameable:promotable", False,
+			"deletable:promotable", False,
 
 		),
 
@@ -102,8 +113,6 @@ Gaffer.Metadata.registerNode(
 ##########################################################################
 
 ## This class forms the base class for all uis for nodes.
-## \todo: We should provide setContext()/getContext() methods
-## as Editor and PlugValueWidget do.
 class NodeUI( GafferUI.Widget ) :
 
 	def __init__( self, node, topLevelWidget, **kw ) :
@@ -111,7 +120,6 @@ class NodeUI( GafferUI.Widget ) :
 		GafferUI.Widget.__init__( self, topLevelWidget, **kw )
 
 		self.__node = node
-		self.__readOnly = False
 
 	## Returns the node the ui represents.
 	def node( self ) :
@@ -119,25 +127,12 @@ class NodeUI( GafferUI.Widget ) :
 		return self.__node
 
 	## Should be implemented by derived classes to return
-	# a PlugValueWidget they are using to represent the
-	# specified plug. Since many UIs are built lazily on
-	# demand, this may return None unless lazy=False is
-	# passed to force creation of parts of the UI that
-	# otherwise are not yet visible to the user.
-	def plugValueWidget( self, plug, lazy=True ) :
+	# the PlugValueWidget they are using to represent the
+	# specified plug. Returns `None` if there is no such
+	# widget.
+	def plugValueWidget( self, plug ) :
 
 		return None
-
-	## Can be called to make the UI read only - must
-	# be implemented appropriately by derived classes.
-	def setReadOnly( self, readOnly ) :
-
-		assert( isinstance( readOnly, bool ) )
-		self.__readOnly = readOnly
-
-	def getReadOnly( self ) :
-
-		return self.__readOnly
 
 	## Creates a NodeUI instance for the specified node.
 	@classmethod
@@ -165,21 +160,29 @@ class NodeUI( GafferUI.Widget ) :
 
 		cls.__nodeUIs[nodeTypeId] = nodeUICreator
 
-##########################################################################
-# Plug menu
-##########################################################################
+	@staticmethod
+	def appendPlugDeletionMenuDefinitions( plugOrPlugValueWidget, menuDefinition ) :
 
-def __deletePlug( plug ) :
+		if isinstance( plugOrPlugValueWidget, GafferUI.PlugValueWidget ) :
+			plug = plugOrPlugValueWidget.getPlug()
+		else :
+			plug = plugOrPlugValueWidget
 
-	with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
-		plug.parent().removeChild( plug )
+		while plug is not None :
+			if Gaffer.Metadata.value( plug, "deletable" ) :
+				break
+			plug = plug.parent() if isinstance( plug.parent(), Gaffer.Plug ) else None
 
-def __plugPopupMenu( menuDefinition, plugValueWidget ) :
+		if plug is None :
+			return
 
-	plug = plugValueWidget.getPlug()
-	node = plug.node()
-	if plug.parent().isSame( node["user"] ) :
-		menuDefinition.append( "/DeleteDivider", { "divider" : True } )
-		menuDefinition.append( "/Delete", { "command" : functools.partial( __deletePlug, plug ), "active" : not plugValueWidget.getReadOnly() and not Gaffer.MetadataAlgo.readOnly( plug ) } )
+		if len( menuDefinition.items() ) :
+			menuDefinition.append( "/DeleteDivider", { "divider" : True } )
 
-__plugPopupMenuConnection = GafferUI.PlugValueWidget.popupMenuSignal().connect( __plugPopupMenu )
+		menuDefinition.append( "/Delete", { "command" : functools.partial( NodeUI.__deletePlug, plug ), "active" : not Gaffer.MetadataAlgo.readOnly( plug ) } )
+
+	@staticmethod
+	def __deletePlug( plug ) :
+
+		with Gaffer.UndoScope( plug.ancestor( Gaffer.ScriptNode ) ) :
+			plug.parent().removeChild( plug )

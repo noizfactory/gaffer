@@ -34,10 +34,24 @@
 #
 ##########################################################################
 
+import functools
+
+import IECore
+
 import Gaffer
 import GafferUI
 
 import GafferScene
+import GafferSceneUI
+
+def __lightTypeMatches( node, types ):
+
+	if not "__shader" in node:
+		return True
+	else:
+		lightName = node["__shader"]["type"].getValue() + ":" + node["__shader"]["name"].getValue()
+		t = Gaffer.Metadata.value( lightName, "type" )
+		return t in types
 
 Gaffer.Metadata.registerNode(
 
@@ -49,6 +63,12 @@ Gaffer.Metadata.registerNode(
 	""",
 
 	plugs = {
+
+		"sets" : [
+
+			"layout:divider", True
+
+		],
 
 		"parameters" : [
 
@@ -91,17 +111,189 @@ Gaffer.Metadata.registerNode(
 
 		],
 
-		"visualiserScale" : [
+		"mute" : [
 
 			"description",
 			"""
-			The scale of the visualisation in the viewport.
+			Whether this light is muted. When toggled, the attribute \"light:mute\"
+			will be set to true. When not toggled, it will be omitted from the attributes.
+			""",
+
+			"layout:section", "Light Linking",
+			"nameValuePlugPlugValueWidget:ignoreNamePlug", True,
+		],
+
+		"visualiserAttributes" : [
+
+			"description",
+			"""
+			Attributes that affect the visualisation of this Light in the Viewer.
 			""",
 
 			"layout:section", "Visualisation",
+			"compoundDataPlugValueWidget:editable", False,
+
+			"layout:activator:lookThroughApertureVisibility", lambda parentPlug : __lightTypeMatches( parentPlug.node(), ["distant"] ),
+			"layout:activator:lookThroughClippingPlanesVisibility", lambda parentPlug : __lightTypeMatches( parentPlug.node(), ["distant", "spot"] ),
+
+		],
+
+		"visualiserAttributes.*" : [
+
+			"nameValuePlugPlugValueWidget:ignoreNamePlug", True,
+
+		],
+
+		"visualiserAttributes.lightDrawingMode" : [
+
+			"description",
+			"""
+			Controls how lights are presented in the Viewer.
+			""",
+
+			"label", "Light Drawing Mode",
+
+		],
+
+		"visualiserAttributes.maxTextureResolution" : [
+
+			"description",
+			"""
+			Visualisers that load textures will respect this setting to
+			limit their resolution.
+			""",
+
+		],
+
+		"visualiserAttributes.frustum" : [
+
+			"description",
+			"""
+			Controls whether applicable lights draw a representation of their
+			light projection in the viewer.
+			"""
+
+		],
+
+		"visualiserAttributes.frustum.value" : [
+
+			"preset:Off", "off",
+			"preset:When Selected", "whenSelected",
+			"preset:On", "on",
+
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget"
+		],
+
+		"visualiserAttributes.lightFrustumScale" : [
+
+			"description",
+			"""
+			Allows light projections to be scaled to better suit the scene.
+			"""
+
+		],
+
+		"visualiserAttributes.scale" : [
+
+			"description",
+			"""
+			Scales non-geometric visualisations in the viewport to make them
+			easier to work with.
+			""",
+
+		],
+
+		"visualiserAttributes.lightDrawingMode.value" : [
+
+			"preset:Wireframe", "wireframe",
+			"preset:Color", "color",
+			"preset:Texture", "texture",
+
+			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget"
+		],
+
+		"visualiserAttributes.lookThroughAperture" : [
+
+			"description",
+			"""
+			Specifies the aperture used when looking through this light. Overrides the Viewer's Camera Settings.
+			""",
+
+			"layout:visibilityActivator", "lookThroughApertureVisibility"
+
+		],
+
+		"visualiserAttributes.lookThroughClippingPlanes" : [
+
+			"description",
+			"""
+			Specifies the clipping planes used when looking through this light. Overrides the Viewer's Camera Settings.
+			""",
+
+			"layout:visibilityActivator", "lookThroughClippingPlanesVisibility"
 
 		]
 
 	}
 
 )
+
+def appendViewContextMenuItems( viewer, view, menuDefinition ) :
+
+	if not isinstance( view, GafferSceneUI.SceneView ) :
+		return None
+
+	menuDefinition.append(
+		"/Light Links",
+		{
+			"subMenu" : functools.partial( __lightLinksSubMenu, view )
+		}
+	)
+
+def __lightLinksSubMenu( view ) :
+
+	result = IECore.MenuDefinition()
+
+	selectedObjects = view.viewportGadget().getPrimaryChild().getSelection()
+	if not selectedObjects.isEmpty() :
+		with view.context() :
+			selectedLights = view["in"].set( "__lights" ).value.intersection( selectedObjects )
+		selectedObjects.removePaths( selectedLights )
+	else :
+		selectedLights = selectedObjects
+
+	result.append(
+		"Select Linked Objects",
+		{
+			"command" : functools.partial(
+				__selectLinked, context = view.context(), title = "Selecting Linked Objects",
+				linkingQuery = functools.partial( GafferScene.SceneAlgo.linkedObjects, view["in"], selectedLights )
+			),
+			"active" : not selectedLights.isEmpty(),
+		}
+	)
+
+	result.append(
+		"Select Linked Lights",
+		{
+			"command" : functools.partial(
+				__selectLinked, context = view.context(), title = "Selecting Linked Lights",
+				linkingQuery = functools.partial( GafferScene.SceneAlgo.linkedLights, view["in"], selectedObjects )
+			),
+			"active" : not selectedObjects.isEmpty(),
+		}
+	)
+
+	return result
+
+def __selectLinked( menu, context, title, linkingQuery ) :
+
+	dialogue = GafferUI.BackgroundTaskDialogue( title )
+	with context :
+		result = dialogue.waitForBackgroundTask(
+			linkingQuery,
+			parentWindow = menu.ancestor( GafferUI.Window )
+		)
+
+	if not isinstance( result, Exception ) :
+		GafferSceneUI.ScriptNodeAlgo.setSelectedPaths( menu.ancestor( GafferUI.Editor ).scriptNode(), result )

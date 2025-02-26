@@ -35,11 +35,10 @@
 #
 ##########################################################################
 
+import enum
 import sys
 import warnings
 import imath
-
-import IECore
 
 import GafferUI
 import Gaffer
@@ -51,13 +50,13 @@ import Qt
 
 class Window( GafferUI.ContainerWidget ) :
 
-	SizeMode = IECore.Enum.create( "Fixed", "Manual", "Automatic" )
+	SizeMode = enum.Enum( "SizeMode", [ "Fixed", "Manual", "Automatic" ] )
 
 	## \todo Remove the deprecated resizable argument
 	def __init__( self, title="GafferUI.Window", borderWidth=0, resizeable=None, child=None, sizeMode=SizeMode.Manual, icon="GafferLogoMini.png", **kw ) :
 
 		GafferUI.ContainerWidget.__init__(
-			self, QtWidgets.QWidget( None, QtCore.Qt.WindowFlags( QtCore.Qt.Window ), **kw )
+			self, QtWidgets.QWidget( None, QtCore.Qt.WindowFlags( QtCore.Qt.Window ) ), **kw
 		)
 
 		self.__child = None
@@ -75,7 +74,7 @@ class Window( GafferUI.ContainerWidget ) :
 		if len( self.__caughtKeys() ):
 			# set up a key press handler, so we can catch various key presses and stop them being handled by the
 			# host application
-			self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ), scoped = False )
+			self.keyPressSignal().connect( Gaffer.WeakMethod( self.__keyPress ) )
 
 
 		# \todo Does this hurt performance? Maybe keyPressSignal() should set this up when it's called?
@@ -95,6 +94,7 @@ class Window( GafferUI.ContainerWidget ) :
 		else :
 			self.setSizeMode( sizeMode )
 
+		self.__preCloseSignal = GafferUI.WidgetSignal()
 		self.__closedSignal = GafferUI.WidgetSignal()
 
 		self.setChild( child )
@@ -210,7 +210,14 @@ class Window( GafferUI.ContainerWidget ) :
 			childWindow._applyVisibility()
 
 		if removeOnClose :
-			childWindow.closedSignal().connect( lambda w : w.parent().removeChild( w ), scoped = False )
+
+			def remove( childWindow ) :
+
+				childWindow.parent().removeChild( childWindow )
+				assert( not childWindow.visible() )
+				GafferUI.WidgetAlgo.keepUntilIdle( childWindow )
+
+			childWindow.closedSignal().connect( remove )
 
 	## Returns a list of all the windows parented to this one.
 	def childWindows( self ) :
@@ -260,13 +267,61 @@ class Window( GafferUI.ContainerWidget ) :
 
 		self._qtWidget().resize( s )
 
-	def setPosition( self, position ) :
+	## Repositions the window, attempting to keep the whole frame on screen.
+	# If the window is larger than the available screen area, its position will
+	# be clamped to the top left. If forcePosition is True, the window will be
+	# moved to the specified position even if clipping will occur.
+	def setPosition( self, position, forcePosition = False ) :
 
-		self._qtWidget().move( position.x, position.y )
+		p = QtCore.QPoint( position.x, position.y )
+		if not forcePosition :
+			p = self.__constrainToScreen( p )
+
+		self._qtWidget().move( p )
 
 	def getPosition( self ) :
 
 		return imath.V2i( self._qtWidget().x(), self._qtWidget().y() )
+
+	def __constrainToScreen( self, position ) :
+
+		# Constrain position such that the whole window remains on screen where
+		# possible. Sadly Qt keeps their implementation of this private.
+		# Qt documents that for a window, move() is really pos and includes frame geometry
+
+		screen = QtWidgets.QApplication.screenAt( position )
+		screen = screen if screen is not None else QtWidgets.QApplication.primaryScreen()
+		screenRect = screen.availableGeometry()
+
+		# Find what our window's rect would be on that screen
+		windowRect = self._qtWidget().frameGeometry()
+		windowRect.moveTo( position )
+
+		# Determine the offset and which direction to move to stay on screen,
+		# based on this size difference and which co-ordinate changed in the
+		# intersected frame
+
+		intersection = windowRect.intersected( screenRect )
+		difference = windowRect.size() - intersection.size()
+
+		signX = -1 if intersection.left() == windowRect.left() else 1
+		signY = -1 if intersection.top() == windowRect.top() else 1
+
+		offset = QtCore.QPoint(
+			signX * difference.width(),
+			signY * difference.height()
+		)
+
+		newPosition = position + offset
+
+		# Bottom-right corrections may have moved us off to the top-left,
+		# constrain to the screen origin.
+		finalPos = QtCore.QPoint(
+			max( newPosition.x(), screenRect.topLeft().x() ),
+			max( newPosition.y(), screenRect.topLeft().y() )
+		)
+
+		return finalPos
 
 	def setFullScreen( self, fullScreen ) :
 
@@ -281,7 +336,7 @@ class Window( GafferUI.ContainerWidget ) :
 
 	def setIcon( self, imageOrImageFileName ) :
 
-		if isinstance( imageOrImageFileName, basestring ) :
+		if isinstance( imageOrImageFileName, str ) :
 			self.__image = GafferUI.Image( imageOrImageFileName )
 		else :
 			self.__image = imageOrImageFileName
@@ -305,12 +360,18 @@ class Window( GafferUI.ContainerWidget ) :
 		if not self.getVisible() :
 			return False
 
-		if self._acceptsClose() :
+		if self._acceptsClose() and not self.__preCloseSignal( self ) :
 			self.setVisible( False )
 			self.closedSignal()( self )
 			return True
 		else :
 			return False
+
+	## Emitted when `close()` is called. Slots may return `True` to prevent
+	# the window from being closed.
+	def preCloseSignal( self ) :
+
+		return self.__preCloseSignal
 
 	## Subclasses may override this to deny the closing of a window triggered
 	# either by user action or by a call to close(). Simply return False to

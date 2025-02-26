@@ -38,13 +38,26 @@ import GafferUI
 
 class ConfirmationDialogue( GafferUI.Dialogue ) :
 
-	def __init__( self, title, message, cancelLabel="Cancel", confirmLabel="OK", sizeMode=GafferUI.Window.SizeMode.Automatic, **kw ) :
+	def __init__( self, title, message, cancelLabel="Cancel", confirmLabel="OK", sizeMode=GafferUI.Window.SizeMode.Automatic, details = None, **kw ) :
 
 		GafferUI.Dialogue.__init__( self, title, sizeMode=sizeMode, **kw )
 
-		self._setWidget( GafferUI.Label( message ) )
+		with GafferUI.ListContainer( GafferUI.ListContainer.Orientation.Vertical, spacing = 8 ) as column :
 
-		self._addButton( cancelLabel )
+			GafferUI.Label( message )
+
+			if details is not None :
+				with GafferUI.Collapsible( label = "Details", collapsed = True ) :
+					GafferUI.MultiLineTextWidget(
+						text = details,
+						editable = False,
+					)
+
+		self._setWidget( column )
+
+		if cancelLabel is not None :
+			self._addButton( cancelLabel )
+
 		self.__confirmButton = self._addButton( confirmLabel )
 
 	## Causes the dialogue to enter a modal state, returning True if the confirm

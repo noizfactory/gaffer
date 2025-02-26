@@ -36,6 +36,8 @@
 
 #include "GafferImage/Sampler.h"
 
+#include "GafferImage/ImageAlgo.h"
+
 using namespace IECore;
 using namespace Imath;
 using namespace Gaffer;
@@ -48,6 +50,12 @@ Sampler::Sampler( const GafferImage::ImagePlug *plug, const std::string &channel
 {
 	{
 		ImagePlug::GlobalScope c( Context::current() );
+
+		if( m_plug->deepPlug()->getValue() )
+		{
+			throw IECore::Exception( "Sampler does not support deep image data" );
+		}
+
 		m_dataWindow = m_plug->dataWindowPlug()->getValue();
 	}
 
@@ -66,6 +74,10 @@ Sampler::Sampler( const GafferImage::ImagePlug *plug, const std::string &channel
 		// we don't need to worry about bounds.  Bounding mode -1 disables
 		// all bounds checking.
 		m_boundingMode = -1;
+	}
+	else if( BufferAlgo::empty( m_dataWindow ) )
+	{
+		m_boundingMode = Black;
 	}
 
 	// Compute the area we need to cache in order to
@@ -99,6 +111,22 @@ Sampler::Sampler( const GafferImage::ImagePlug *plug, const std::string &channel
 	int cacheHeight = int( ceil( float( m_cacheWindow.size().y ) / ImagePlug::tileSize() ) );
 	m_dataCache.resize( m_cacheWidth * cacheHeight, nullptr );
 	m_dataCacheRaw.resize( m_cacheWidth * cacheHeight, nullptr );
+
+	m_cacheOriginIndex = ( m_cacheWindow.min.x >> ImagePlug::tileSizeLog2() ) + m_cacheWidth * ( m_cacheWindow.min.y >> ImagePlug::tileSizeLog2() );
+}
+
+void Sampler::populate()
+{
+	ImageAlgo::parallelProcessTiles(
+		m_plug,
+		[&] ( const ImagePlug *imagePlug, const V2i &tileOrigin ) {
+			const float *tileData;
+			int tilePixelIndex;
+			cachedData( tileOrigin, tileData, tilePixelIndex );
+			assert( tilePixelIndex == 0 );
+		},
+		m_cacheWindow
+	);
 }
 
 void Sampler::hash( IECore::MurmurHash &h ) const

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_PLUGADDER_H
-#define GAFFERUI_PLUGADDER_H
+#pragma once
 
 #include "GafferUI/ConnectionCreator.h"
 #include "GafferUI/StandardNodeGadget.h"
@@ -61,20 +60,24 @@ class GAFFERUI_API PlugAdder : public ConnectionCreator
 		/// When emitted, shows a menu containing the specified plugs, and returns
 		/// the chosen plug. Implemented as a signal so the menu can be implemented
 		/// externally in Python code.
-		typedef boost::signal<Gaffer::Plug *( const std::string &title, const std::vector<Gaffer::Plug *> & )> PlugMenuSignal;
+		using PlugMenuSignal = Gaffer::Signals::Signal<Gaffer::Plug *( const std::string &title, const std::vector<Gaffer::Plug *> & )>;
 		static PlugMenuSignal &plugMenuSignal();
 
 		/// A simpler menu that just shows a list of strings.  Should the previous form be deprecated?
-		typedef boost::signal<std::string ( const std::string &title, const std::vector<std::string> & )> MenuSignal;
+		using MenuSignal = Gaffer::Signals::Signal<std::string ( const std::string &title, const std::vector<std::string> & )>;
 		static MenuSignal &menuSignal();
 
 	protected :
 
-		void doRenderLayer( Layer layer, const Style *style ) const override;
+		void renderLayer( Layer layer, const Style *style, RenderReason reason ) const override;
+		unsigned layerMask() const override;
+		Imath::Box3f renderBound() const override;
 
 		void applyEdgeMetadata( Gaffer::Plug *plug, bool opposite = false ) const;
 
 	private :
+
+		bool couldCreateConnection() const;
 
 		void enter( GadgetPtr gadget, const ButtonEvent &event );
 		void leave( GadgetPtr gadget, const ButtonEvent &event );
@@ -94,9 +97,4 @@ class GAFFERUI_API PlugAdder : public ConnectionCreator
 
 IE_CORE_DECLAREPTR( PlugAdder )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<PlugAdder> > PlugAdderIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<PlugAdder> > RecursivePlugAdderIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_PLUGADDER_H

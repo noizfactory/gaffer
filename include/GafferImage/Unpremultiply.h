@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_UNPREMULTIPLY_H
-#define GAFFERIMAGE_UNPREMULTIPLY_H
+#pragma once
 
 #include "GafferImage/ChannelDataProcessor.h"
 
@@ -50,10 +49,10 @@ class GAFFERIMAGE_API Unpremultiply : public ChannelDataProcessor
 
 	public :
 
-		Unpremultiply( const std::string &name=defaultName<Unpremultiply>() );
+		explicit Unpremultiply( const std::string &name=defaultName<Unpremultiply>() );
 		~Unpremultiply() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Unpremultiply, UnpremultiplyTypeId, ChannelDataProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Unpremultiply, UnpremultiplyTypeId, ChannelDataProcessor );
 
 		//! @name Plug Accessors
 		/// Returns a pointer to the node's plugs.
@@ -61,6 +60,9 @@ class GAFFERIMAGE_API Unpremultiply : public ChannelDataProcessor
 		//@{
 		Gaffer::StringPlug *alphaChannelPlug();
 		const Gaffer::StringPlug *alphaChannelPlug() const;
+
+		Gaffer::BoolPlug *ignoreMissingAlphaPlug();
+		const Gaffer::BoolPlug *ignoreMissingAlphaPlug() const;
 		//@}
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
@@ -79,5 +81,3 @@ class GAFFERIMAGE_API Unpremultiply : public ChannelDataProcessor
 IE_CORE_DECLAREPTR( Unpremultiply );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_UNPREMULTIPLY_H

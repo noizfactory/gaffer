@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_SCALEHANDLE_H
-#define GAFFERUI_SCALEHANDLE_H
+#pragma once
 
 #include "GafferUI/Handle.h"
 
@@ -48,7 +47,7 @@ class GAFFERUI_API ScaleHandle : public Handle
 
 	public :
 
-		ScaleHandle( Style::Axes axes );
+		explicit ScaleHandle( Style::Axes axes );
 		~ScaleHandle() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::ScaleHandle, ScaleHandleTypeId, Handle );
@@ -61,7 +60,7 @@ class GAFFERUI_API ScaleHandle : public Handle
 		// scaling in that axis.
 		Imath::V3i axisMask() const;
 
-		Imath::V3f scaling( const DragDropEvent &event ) const;
+		Imath::V3f scaling( const DragDropEvent &event );
 
 	protected :
 
@@ -72,15 +71,9 @@ class GAFFERUI_API ScaleHandle : public Handle
 
 		Style::Axes m_axes;
 		LinearDrag m_drag;
-		Imath::V2f m_uniformDragStartPosition;
 
 };
 
 IE_CORE_DECLAREPTR( ScaleHandle )
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<ScaleHandle> > ScaleHandleIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<ScaleHandle> > RecursiveScaleHandleIterator;
-
 } // namespace GafferUI
-
-#endif // GAFFERUI_SCALEHANDLE_H

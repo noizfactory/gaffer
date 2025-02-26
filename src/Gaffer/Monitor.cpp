@@ -66,7 +66,9 @@ Monitor::Scope::Scope( const MonitorPtr &monitor, bool active )
 	{
 		m_monitors.erase( monitor );
 	}
+
 	m_threadState->m_monitors = &m_monitors;
+	initializeMightForce();
 }
 
 Monitor::Scope::Scope( const MonitorSet &monitors, bool active )
@@ -93,7 +95,19 @@ Monitor::Scope::Scope( const MonitorSet &monitors, bool active )
 			m_monitors.erase( m );
 		}
 	}
+
 	m_threadState->m_monitors = &m_monitors;
+	initializeMightForce();
+}
+
+void Monitor::Scope::initializeMightForce()
+{
+	bool mightForceMonitoring = false;
+	for( const auto &m : m_monitors )
+	{
+		mightForceMonitoring |= m->mightForceMonitoring();
+	}
+	m_threadState->m_mightForceMonitoring = mightForceMonitoring;
 }
 
 Monitor::Scope::~Scope()
@@ -103,4 +117,15 @@ Monitor::Scope::~Scope()
 const Monitor::MonitorSet &Monitor::current()
 {
 	return *ThreadState::current().m_monitors;
+}
+
+
+bool Monitor::mightForceMonitoring()
+{
+	return false;
+}
+
+bool Monitor::forceMonitoring( const Gaffer::Plug *plug, const IECore::InternedString &processType )
+{
+	return false;
 }

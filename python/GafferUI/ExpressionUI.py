@@ -55,29 +55,12 @@ Gaffer.Metadata.registerNode(
 
 	"layout:customWidget:Expression:widgetType", "GafferUI.ExpressionUI.ExpressionWidget",
 	"nodeGadget:type", "GafferUI::AuxiliaryNodeGadget",
+	"nodeGadget:shape", "oval",
+	"uiEditor:nodeGadgetTypes", IECore.StringVectorData( [ "GafferUI::AuxiliaryNodeGadget", "GafferUI::StandardNodeGadget" ] ),
 	"auxiliaryNodeGadget:label", "e",
+	"nodeGadget:focusGadgetVisible", False,
 
 	plugs = {
-
-		# This plug is added by the expressionCompatibility.py
-		# config file to provide compatibility for loading old
-		# files, so we must hide it.
-		"engine" : (
-
-			"plugValueWidget:type", "",
-			"nodule:type", "",
-
-		),
-
-		# This plug is added by the expressionCompatibility.py
-		# config file to provide compatibility for loading old
-		# files, so we must hide it.
-		"expression" : (
-
-			"plugValueWidget:type", "",
-			"nodule:type", "",
-
-		),
 
 		"user" : (
 
@@ -142,7 +125,7 @@ def __popupMenu( menuDefinition, plugValueWidget ) :
 			}
 		)
 
-GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu, scoped = False )
+GafferUI.PlugValueWidget.popupMenuSignal().connect( __popupMenu )
 
 # ExpressionWidget
 ##########################################################################
@@ -164,18 +147,17 @@ class ExpressionWidget( GafferUI.Widget ) :
 				self.__languageMenu = GafferUI.MenuButton( "", menu = GafferUI.Menu( Gaffer.WeakMethod( self.__languageMenuDefinition ) ) )
 				self.__languageMenu.setEnabled( not Gaffer.MetadataAlgo.readOnly( node ) )
 
-			self.__textWidget = GafferUI.MultiLineTextWidget( role = GafferUI.MultiLineTextWidget.Role.Code )
+			self.__textWidget = GafferUI.CodeWidget( lineNumbersVisible=True )
 			self.__textWidget.setEditable( not Gaffer.MetadataAlgo.readOnly( node ) )
 
-			self.__textWidget.activatedSignal().connect( Gaffer.WeakMethod( self.__activated ), scoped = False )
-			self.__textWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__editingFinished ), scoped = False )
-			self.__textWidget.dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ), scoped = False )
-			self.__textWidget.contextMenuSignal().connect( Gaffer.WeakMethod( self.__expressionContextMenu ), scoped = False )
+			self.__textWidget.editingFinishedSignal().connect( Gaffer.WeakMethod( self.__editingFinished ) )
+			self.__textWidget.dropTextSignal().connect( Gaffer.WeakMethod( self.__dropText ) )
+			self.__textWidget.contextMenuSignal().connect( Gaffer.WeakMethod( self.__expressionContextMenu ) )
 
 			self.__messageWidget = GafferUI.MessageWidget()
 
-		self.__node.expressionChangedSignal().connect( Gaffer.WeakMethod( self.__expressionChanged ), scoped = False )
-		self.__node.errorSignal().connect( Gaffer.WeakMethod( self.__error ), scoped = False )
+		self.__node.expressionChangedSignal().connect( Gaffer.WeakMethod( self.__expressionChanged ) )
+		self.__node.errorSignal().connect( Gaffer.WeakMethod( self.__error ) )
 
 		self.__update()
 
@@ -187,7 +169,7 @@ class ExpressionWidget( GafferUI.Widget ) :
 
 		return self.__textWidget
 
-	__expressionContextMenuSignal = Gaffer.Signal2()
+	__expressionContextMenuSignal = Gaffer.Signals.Signal2()
 	## This signal is emitted whenever a popup menu
 	# for an ExpressionWidget is about to be shown.
 	# This provides an opportunity to customise the
@@ -198,6 +180,31 @@ class ExpressionWidget( GafferUI.Widget ) :
 	def expressionContextMenuSignal( cls ) :
 
 		return cls.__expressionContextMenuSignal
+
+	__highlighters = {}
+	## Registers a function to return a `CodeWidget.Highlighter`
+	# for a particular engine type. `highlighter` will be passed
+	# an Expression node and must return a Completer.
+	@classmethod
+	def registerHighlighter( cls, language, highlighter ) :
+
+		cls.__highlighters[language] = highlighter
+
+	__completers = {}
+	## Registers a function to return a `CodeWidget.Completer`
+	# for a particular engine type. `completer` will be passed
+	# an Expression node and must return a Completer.
+	@classmethod
+	def registerCompleter( cls, language, completer ) :
+
+		cls.__completers[language] = completer
+
+	__commentPrefixes = {}
+	## Registers the comment prefix for a particular engine type.
+	@classmethod
+	def registerCommentPrefix( cls, language, commentPrefix ) :
+
+		cls.__commentPrefixes[language] = commentPrefix
 
 	def __expressionContextMenuDefinition( self ) :
 
@@ -271,6 +278,14 @@ class ExpressionWidget( GafferUI.Widget ) :
 		self.__textWidget.setEnabled( bool( language ) )
 		self.__languageMenu.setText( IECore.CamelCase.toSpaced( language ) if language else "Choose..." )
 
+		completer = self.__completers.get( language )
+		self.__textWidget.setCompleter( completer( self.__node ) if completer is not None else None )
+
+		highlighter = self.__highlighters.get( language )
+		self.__textWidget.setHighlighter( highlighter( self.__node ) if highlighter is not None else None )
+
+		self.__textWidget.setCommentPrefix( self.__commentPrefixes.get( language ) )
+
 		self.__messageWidget.clear()
 		self.__messageWidget.setVisible( False )
 
@@ -314,10 +329,6 @@ class ExpressionWidget( GafferUI.Widget ) :
 
 		self.__update()
 
-	def __activated( self, widget ) :
-
-		self.__setExpression()
-
 	def __editingFinished( self, widget ) :
 
 		self.__setExpression()
@@ -352,3 +363,19 @@ class ExpressionWidget( GafferUI.Widget ) :
 
 		self.__messageWidget.setVisible( True )
 		self.__messageWidget.messageHandler().handle( IECore.Msg.Level.Error, "Execution error", error )
+
+# Python Language Support
+##########################################################################
+
+def __pythonCompleter( node ) :
+
+	namespace = {
+		"imath" : imath,
+		"IECore" : IECore,
+		"parent" : node.parent(),
+	}
+
+	return GafferUI.CodeWidget.PythonCompleter( namespace, includeGraphComponentAttributes = False )
+
+ExpressionWidget.registerHighlighter( "python", lambda node : GafferUI.CodeWidget.PythonHighlighter() )
+ExpressionWidget.registerCommentPrefix( "python", "#" )

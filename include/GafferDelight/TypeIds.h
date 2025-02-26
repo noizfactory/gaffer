@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERDELIGHT_TYPEIDS_H
-#define GAFFERDELIGHT_TYPEIDS_H
+#pragma once
 
 namespace GafferDelight
 {
@@ -45,12 +44,10 @@ enum TypeId
 {
 	DelightAttributesTypeId = 110925,
 	DelightOptionsTypeId = 110926,
-	DelightRenderTypeId = 110927,
-	InteractiveDelightRenderTypeId = 110928,
+	DelightRenderTypeId = 110927, // Available for reuse
+	InteractiveDelightRenderTypeId = 110928, // Available for reuse
 
 	LastTypeId = 110949
 };
 
 } // namespace GafferDelight
-
-#endif // GAFFERDELIGHT_TYPEIDS_H

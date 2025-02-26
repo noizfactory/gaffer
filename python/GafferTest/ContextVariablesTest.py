@@ -70,17 +70,17 @@ class ContextVariablesTest( GafferTest.TestCase ) :
 		# adding a variable should dirty the output:
 		dirtied = GafferTest.CapturingSlot( c.plugDirtiedSignal() )
 		c["variables"].addChild( Gaffer.NameValuePlug( "a", IECore.StringData( "A" ), "member1", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
-		self.failUnless( c["out"] in [ p[0] for p in dirtied ] )
+		self.assertIn( c["out"], [ p[0] for p in dirtied ] )
 
 		# modifying the variable should dirty the output:
 		dirtied = GafferTest.CapturingSlot( c.plugDirtiedSignal() )
 		c["variables"]["member1"]["value"].setValue("b")
-		self.failUnless( c["out"] in [ p[0] for p in dirtied ] )
+		self.assertIn( c["out"], [ p[0] for p in dirtied ] )
 
 		# removing the variable should also dirty the output:
 		dirtied = GafferTest.CapturingSlot( c.plugDirtiedSignal() )
 		c["variables"].removeChild(c["variables"]["member1"])
-		self.failUnless( c["out"] in [ p[0] for p in dirtied ] )
+		self.assertIn( c["out"], [ p[0] for p in dirtied ] )
 
 	def testSerialisation( self ) :
 
@@ -117,7 +117,7 @@ class ContextVariablesTest( GafferTest.TestCase ) :
 
 		dirtied = GafferTest.CapturingSlot( s["c"].plugDirtiedSignal() )
 		s["c"]["extraVariables"].setValue( IECore.CompoundData( { "a" : "A" } ) )
-		self.failUnless( s["c"]["out"] in { p[0] for p in dirtied } )
+		self.assertIn( s["c"]["out"], { p[0] for p in dirtied } )
 		self.assertEqual( s["c"]["out"].getValue(), "A" )
 
 		# Extra variables trump regular variables of the same name
@@ -199,6 +199,22 @@ class ContextVariablesTest( GafferTest.TestCase ) :
 		self.assertIn( "out", s2["c"] )
 		self.assertIsInstance( s2["c"]["in"], Gaffer.IntPlug )
 		self.assertIsInstance( s2["c"]["out"], Gaffer.IntPlug )
+
+	@GafferTest.TestRunner.PerformanceTestMethod()
+	def testPerformance( self ):
+		c = Gaffer.ContextVariables()
+		c.setup( Gaffer.IntPlug() )
+		for i in range( 10 ):
+			c["variables"].addChild( Gaffer.NameValuePlug( "a%i"%i, IECore.StringData( "A" * 100 ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		c["variables"].addChild( Gaffer.NameValuePlug( "intName", IECore.IntData( 100 ), flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+
+		# This would be a bit more representative if our source node was actually affected by the context variables,
+		# but without access to OSL in this test we don't have any efficient way to read context variables handy,
+		# and we're mostly just interested in the amount of overhead anyway
+		n = GafferTest.MultiplyNode()
+		c["in"].setInput( n["product"] )
+
+		GafferTest.parallelGetValue( c["out"], 1000000, "iter" )
 
 if __name__ == "__main__":
 	unittest.main()

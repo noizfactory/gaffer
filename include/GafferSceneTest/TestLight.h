@@ -34,13 +34,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENETEST_TESTLIGHT_H
-#define GAFFERSCENETEST_TESTLIGHT_H
+#pragma once
 
 #include "GafferSceneTest/Export.h"
+#include "GafferSceneTest/TestShader.h"
 #include "GafferSceneTest/TypeIds.h"
 
 #include "GafferScene/Light.h"
+#include "GafferScene/ShaderPlug.h"
 
 namespace GafferSceneTest
 {
@@ -53,15 +54,27 @@ class GAFFERSCENETEST_API TestLight : public GafferScene::Light
 		TestLight( const std::string &name=defaultName<TestLight>() );
 		~TestLight() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferSceneTest::TestLight, TestLightTypeId, GafferScene::Light );
+		GAFFER_NODE_DECLARE_TYPE( GafferSceneTest::TestLight, TestLightTypeId, GafferScene::Light );
+
+		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
+
+		void loadShader( const std::string &shaderName );
 
 	protected :
 
 		void hashLight( const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		IECoreScene::ShaderNetworkPtr computeLight( const Gaffer::Context *context ) const override;
+		IECoreScene::ConstShaderNetworkPtr computeLight( const Gaffer::Context *context ) const override;
+
+	private :
+
+		TestShader *shaderNode();
+		const TestShader *shaderNode() const;
+
+		GafferScene::ShaderPlug *shaderInPlug();
+		const GafferScene::ShaderPlug *shaderInPlug() const;
+
+		static size_t g_firstPlugIndex;
 
 };
 
 } // namespace GafferSceneTest
-
-#endif // GAFFERSCENETEST_TESTLIGHT_H

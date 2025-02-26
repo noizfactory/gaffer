@@ -64,7 +64,7 @@ class BrowserEditor( GafferUI.Editor ) :
 				)
 				for mode in self.__modes :
 					modeMenu.append( mode[0] )
-				modeMenu.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__modeChanged ), scoped = False )
+				modeMenu.selectionChangedSignal().connect( Gaffer.WeakMethod( self.__modeChanged ) )
 
 			self.__pathChooser = GafferUI.PathChooserWidget( Gaffer.DictPath( {}, "/" ), previewTypes=GafferUI.PathPreviewWidget.types() )
 			self.__pathChooser.pathWidget().setVisible( False )
@@ -143,7 +143,9 @@ class BrowserEditor( GafferUI.Editor ) :
 				)
 			)
 
-			self.__contextMenuConnection = self.browser().pathChooser().pathListingWidget().contextMenuSignal().connect( Gaffer.WeakMethod( self.__contextMenu ) )
+			self.__contextMenuConnection = self.browser().pathChooser().pathListingWidget().contextMenuSignal().connect(
+				Gaffer.WeakMethod( self.__contextMenu ), scoped = True
+			)
 
 			splitContainer = self.browser().pathChooser().pathListingWidget().ancestor( GafferUI.SplitContainer )
 			splitContainer.setSizes( ( self.__splitPosition, 1.0 - self.__splitPosition ) )
@@ -234,9 +236,12 @@ class BrowserEditor( GafferUI.Editor ) :
 
 			def showDialogue( menu ) :
 
-				dialogue = GafferUI.OpDialogue(
+				## \todo Remove dependency on GafferCortexUI. See `_createOpMatcher()``.
+				import GafferCortexUI
+
+				dialogue = GafferCortexUI.OpDialogue(
 					op,
-					postExecuteBehaviour = GafferUI.OpDialogue.PostExecuteBehaviour.Close,
+					postExecuteBehaviour = GafferCortexUI.OpDialogue.PostExecuteBehaviour.Close,
 					executeInBackground=True
 				)
 				dialogue.waitForResult( parentWindow = menu.ancestor( GafferUI.Window ) )

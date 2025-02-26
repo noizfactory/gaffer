@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import pathlib
 import subprocess
 import shutil
 import unittest
@@ -213,9 +214,9 @@ class OSLCodeTest( GafferOSLTest.OSLTestCase ) :
 		oslCode["out"]["o"] = Gaffer.Color3fPlug( direction = Gaffer.Plug.Direction.Out, flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
 		oslCode["code"].setValue( "o = color( 0, 1, 0 );" )
 
-		info = subprocess.check_output( [ "oslinfo", self.__osoFileName( oslCode ) ] )
+		info = subprocess.check_output( [ "oslinfo", self.__osoFileName( oslCode ) ], universal_newlines = True )
 		self.assertTrue(
-			info.startswith( "shader \"{0}\"".format( os.path.basename( self.__osoFileName( oslCode ) ) ) )
+			info.startswith( "shader \"{0}\"".format( pathlib.Path( self.__osoFileName( oslCode ) ).name ) )
 		)
 
 	def testSerialisation( self ) :
@@ -273,11 +274,11 @@ class OSLCodeTest( GafferOSLTest.OSLTestCase ) :
 
 		# Export it to a .osl file and compile it.
 
-		oslFileName = os.path.join( self.temporaryDirectory(), "test.osl" )
-		with open( oslFileName, "w" ) as f :
+		oslFilePath = self.temporaryDirectory() / "test.osl"
+		with open( oslFilePath, "w", encoding = "utf-8" ) as f :
 			f.write( oslCode.source( "test") )
 
-		shader = self.compileShader( oslFileName )
+		shader = self.compileShader( oslFilePath )
 
 		# Load that onto an OSLShader and check that
 		# it matches.
@@ -326,7 +327,7 @@ class OSLCodeTest( GafferOSLTest.OSLTestCase ) :
 
 		# Make an OSL shader in a specific code directory.
 
-		os.environ["GAFFEROSL_CODE_DIRECTORY"] = os.path.join( self.temporaryDirectory(), "codeDirectoryA" )
+		os.environ["GAFFEROSL_CODE_DIRECTORY"] = ( self.temporaryDirectory() / "codeDirectoryA" ).as_posix()
 
 		s = Gaffer.ScriptNode()
 
@@ -343,12 +344,39 @@ class OSLCodeTest( GafferOSLTest.OSLTestCase ) :
 		ss = s.serialise()
 
 		shutil.rmtree( os.environ["GAFFEROSL_CODE_DIRECTORY"] )
-		os.environ["GAFFEROSL_CODE_DIRECTORY"] = os.path.join( self.temporaryDirectory(), "codeDirectoryB" )
+		os.environ["GAFFEROSL_CODE_DIRECTORY"] = ( self.temporaryDirectory() / "codeDirectoryB" ).as_posix()
 
 		s2 = Gaffer.ScriptNode()
 		s2.execute( ss )
 
 		self.assertTrue( self.__osoFileName( s2["o"] ).startswith( os.environ["GAFFEROSL_CODE_DIRECTORY"] ) )
+
+	def testRenameRemovedParameter( self ) :
+
+		parameter = Gaffer.Color3fPlug( flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic )
+
+		oslCode = GafferOSL.OSLCode()
+		oslCode["parameters"]["c"] = parameter
+
+		cs = GafferTest.CapturingSlot( oslCode.shaderCompiledSignal() )
+		oslCode["parameters"].removeChild( parameter )
+		self.assertEqual( len( cs ), 1 )
+
+		# Changing name is irrelevant now we've removed the parameter,
+		# and shouldn't trigger a recompile.
+
+		del cs[:]
+		parameter.setName( "d" )
+		self.assertEqual( len( cs ), 0 )
+
+	def testParseErrorLineNumbers( self ) :
+
+		oslCode = GafferOSL.OSLCode()
+		cs = GafferTest.CapturingSlot( oslCode.errorSignal() )
+		oslCode["code"].setValue( "undefined" )
+
+		self.assertEqual( len( cs ), 1 )
+		self.assertRegex( cs[0][2], "code:1: error: 'undefined' was not declared in this scope$" )
 
 	def __osoFileName( self, oslCode ) :
 

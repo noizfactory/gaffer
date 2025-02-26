@@ -46,7 +46,7 @@ import GafferImageTest
 
 class ImageMetadataTest( GafferImageTest.ImageTestCase ) :
 
-	checkerFile = os.path.expandvars( "$GAFFER_ROOT/python/GafferImageTest/images/checker.exr" )
+	checkerFile = GafferImageTest.ImageTestCase.imagesPath() / "checker.exr"
 
 	def test( self ) :
 
@@ -64,8 +64,8 @@ class ImageMetadataTest( GafferImageTest.ImageTestCase ) :
 
 		# check that we can make metadata
 
-		m["metadata"].addChild( Gaffer.NameValuePlug( "comment", IECore.StringData( "my favorite image!" ), "member1" ) )
-		m["metadata"].addChild( Gaffer.NameValuePlug( "range", IECore.V2iData( imath.V2i( 5, 10 ) ), True, "member1" ) )
+		m["metadata"].addChild( Gaffer.NameValuePlug( "comment", IECore.StringData( "my favorite image!" ), "member1", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
+		m["metadata"].addChild( Gaffer.NameValuePlug( "range", IECore.V2iData( imath.V2i( 5, 10 ) ), True, "member1", flags = Gaffer.Plug.Flags.Default | Gaffer.Plug.Flags.Dynamic ) )
 
 		metadata = m["out"]["metadata"].getValue()
 		self.assertEqual( len(metadata), len(inMetadata) + 2 )
@@ -183,7 +183,7 @@ class ImageMetadataTest( GafferImageTest.ImageTestCase ) :
 		self.assertEqual( i["out"]["dataWindow"].getValue(), m["out"]["dataWindow"].getValue() )
 		self.assertEqual( i["out"]["channelNames"].getValue(), m["out"]["channelNames"].getValue() )
 
-		context = Gaffer.Context()
+		context = Gaffer.Context( Gaffer.Context.current() )
 		context["image:tileOrigin"] = imath.V2i( 0 )
 		with context :
 			for c in [ "G", "B", "A" ] :
@@ -197,6 +197,28 @@ class ImageMetadataTest( GafferImageTest.ImageTestCase ) :
 		cs = GafferTest.CapturingSlot( m.plugDirtiedSignal() )
 		m["enabled"].setValue( False )
 		self.assertEqual( { x[0] for x in cs }, { m["enabled"], m["out"]["metadata"], m["out"] } )
+
+	def testExtraMetadata( self ) :
+
+		m = GafferImage.ImageMetadata()
+		self.assertEqual( m["out"].metadata(), IECore.CompoundData() )
+
+		m["metadata"].addChild( Gaffer.NameValuePlug( "a", "originalA" ) )
+		m["metadata"].addChild( Gaffer.NameValuePlug( "b", "originalB" ) )
+
+		m["extraMetadata"].setValue( IECore.CompoundData( {
+			"a" : "extraA",
+			"c" : "extraC",
+		} ) )
+
+		self.assertEqual(
+			m["out"].metadata(),
+			IECore.CompoundData( {
+				"a" : "extraA",
+				"b" : "originalB",
+				"c" : "extraC",
+			} )
+		)
 
 if __name__ == "__main__":
 	unittest.main()

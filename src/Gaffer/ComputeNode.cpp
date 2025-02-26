@@ -41,7 +41,7 @@
 
 using namespace Gaffer;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ComputeNode );
+GAFFER_NODE_DEFINE_TYPE( ComputeNode );
 
 ComputeNode::ComputeNode( const std::string &name )
 	:	DependencyNode( name )
@@ -80,7 +80,7 @@ void ComputeNode::compute( ValuePlug *output, const Context *context ) const
 
 ValuePlug::CachePolicy ComputeNode::hashCachePolicy( const ValuePlug *output ) const
 {
-	return ValuePlug::CachePolicy::Standard;
+	return ValuePlug::CachePolicy::Default;
 }
 
 ValuePlug::CachePolicy ComputeNode::computeCachePolicy( const ValuePlug *output ) const
@@ -89,7 +89,5 @@ ValuePlug::CachePolicy ComputeNode::computeCachePolicy( const ValuePlug *output 
 	{
 		return ValuePlug::CachePolicy::Uncached;
 	}
-	/// \todo Return `Standard` once all task-spawning computes are
-	/// known to be declaring an appropriate policy.
-	return ValuePlug::CachePolicy::Legacy;
+	return ValuePlug::CachePolicy::Default;
 }

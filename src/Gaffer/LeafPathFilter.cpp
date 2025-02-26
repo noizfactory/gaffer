@@ -38,8 +38,9 @@
 
 #include "Gaffer/Path.h"
 
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 
+using namespace boost::placeholders;
 using namespace Gaffer;
 
 IE_CORE_DEFINERUNTIMETYPED( LeafPathFilter );
@@ -53,7 +54,7 @@ LeafPathFilter::~LeafPathFilter()
 {
 }
 
-void LeafPathFilter::doFilter( std::vector<PathPtr> &paths ) const
+void LeafPathFilter::doFilter( std::vector<PathPtr> &paths, const IECore::Canceller *canceller ) const
 {
 	paths.erase(
 		std::remove_if(

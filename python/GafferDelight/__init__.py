@@ -34,8 +34,9 @@
 #
 ##########################################################################
 
+__import__( "IECoreDelight" )
 __import__( "GafferScene" )
 
-from _GafferDelight import *
+from ._GafferDelight import *
 
 __import__( "IECore" ).loadConfig( "GAFFER_STARTUP_PATHS", subdirectory = "GafferDelight" )

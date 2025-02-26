@@ -55,7 +55,17 @@ Gaffer.Metadata.registerNode(
 	the ArnoldDisplacement to specific objects.
 	""",
 
+	"layout:activator:autoBumpVisibility", lambda node : not node["autoBump"].isSetToDefault(),
+
 	plugs = {
+
+		"name" : [
+
+			# The `name` plug is inherited from Shader, but unused by ArnoldDisplacement.
+			# Hide it to avoid confusion. See comments in ArnoldDisplacement.h.
+			"plugValueWidget:type", "",
+
+		],
 
 		"map" : [
 
@@ -126,6 +136,7 @@ Gaffer.Metadata.registerNode(
 			""",
 
 			"nodule:type", "",
+			"layout:visibilityActivator", "autoBumpVisibility",
 
 		],
 

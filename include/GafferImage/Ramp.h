@@ -34,10 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_RAMP_H
-#define GAFFERIMAGE_RAMP_H
+#pragma once
 
-#include "GafferImage/ImageNode.h"
+#include "GafferImage/FlatImageSource.h"
 #include "GafferImage/FormatPlug.h"
 
 #include "Gaffer/CompoundNumericPlug.h"
@@ -54,15 +53,15 @@ IE_CORE_FORWARDDECLARE( Transform2DPlug )
 namespace GafferImage
 {
 
-class GAFFERIMAGE_API Ramp : public ImageNode
+class GAFFERIMAGE_API Ramp : public FlatImageSource
 {
 
 	public :
 
-		Ramp( const std::string &name=defaultName<Ramp>() );
+		explicit Ramp( const std::string &name=defaultName<Ramp>() );
 		~Ramp() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Ramp, RampTypeId, ImageNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Ramp, RampTypeId, FlatImageSource );
 
 		GafferImage::FormatPlug *formatPlug();
 		const GafferImage::FormatPlug *formatPlug() const;
@@ -106,5 +105,3 @@ class GAFFERIMAGE_API Ramp : public ImageNode
 IE_CORE_DECLAREPTR( Ramp )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_RAMP_H

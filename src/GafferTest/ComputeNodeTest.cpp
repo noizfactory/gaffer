@@ -41,7 +41,7 @@
 
 #include "IECore/Timer.h"
 
-#include "tbb/tbb.h"
+#include "tbb/parallel_for.h"
 
 #include <thread>
 
@@ -54,7 +54,7 @@ namespace
 struct Edit
 {
 
-	Edit( const tbb::atomic<bool> &stop )
+	Edit( const std::atomic_bool &stop )
 		:	m_stop( stop )
 	{
 	}
@@ -66,13 +66,13 @@ struct Edit
 			GafferTest::MultiplyNodePtr m = new GafferTest::MultiplyNode;
 			m->op1Plug()->setValue( 10 );
 			m->op1Plug()->setValue( 20 );
-			tbb::this_tbb_thread::yield();
+			std::this_thread::yield();
 		}
 	}
 
 	private :
 
-		const tbb::atomic<bool> &m_stop;
+		const std::atomic_bool &m_stop;
 
 };
 
@@ -109,7 +109,7 @@ void GafferTest::testComputeNodeThreading()
 {
 	// Set up a background thread that creates and
 	// deletes node graphs.
-	tbb::atomic<bool> stop;
+	std::atomic_bool stop( false );
 	Edit edit( stop );
 	std::thread thread( edit );
 

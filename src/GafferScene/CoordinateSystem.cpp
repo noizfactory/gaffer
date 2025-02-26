@@ -46,7 +46,7 @@ using namespace Imath;
 
 static IECore::InternedString g_coordinateSystemsSetName( "__coordinateSystems" );
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( CoordinateSystem );
+GAFFER_NODE_DEFINE_TYPE( CoordinateSystem );
 
 CoordinateSystem::CoordinateSystem( const std::string &name )
 	:	ObjectSource( name, "coordinateSystem" )
@@ -72,4 +72,3 @@ IECore::ConstInternedStringVectorDataPtr CoordinateSystem::computeStandardSetNam
 	result->writable().push_back( g_coordinateSystemsSetName );
 	return result;
 }
-

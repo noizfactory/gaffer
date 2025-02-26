@@ -38,6 +38,7 @@ import unittest
 import weakref
 
 import Gaffer
+import GafferTest
 import GafferUI
 import GafferUITest
 
@@ -70,13 +71,13 @@ class ScriptWindowTest( GafferUITest.TestCase ) :
 		s3 = Gaffer.ScriptNode()
 
 		w1 = GafferUI.ScriptWindow.acquire( s1 )
-		self.failUnless( w1.scriptNode().isSame( s1 ) )
+		self.assertTrue( w1.scriptNode().isSame( s1 ) )
 
 		w2 = GafferUI.ScriptWindow.acquire( s2 )
-		self.failUnless( w2.scriptNode().isSame( s2 ) )
+		self.assertTrue( w2.scriptNode().isSame( s2 ) )
 
 		w3 = GafferUI.ScriptWindow.acquire( s1 )
-		self.failUnless( w3 is w1 )
+		self.assertTrue( w3 is w1 )
 
 		w4 = GafferUI.ScriptWindow.acquire( s1, createIfNecessary = False )
 		self.assertTrue( w4 is w1 )
@@ -86,6 +87,38 @@ class ScriptWindowTest( GafferUITest.TestCase ) :
 
 		w6 = GafferUI.ScriptWindow.acquire( s3, createIfNecessary = True )
 		self.assertTrue( w6.scriptNode().isSame( s3 ) )
+
+	def testLifetimeOfApplicationScriptWindows( self ) :
+
+		class testApp( Gaffer.Application ) :
+
+			def __init__( self ) :
+
+				Gaffer.Application.__init__( self )
+
+		def __scriptAdded( scriptContainer, script ) :
+
+			w = GafferUI.ScriptWindow.acquire( script )
+			w.setTitle( "modified" )
+			self.assertEqual( w.getTitle(), "modified" )
+
+		a = testApp().root()
+		GafferUI.ScriptWindow.connect( a )
+
+		# Acquire and modify the ScriptWindow before it is
+		# shown by the application to ensure that our modified
+		# ScriptWindow survives to be the one shown.
+		a["scripts"].childAddedSignal().connectFront( __scriptAdded )
+
+		s = Gaffer.ScriptNode()
+		a["scripts"]["s"] = s
+
+		self.waitForIdle( 1000 )
+
+		w = GafferUI.ScriptWindow.acquire( s )
+		self.assertEqual( w.getTitle(), "modified" )
+
+		del a["scripts"]["s"]
 
 	def testTitleChangedSignal( self ) :
 
@@ -100,10 +133,37 @@ class ScriptWindowTest( GafferUITest.TestCase ) :
 		def grabTitle( window, newTitle ) :
 			self.__title = newTitle
 
-		w.titleChangedSignal().connect( grabTitle, scoped = False )
+		w.titleChangedSignal().connect( grabTitle )
 
 		w.setTitle( "b" )
 		self.assertEqual( self.__title, "b" )
+
+	def testInstanceCreatedSignal( self ) :
+
+		cs = GafferTest.CapturingSlot( GafferUI.ScriptWindow.instanceCreatedSignal() )
+
+		script1 = Gaffer.ScriptNode()
+		script2 = Gaffer.ScriptNode()
+		self.assertEqual( len( cs ), 0 )
+
+		scriptWindow1 = GafferUI.ScriptWindow( script1 )
+		self.assertEqual( len( cs ), 1 )
+		self.assertIs( cs[0][0], scriptWindow1 )
+
+		scriptWindow2 = GafferUI.ScriptWindow.acquire( script2 )
+		self.assertEqual( len( cs ), 2 )
+		self.assertIs( cs[1][0], scriptWindow2 )
+
+		application = Gaffer.Application()
+		GafferUI.ScriptWindow.connect( application.root() )
+		application.root()["scripts"].addChild( Gaffer.ScriptNode() )
+		self.assertEqual( len( cs ), 3 )
+		self.assertIs(
+			cs[2][0],
+			GafferUI.ScriptWindow.acquire( application.root()["scripts"][0], createIfNecessary = False )
+		)
+
+		del application.root()["scripts"][0]
 
 if __name__ == "__main__":
 	unittest.main()

@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_PLUGTYPE_H
-#define GAFFER_PLUGTYPE_H
+#pragma once
 
 #include "Gaffer/BoxPlug.h"
 #include "Gaffer/CompoundNumericPlug.h"
@@ -51,14 +50,14 @@ namespace Gaffer
 template<typename T>
 struct PlugType
 {
-	typedef void Type;
+	using Type = void;
 };
 
 #define GAFFER_PLUGTYPE_SPECIALISE( VALUETYPE, PLUGTYPE ) 	\
 	template<>												\
 	struct PlugType<VALUETYPE>								\
 	{														\
-		typedef PLUGTYPE Type;								\
+		using Type = PLUGTYPE;								\
 	};														\
 
 GAFFER_PLUGTYPE_SPECIALISE( float, FloatPlug )
@@ -86,5 +85,3 @@ GAFFER_PLUGTYPE_SPECIALISE( Imath::Box2f, Box2fPlug )
 GAFFER_PLUGTYPE_SPECIALISE( Imath::Box3f, Box3fPlug )
 
 } // namespace Gaffer
-
-#endif // GAFFER_PLUGTYPE_H

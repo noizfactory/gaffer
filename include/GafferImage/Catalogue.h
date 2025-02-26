@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_CATALOGUE_H
-#define GAFFERIMAGE_CATALOGUE_H
+#pragma once
 
 #include "GafferImage/ImageNode.h"
 
@@ -46,6 +45,16 @@
 #include "IECoreImage/DisplayDriver.h"
 #include "IECoreImage/DisplayDriverServer.h"
 
+#include <filesystem>
+
+namespace GafferImageModule
+{
+
+// Forward declaration to enable friend declaration.
+void bindCatalogue();
+
+} // namespace GafferImageModule
+
 namespace GafferImage
 {
 
@@ -54,13 +63,13 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::Catalogue, CatalogueTypeId, ImageNode );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::Catalogue, CatalogueTypeId, ImageNode );
 
-		Catalogue( const std::string &name = defaultName<Catalogue>() );
+		explicit Catalogue( const std::string &name = defaultName<Catalogue>() );
 		~Catalogue() override;
 
 		/// Plug type used to represent an image in the catalogue.
-		class Image : public Gaffer::Plug
+		class GAFFERIMAGE_API Image : public Gaffer::Plug
 		{
 
 			public :
@@ -75,20 +84,34 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 				Gaffer::StringPlug *descriptionPlug();
 				const Gaffer::StringPlug *descriptionPlug() const;
 
+				Gaffer::IntPlug *outputIndexPlug();
+				const Gaffer::IntPlug *outputIndexPlug() const;
+
 				/// Primarily used to take a snapshot of a live render.
 				/// This image must have have been added to a Catalogue
 				/// before calling. The snapshot will be saved to disk
 				/// asynchronously.
 				void copyFrom( const Image *other );
 
-				static Ptr load( const std::string &fileName );
-				void save( const std::string &fileName ) const;
+				static Ptr load( const std::filesystem::path &fileName );
+				void save( const std::filesystem::path &fileName ) const;
 
 				Gaffer::PlugPtr createCounterpart( const std::string &name, Direction direction ) const override;
 
-		};
+			private :
 
-		typedef Gaffer::FilteredChildIterator<Gaffer::PlugPredicate<Gaffer::Plug::Invalid, Image> > ImageIterator;
+				// The Catalogue needs to know the name of each image
+				// so it can support the `catalogue:imageName` context
+				// variable. But computes can only depend on plugs,
+				// so we transfer the name into this private plug
+				// each time it changes.
+				void nameChanged( IECore::InternedString oldName ) override;
+
+				Gaffer::StringPlug *namePlug();
+				const Gaffer::StringPlug *namePlug() const;
+				friend class Catalogue;
+
+		};
 
 		Gaffer::Plug *imagesPlug();
 		const Gaffer::Plug *imagesPlug() const;
@@ -102,6 +125,9 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 		Gaffer::StringPlug *directoryPlug();
 		const Gaffer::StringPlug *directoryPlug() const;
 
+		Gaffer::StringVectorDataPlug *imageNamesPlug();
+		const Gaffer::StringVectorDataPlug *imageNamesPlug() const;
+
 		/// All Catalogues share a single DisplayDriverServer instance
 		/// to receive rendered images. To send an image to the catalogues,
 		/// use an IECoreImage::ClientDisplayDriver with the "displayPort" parameter
@@ -111,8 +137,8 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 		/// Generates a filename that could be used for storing
 		/// a particular image locally in this Catalogue's directory.
 		/// Primarily exists to be used in the UI.
-		std::string generateFileName( const Image *image ) const;
-		std::string generateFileName( const ImagePlug *image ) const;
+		std::filesystem::path generateFileName( const Image *image ) const;
+		std::filesystem::path generateFileName( const ImagePlug *image ) const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -121,8 +147,11 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 		Gaffer::IntPlug *internalImageIndexPlug();
 		const Gaffer::IntPlug *internalImageIndexPlug() const;
 
-		Gaffer::AtomicCompoundDataPlug *mappingPlug();
-		const Gaffer::AtomicCompoundDataPlug *mappingPlug() const;
+		Gaffer::ObjectPlug *imageIndexMapPlug();
+		const Gaffer::ObjectPlug *imageIndexMapPlug() const;
+
+		Gaffer::StringPlug *invalidImageTextPlug();
+		const Gaffer::StringPlug *invalidImageTextPlug() const;
 
 		Gaffer::Switch *imageSwitch();
 		const Gaffer::Switch *imageSwitch() const;
@@ -133,21 +162,24 @@ class GAFFERIMAGE_API Catalogue : public ImageNode
 
 		void imageAdded( GraphComponent *graphComponent );
 		void imageRemoved( GraphComponent *graphComponent );
+		void imagesReordered( const std::vector<size_t> &originalIndices );
 
 		void driverCreated( IECoreImage::DisplayDriver *driver, const IECore::CompoundData *parameters );
 		void imageReceived( Gaffer::Plug *plug );
 
+		void plugSet( const Gaffer::Plug *plug );
+
 		void hash( const Gaffer::ValuePlug *output, const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
 		void compute( Gaffer::ValuePlug *output, const Gaffer::Context *context ) const override;
 
-		void computeNameToIndexMapping();
-
 		static size_t g_firstPlugIndex;
+
+		// For bindings
+		friend void GafferImageModule::bindCatalogue();
+		static const std::type_info &internalImageTypeInfo();
 
 };
 
 IE_CORE_DECLAREPTR( Catalogue );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_CATALOGUE_H

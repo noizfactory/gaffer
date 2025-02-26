@@ -32,8 +32,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef IECORE_GEOMETRY_H
-#define IECORE_GEOMETRY_H
+#pragma once
+
+#include "GafferScene/Export.h"
 
 #include "GafferScene/TypeIds.h"
 
@@ -44,7 +45,7 @@ namespace IECoreScenePreview
 
 /// Class used to represent additional geometry types supported
 /// by specific renderers but not present in Cortex (think RiGeometry).
-class IECORESCENE_API Geometry : public IECoreScene::VisibleRenderable
+class GAFFERSCENE_API Geometry : public IECoreScene::VisibleRenderable
 {
 
 	public:
@@ -78,5 +79,3 @@ class IECORESCENE_API Geometry : public IECoreScene::VisibleRenderable
 IE_CORE_DECLAREPTR( Geometry );
 
 } // namespace IECoreScenePreview
-
-#endif // IECORE_GEOMETRY_H

@@ -45,26 +45,18 @@
 
 #include "IECore/MessageHandler.h"
 
+#include "fmt/format.h"
+
 using namespace IECore;
 using namespace Gaffer;
 using namespace GafferScene;
 using namespace GafferSceneTest;
 
-namespace IECore
-{
-
-/// \todo Move to Cortex
-size_t tbb_hasher( const InternedString &s )
-{
-	return tbb::tbb_hasher( s.string() );
-}
-
-} // namespace IECore
-
 namespace
 {
 
-InternedString g_internalOut( "__internalOut" );
+const InternedString g_internalOut( "__internalOut" );
+const InternedString g_sortedChildNames( "__sortedChildNames" );
 
 } // namespace
 
@@ -76,14 +68,14 @@ void ContextSanitiser::processStarted( const Gaffer::Process *process )
 {
 	if( const ScenePlug *scene = process->plug()->parent<ScenePlug>() )
 	{
-		if( process->context()->get<IECore::Data>( FilterPlug::inputSceneContextName, nullptr ) )
+		if( process->context()->getIfExists<uint64_t>( FilterPlug::inputSceneContextName ) )
 		{
 			warn( *process, FilterPlug::inputSceneContextName );
 		}
 
 		if( process->plug() != scene->setPlug() )
 		{
-			if( process->context()->get<IECore::Data>( ScenePlug::setNameContextName, nullptr ) )
+			if( process->context()->getIfExists<InternedString>( ScenePlug::setNameContextName ) )
 			{
 				warn( *process, ScenePlug::setNameContextName );
 			}
@@ -94,10 +86,15 @@ void ContextSanitiser::processStarted( const Gaffer::Process *process )
 			process->plug() != scene->transformPlug() &&
 			process->plug() != scene->attributesPlug() &&
 			process->plug() != scene->objectPlug() &&
-			process->plug() != scene->childNamesPlug()
+			process->plug() != scene->childNamesPlug() &&
+			process->plug() != scene->existsPlug() &&
+			process->plug() != scene->childBoundsPlug() &&
+			// Private plug, so we have no choice but to test
+			// for it by name.
+			process->plug()->getName() != g_sortedChildNames
 		)
 		{
-			if( process->context()->get<IECore::Data>( ScenePlug::scenePathContextName, nullptr ) )
+			if( process->context()->getIfExists<ScenePlug::ScenePath>( ScenePlug::scenePathContextName ) )
 			{
 				warn( *process, ScenePlug::scenePathContextName );
 			}
@@ -108,11 +105,11 @@ void ContextSanitiser::processStarted( const Gaffer::Process *process )
 	{
 		if( process->plug()->getName() == g_internalOut )
 		{
-			if( process->context()->get<IECore::Data>( ScenePlug::scenePathContextName, nullptr ) )
+			if( process->context()->getIfExists<ScenePlug::ScenePath>( ScenePlug::scenePathContextName ) )
 			{
 				warn( *process, ScenePlug::scenePathContextName );
 			}
-			if( process->context()->get<IECore::Data>( ScenePlug::setNameContextName, nullptr ) )
+			if( process->context()->getIfExists<InternedString>( ScenePlug::setNameContextName ) )
 			{
 				warn( *process, ScenePlug::setNameContextName );
 			}
@@ -133,22 +130,22 @@ void ContextSanitiser::warn( const Gaffer::Process &process, const IECore::Inter
 
 	if( m_warningsEmitted.insert( warning ).second )
 	{
-		std::string message = boost::str(
-			boost::format( "%s in context for %s %s" )
-				% contextVariable.string()
-				% process.plug()->relativeName(
-					process.plug()->ancestor<ScriptNode>()
-				)
-				% process.type()
+		std::string message = fmt::format(
+			"{} in context for {} {}",
+			contextVariable.string(),
+			process.plug()->relativeName(
+				process.plug()->ancestor<ScriptNode>()
+			),
+			process.type().string()
 		);
 		if( process.parent() )
 		{
-			message += boost::str(
-				boost::format( " (called from %s %s)" )
-					% process.parent()->plug()->relativeName(
-						process.parent()->plug()->ancestor<ScriptNode>()
-					)
-					% process.parent()->type()
+			message += fmt::format(
+				" (called from {} {})",
+				process.parent()->plug()->relativeName(
+					process.parent()->plug()->ancestor<ScriptNode>()
+				),
+				process.parent()->type().string()
 			);
 		}
 		IECore::msg(

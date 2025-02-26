@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_PLANE_H
-#define GAFFERSCENE_PLANE_H
+#pragma once
 
 #include "GafferScene/ObjectSource.h"
 
@@ -50,9 +49,9 @@ class GAFFERSCENE_API Plane : public ObjectSource
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::Plane, PlaneTypeId, ObjectSource );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::Plane, PlaneTypeId, ObjectSource );
 
-		Plane( const std::string &name=defaultName<Plane>() );
+		explicit Plane( const std::string &name=defaultName<Plane>() );
 		~Plane() override;
 
 		Gaffer::V2fPlug *dimensionsPlug();
@@ -77,5 +76,3 @@ class GAFFERSCENE_API Plane : public ObjectSource
 IE_CORE_DECLAREPTR( Plane )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_PLANE_H

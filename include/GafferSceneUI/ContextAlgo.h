@@ -34,14 +34,13 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENEUI_CONTEXTALGO_H
-#define GAFFERSCENEUI_CONTEXTALGO_H
+#pragma once
 
 #include "GafferSceneUI/Export.h"
 
-#include "IECore/PathMatcher.h"
+#include "GafferScene/VisibleSet.h"
 
-#include "OpenEXR/ImathLimits.h"
+#include "IECore/PathMatcher.h"
 
 namespace Gaffer
 {
@@ -63,27 +62,27 @@ namespace GafferSceneUI
 namespace ContextAlgo
 {
 
+/// VisibleSet
+/// ==========
+
+/// The UI components coordinate with each other to perform on-demand scene
+/// generation by using the Context to store a VisibleSet specifying which
+/// scene locations should be shown.
+/// For instance, this allows the Viewer to show the objects from locations
+/// exposed by expansion performed in the HierarchyView, and vice versa.
+GAFFERSCENEUI_API void setVisibleSet( Gaffer::Context *context, const GafferScene::VisibleSet &visibleSet );
+GAFFERSCENEUI_API GafferScene::VisibleSet getVisibleSet( const Gaffer::Context *context );
+
+/// Returns true if the named context variable affects the result of `getVisibleSet()`.
+/// This can be used from `Context::changedSignal()` to determine if the VisibleSet has been
+/// changed.
+GAFFERSCENEUI_API bool affectsVisibleSet( const IECore::InternedString &name );
+
 /// Path Expansion
 /// ==============
 
-/// The UI components coordinate with each other to perform on-demand scene
-/// generation by using the Context to store paths to the currently expanded
-/// locations within the scene. For instance, this allows the Viewer show the
-/// objects from locations exposed by expansion performed in the HierarchyView,
-/// and vice versa.
-///
-/// By convention, an expanded location is one whose children are visible,
-/// meaning that they are listed below it in the HierarchyView and their objects
-/// are drawn in the Viewer. Conversely, a collapsed location's children are
-/// not listed in the HierarchyView and the location itself is drawn as a
-/// the bounding box of the children.
-///
-/// As a consequence of this definition, it is not necessary to expand locations
-/// without children. For a simple node such as Sphere, it is only necessary
-/// to expand the root location ("/") to view the geometry. For nodes which
-/// construct a deeper hierarchy, if the name of a location is visible in
-/// the HierarchyView, then it's geometry will be displayed in the Viewer.
-
+/// These are temporary legacy methods allowing access to `VisibleSet::expansions`
+/// for the purposes of providing backwards compatibility.
 GAFFERSCENEUI_API void setExpandedPaths( Gaffer::Context *context, const IECore::PathMatcher &paths );
 GAFFERSCENEUI_API IECore::PathMatcher getExpandedPaths( const Gaffer::Context *context );
 
@@ -97,7 +96,7 @@ GAFFERSCENEUI_API void expand( Gaffer::Context *context, const IECore::PathMatch
 
 /// Appends descendant paths to the current expansion up to a specified maximum depth.
 /// Returns a new PathMatcher containing the new leafs of this expansion.
-GAFFERSCENEUI_API IECore::PathMatcher expandDescendants( Gaffer::Context *context, const IECore::PathMatcher &paths, const GafferScene::ScenePlug *scene, int depth = Imath::limits<int>::max() );
+GAFFERSCENEUI_API IECore::PathMatcher expandDescendants( Gaffer::Context *context, const IECore::PathMatcher &paths, const GafferScene::ScenePlug *scene, int depth = std::numeric_limits<int>::max() );
 
 /// Clears the currently expanded paths
 GAFFERSCENEUI_API void clearExpansion( Gaffer::Context *context );
@@ -132,5 +131,3 @@ GAFFERSCENEUI_API bool affectsLastSelectedPath( const IECore::InternedString &na
 } // namespace ContextAlgo
 
 } // namespace GafferSceneUI
-
-#endif // GAFFERSCENEUI_CONTEXTALGO_H

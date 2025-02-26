@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFER_COMPUTENODE_H
-#define GAFFER_COMPUTENODE_H
+#pragma once
 
 #include "Gaffer/DependencyNode.h"
 
@@ -58,10 +57,10 @@ class GAFFER_API ComputeNode : public DependencyNode
 
 	public :
 
-		ComputeNode( const std::string &name=defaultName<ComputeNode>() );
+		explicit ComputeNode( const std::string &name=defaultName<ComputeNode>() );
 		~ComputeNode() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( Gaffer::ComputeNode, ComputeNodeTypeId, DependencyNode );
+		GAFFER_NODE_DECLARE_TYPE( Gaffer::ComputeNode, ComputeNodeTypeId, DependencyNode );
 
 	protected :
 
@@ -91,9 +90,4 @@ class GAFFER_API ComputeNode : public DependencyNode
 
 };
 
-typedef FilteredChildIterator<TypePredicate<ComputeNode> > ComputeNodeIterator;
-typedef FilteredRecursiveChildIterator<TypePredicate<ComputeNode> > RecursiveComputeNodeIterator;
-
 } // namespace Gaffer
-
-#endif // GAFFER_COMPUTENODE_H

@@ -34,8 +34,9 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENETEST_CONTEXTSANITISER_H
-#define GAFFERSCENETEST_CONTEXTSANITISER_H
+#pragma once
+
+#include "GafferSceneTest/Export.h"
 
 #include "Gaffer/Monitor.h"
 #include "Gaffer/Plug.h"
@@ -46,7 +47,7 @@ namespace GafferSceneTest
 {
 
 /// A monitor which warns about common context handling mistakes.
-class GAFFER_API ContextSanitiser : public Gaffer::Monitor
+class GAFFERSCENETEST_API ContextSanitiser : public Gaffer::Monitor
 {
 
 	public :
@@ -64,12 +65,12 @@ class GAFFER_API ContextSanitiser : public Gaffer::Monitor
 
 		/// First is the upstream plug where the problem was detected. Second
 		/// is the plug from the parent process responsible for calling upstream.
-		typedef std::pair<Gaffer::ConstPlugPtr, Gaffer::ConstPlugPtr> PlugPair;
-		typedef std::pair<PlugPair, IECore::InternedString> Warning;
+		using PlugPair = std::pair<Gaffer::ConstPlugPtr, Gaffer::ConstPlugPtr>;
+		using Warning = std::pair<PlugPair, IECore::InternedString>;
 
 		void warn( const Gaffer::Process &process, const IECore::InternedString &contextVariable );
 
-		typedef tbb::concurrent_unordered_set<Warning> WarningSet;
+		using WarningSet = tbb::concurrent_unordered_set<Warning>;
 		WarningSet m_warningsEmitted;
 
 };
@@ -77,5 +78,3 @@ class GAFFER_API ContextSanitiser : public Gaffer::Monitor
 IE_CORE_DECLAREPTR( ContextSanitiser )
 
 } // namespace GafferSceneTest
-
-#endif // GAFFERSCENETEST_CONTEXTSANITISER_H

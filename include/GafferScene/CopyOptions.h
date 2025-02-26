@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_COPYOPTIONS_H
-#define GAFFERSCENE_COPYOPTIONS_H
+#pragma once
 
 #include "GafferScene/GlobalsProcessor.h"
 #include "GafferScene/ScenePlug.h"
@@ -50,16 +49,16 @@ class GAFFERSCENE_API CopyOptions : public GafferScene::GlobalsProcessor
 
 	public :
 
-		CopyOptions( const std::string &name=defaultName<CopyOptions>() );
+		explicit CopyOptions( const std::string &name=defaultName<CopyOptions>() );
 		~CopyOptions() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::CopyOptions, CopyOptionsTypeId, GlobalsProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::CopyOptions, CopyOptionsTypeId, GlobalsProcessor );
 
 		GafferScene::ScenePlug *sourcePlug();
 		const GafferScene::ScenePlug *sourcePlug() const;
 
-		Gaffer::StringPlug *namesPlug();
-		const Gaffer::StringPlug *namesPlug() const;
+		Gaffer::StringPlug *optionsPlug();
+		const Gaffer::StringPlug *optionsPlug() const;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
 
@@ -77,5 +76,3 @@ class GAFFERSCENE_API CopyOptions : public GafferScene::GlobalsProcessor
 IE_CORE_DECLAREPTR( CopyOptions )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_COPYOPTIONS_H

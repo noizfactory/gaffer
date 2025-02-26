@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERBINDINGS_SERIALISATIONBINDING_INL
-#define GAFFERBINDINGS_SERIALISATIONBINDING_INL
+#pragma once
 
 namespace GafferBindings
 {
@@ -115,7 +114,7 @@ boost::python::object moduleDependencies( const T *self, const Gaffer::GraphComp
 }
 
 template<typename T, typename Wrapper>
-std::string constructor( const T *self, const Gaffer::GraphComponent *graphComponent, const Serialisation &serialisation )
+std::string constructor( const T *self, const Gaffer::GraphComponent *graphComponent, Serialisation &serialisation )
 {
 	if( dynamic_cast<const Wrapper *>( self ) )
 	{
@@ -128,7 +127,7 @@ std::string constructor( const T *self, const Gaffer::GraphComponent *graphCompo
 }
 
 template<typename T, typename Wrapper>
-std::string postConstructor( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation )
+std::string postConstructor( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation )
 {
 	if( dynamic_cast<const Wrapper *>( self ) )
 	{
@@ -141,7 +140,7 @@ std::string postConstructor( const T *self, const Gaffer::GraphComponent *graphC
 }
 
 template<typename T, typename Wrapper>
-std::string postHierarchy( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation )
+std::string postHierarchy( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation )
 {
 	if( dynamic_cast<const Wrapper *>( self ) )
 	{
@@ -154,7 +153,7 @@ std::string postHierarchy( const T *self, const Gaffer::GraphComponent *graphCom
 }
 
 template<typename T, typename Wrapper>
-std::string postScript( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, const Serialisation &serialisation )
+std::string postScript( const T *self, const Gaffer::GraphComponent *graphComponent, const std::string &identifier, Serialisation &serialisation )
 {
 	if( dynamic_cast<const Wrapper *>( self ) )
 	{
@@ -209,5 +208,3 @@ SerialiserClass<T, Base, TWrapper>::SerialiserClass( const char *name )
 }
 
 } // namespace GafferBindings
-
-#endif // GAFFERBINDINGS_SERIALISATIONBINDING_INL

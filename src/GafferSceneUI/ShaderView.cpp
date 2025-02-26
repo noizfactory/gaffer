@@ -42,21 +42,25 @@
 #include "GafferScene/Shader.h"
 #include "GafferScene/ShaderPlug.h"
 
+#include "GafferImageUI/ImageGadget.h"
+
 #include "GafferImage/Display.h"
 
 #include "Gaffer/Context.h"
 #include "Gaffer/PlugAlgo.h"
 #include "Gaffer/Reference.h"
+#include "Gaffer/ScriptNode.h"
 #include "Gaffer/StringPlug.h"
 
 #include "IECoreImage/DisplayDriverServer.h"
 
 #include "boost/algorithm/string/predicate.hpp"
 #include "boost/asio.hpp"
-#include "boost/bind.hpp"
+#include "boost/bind/bind.hpp"
 #include "boost/container/flat_map.hpp"
 #include "boost/lexical_cast.hpp"
 
+using namespace boost::placeholders;
 using namespace Gaffer;
 using namespace GafferImage;
 using namespace GafferScene;
@@ -69,26 +73,39 @@ using namespace GafferSceneUI;
 namespace
 {
 
-typedef boost::container::flat_map<IECore::InternedString, ShaderView::RendererCreator> Renderers;
+using Renderers = boost::container::flat_map<IECore::InternedString, ShaderView::RendererCreator>;
 Renderers &renderers()
 {
-	static Renderers r;
-	return r;
+	// See comment in `sceneCreators()`.
+	static Renderers *r = new Renderers;
+	return *r;
 }
 
-typedef std::pair<std::string, std::string> PrefixAndName;
-typedef boost::container::flat_map<PrefixAndName, ShaderView::SceneCreator> SceneCreators;
+using PrefixAndName = std::pair<std::string, std::string>;
+using SceneCreators = boost::container::flat_map<PrefixAndName, ShaderView::SceneCreator>;
 
 SceneCreators &sceneCreators()
 {
-	static SceneCreators sc;
-	return sc;
+	// Deliberately leaking here, as the alternative is for `sc` to
+	// be destroyed during shutdown when static destructors are run.
+	// Static destructors are run _after_ Python has shut down, and
+	// attempting to destroy SceneCreators containing PyObjects can
+	// lead to crashes in `subtype_dealloc()`.
+	static SceneCreators *sc = new SceneCreators;
+	return *sc;
 }
 
-typedef boost::signal<void ( const PrefixAndName & )> SceneRegistrationChangedSignal;
+using SceneRegistrationChangedSignal = Signals::Signal<void ( const PrefixAndName & )>;
 SceneRegistrationChangedSignal &sceneRegistrationChangedSignal()
 {
 	static SceneRegistrationChangedSignal s;
+	return s;
+}
+
+using RendererRegistrationChangedSignal = Gaffer::Signals::Signal<void ()>;
+RendererRegistrationChangedSignal &rendererRegistrationChangedSignal()
+{
+	static RendererRegistrationChangedSignal s;
 	return s;
 }
 
@@ -105,12 +122,18 @@ IECoreImage::DisplayDriverServer *displayDriverServer()
 //////////////////////////////////////////////////////////////////////////
 
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( ShaderView );
+GAFFER_NODE_DEFINE_TYPE( ShaderView );
 
+/// \todo Registering against `out` is not ideal. Most Shader subclasses represent outputs as children of `out`, and
+/// connecting directly from `Shader.out` to `View.in` results in a non-standard ShaderNetwork in which the name of
+/// the output parameter is not specified. Instead we want to register against `out.*`, so that the children are
+/// connected into `View.in`. We can't do that yet though, because ArnoldShader uses `out` directly - see #5542.
+/// Alternatively, we could omit this registration entirely in favour of specific registrations for each subclass,
+/// but that would be a breaking change (albeit a small one).
 ShaderView::ViewDescription<ShaderView> ShaderView::g_viewDescription( GafferScene::Shader::staticTypeId(), "out" );
 
-ShaderView::ShaderView( const std::string &name )
-	:	ImageView( name ), m_framed( false )
+ShaderView::ShaderView( Gaffer::ScriptNodePtr scriptNode )
+	:	ImageView( scriptNode ), m_framed( false )
 {
 	// Create a converter to generate an image
 	// from the input shader.
@@ -151,11 +174,13 @@ ShaderView::ShaderView( const std::string &name )
 
 	viewportGadget()->visibilityChangedSignal().connect( boost::bind( &ShaderView::viewportVisibilityChanged, this ) );
 	viewportGadget()->preRenderSignal().connect( boost::bind( &ShaderView::preRender, this ) );
+	contextChangedSignal().connect( boost::bind( &ShaderView::contextChanged, this ) );
 	plugSetSignal().connect( boost::bind( &ShaderView::plugSet, this, ::_1 ) );
 	plugDirtiedSignal().connect( boost::bind( &ShaderView::plugDirtied, this, ::_1 ) );
 	sceneRegistrationChangedSignal().connect( boost::bind( &ShaderView::sceneRegistrationChanged, this, ::_1 ) );
+	rendererRegistrationChangedSignal().connect( boost::bind( &ShaderView::rendererRegistrationChanged, this ) );
 	Display::driverCreatedSignal().connect( boost::bind( &ShaderView::driverCreated, this, ::_1, ::_2 ) );
-
+	imageGadget()->stateChangedSignal().connect( boost::bind( &ShaderView::imageGadgetStateChanged, this ) );
 }
 
 ShaderView::~ShaderView()
@@ -184,7 +209,11 @@ const GafferImage::Display *ShaderView::display() const
 
 std::string ShaderView::shaderPrefix() const
 {
-	IECore::ConstCompoundObjectPtr attributes = inPlug<ShaderPlug>()->attributes();
+	IECore::ConstCompoundObjectPtr attributes;
+	{
+		Context::Scope scope( context() );
+		attributes = inPlug<ShaderPlug>()->attributes();
+	}
 	const char *shaders[] = { "surface", "displacement", "shader", nullptr };
 	for( IECore::CompoundObject::ObjectMap::const_iterator it = attributes->members().begin(), eIt = attributes->members().end(); it != eIt; ++it )
 	{
@@ -221,15 +250,14 @@ ShaderView::SceneChangedSignal &ShaderView::sceneChangedSignal()
 	return m_sceneChangedSignal;
 }
 
-void ShaderView::setContext( Gaffer::ContextPtr context )
-{
-	ImageView::setContext( context );
-	updateRendererContext();
-}
-
 void ShaderView::viewportVisibilityChanged()
 {
 	updateRendererState();
+}
+
+void ShaderView::contextChanged()
+{
+	updateRendererContext();
 }
 
 void ShaderView::plugSet( Gaffer::Plug *plug )
@@ -251,7 +279,9 @@ void ShaderView::plugDirtied( Gaffer::Plug *plug )
 		if( !m_idleConnection.connected() )
 		{
 			m_idleConnection = GafferUI::Gadget::idleSignal().connect(
-				boost::bind( &ShaderView::idleUpdate, ShaderViewPtr( this ) )
+				// OK to bind a raw pointer, because our destructor
+				// will disconnect `m_idleConnection`.
+				boost::bind( &ShaderView::idleUpdate, this )
 			);
 		}
 	}
@@ -265,6 +295,12 @@ void ShaderView::sceneRegistrationChanged( const PrefixAndName &prefixAndName )
 		m_scenes.erase( prefixAndName );
 		updateScene();
 	}
+}
+
+void ShaderView::rendererRegistrationChanged()
+{
+	m_rendererShaderPrefix = "";
+	plugDirtied( inPlug() );
 }
 
 void ShaderView::idleUpdate()
@@ -318,7 +354,7 @@ void ShaderView::updateRendererContext()
 {
 	if( m_renderer )
 	{
-		m_renderer->setContext( getContext() );
+		m_renderer->setContext( new Context( *context() ) );
 	}
 }
 
@@ -330,20 +366,17 @@ void ShaderView::updateRendererState()
 	}
 
 	m_renderer->statePlug()->setValue(
-		viewportGadget()->visible() ? InteractiveRender::Running : InteractiveRender::Stopped
+		( viewportGadget()->visible() && imageGadget()->state() != GafferImageUI::ImageGadget::Paused ) ? InteractiveRender::Running : InteractiveRender::Stopped
 	);
 }
 
 void ShaderView::updateScene()
 {
 	PrefixAndName prefixAndName( shaderPrefix(), scenePlug()->getValue() );
-	if( m_scene && m_scenePrefixAndName == prefixAndName )
+	if( m_scenePrefixAndName == prefixAndName )
 	{
 		return;
 	}
-
-	m_scene = nullptr;
-	m_scenePrefixAndName = prefixAndName;
 
 	Scenes::const_iterator it = m_scenes.find( prefixAndName );
 	if( it != m_scenes.end() )
@@ -358,34 +391,58 @@ void ShaderView::updateScene()
 		SceneCreators::const_iterator it = sc.find( prefixAndName );
 		if( it == sc.end() )
 		{
-			it = sc.find( PrefixAndName( prefixAndName.first, "Default" ) );
+			IECore::msg(
+				IECore::Msg::Error, "ShaderView",
+				fmt::format( "SceneCreator \"{}\" not registered", prefixAndName.second )
+			);
+			m_scene = nullptr;
 		}
-
-		if( it == sc.end() )
+		else
 		{
-			sceneChangedSignal()( this );
-			return;
+			m_scene = it->second();
+			if( !m_scene )
+			{
+				IECore::msg(
+					IECore::Msg::Error, "ShaderView",
+					fmt::format( "SceneCreator \"{}\" returned null", prefixAndName.second )
+				);
+			}
 		}
-
-		m_scene = it->second();
 		m_scenes[prefixAndName] = m_scene;
 	}
 
-	Plug *shaderPlug = m_scene->getChild<Plug>( "shader" );
-	if( !shaderPlug || shaderPlug->direction() != Plug::In )
+	if( m_scene )
 	{
-		throw IECore::Exception( "Scene does not have a \"shader\" input plug" );
+		Plug *shaderPlug = m_scene->getChild<Plug>( "shader" );
+		if( !shaderPlug || shaderPlug->direction() != Plug::In )
+		{
+			IECore::msg(
+				IECore::Msg::Error, "ShaderView",
+				fmt::format( "Scene \"{}\" does not have a \"shader\" input plug", prefixAndName.second )
+			);
+		}
+		else
+		{
+			shaderPlug->setInput( m_imageConverter->getChild<Plug>( "in" ) );
+		}
+
+		ScenePlug *outPlug = m_scene->getChild<ScenePlug>( "out" );
+		if( !outPlug || outPlug->direction() != Plug::Out )
+		{
+			IECore::msg(
+				IECore::Msg::Error, "ShaderView",
+				fmt::format( "Scene \"{}\" does not have an \"out\" output scene plug", prefixAndName.second )
+			);
+			outPlug = nullptr;
+		}
+		m_imageConverter->getChild<DeleteOutputs>( "DeleteOutputs" )->inPlug()->setInput( outPlug );
+	}
+	else
+	{
+		m_imageConverter->getChild<DeleteOutputs>( "DeleteOutputs" )->inPlug()->setInput( nullptr );
 	}
 
-	shaderPlug->setInput( m_imageConverter->getChild<Plug>( "in" ) );
-
-	ScenePlug *outPlug = m_scene->getChild<ScenePlug>( "out" );
-	if( !outPlug || outPlug->direction() != Plug::Out )
-	{
-		throw IECore::Exception( "Scene does not have an \"out\" output scene plug" );
-	}
-	m_imageConverter->getChild<DeleteOutputs>( "DeleteOutputs" )->inPlug()->setInput( outPlug );
-
+	m_scenePrefixAndName = prefixAndName;
 	sceneChangedSignal()( this );
 }
 
@@ -405,7 +462,7 @@ void ShaderView::preRender()
 	// we get the resolution of the upcoming render from the render
 	// globals and frame ready for that.
 
-	Context::Scope scopedContext( getContext() );
+	Context::Scope scopedContext( context() );
 	/// \todo Maybe we should wrap this up into a `SceneAlgo::resolution()`
 	/// method that also takes care of overscan, multiplier etc?
 	IECore::ConstCompoundObjectPtr globals = m_scene->getChild<ScenePlug>( "out" )->globalsPlug()->getValue();
@@ -419,12 +476,24 @@ void ShaderView::preRender()
 	m_framed = true;
 }
 
+void ShaderView::imageGadgetStateChanged()
+{
+	updateRendererState();
+}
+
 void ShaderView::registerRenderer( const std::string &shaderPrefix, RendererCreator rendererCreator )
 {
 	renderers()[shaderPrefix] = rendererCreator;
+	rendererRegistrationChangedSignal()();
 }
 
-void ShaderView::registerScene( const std::string &shaderPrefix, const std::string &name, const std::string &fileName )
+void ShaderView::deregisterRenderer( const std::string &shaderPrefix )
+{
+	renderers().erase(shaderPrefix);
+	rendererRegistrationChangedSignal()();
+}
+
+void ShaderView::registerScene( const std::string &shaderPrefix, const std::string &name, const std::filesystem::path &fileName )
 {
 	// See ShaderViewBinding.cpp for details.
 	throw IECore::Exception( "ShaderView::registerScene currently only implemented in Python" );
@@ -459,4 +528,3 @@ void ShaderView::driverCreated( IECoreImage::DisplayDriver *driver, const IECore
 		}
 	}
 }
-

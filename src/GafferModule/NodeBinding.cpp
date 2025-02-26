@@ -60,50 +60,47 @@ namespace
 
 struct UnaryPlugSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, PlugPtr p )
+	void operator()( boost::python::object slot, PlugPtr p )
 	{
 		try
 		{
 			slot( p );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
 struct BinaryPlugSlotCaller
 {
 
-	boost::signals::detail::unusable operator()( boost::python::object slot, PlugPtr p1, PlugPtr p2 )
+	void operator()( boost::python::object slot, PlugPtr p1, PlugPtr p2 )
 	{
 		try
 		{
 			slot( p1, p2 );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
 struct ErrorSlotCaller
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, const Plug *plug, const Plug *source, const std::string &error )
+	void operator()( boost::python::object slot, const Plug *plug, const Plug *source, const std::string &error )
 	{
 		try
 		{
 			slot( PlugPtr( const_cast<Plug *>( plug ) ), PlugPtr( const_cast<Plug *>( source ) ), error );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
 			ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -111,14 +108,13 @@ struct ErrorSlotCaller
 
 void GafferModule::bindNode()
 {
-	typedef NodeWrapper<Node> NodeWrapper;
+	using NodeWrapper = NodeWrapper<Node>;
 
 	{
 		scope s = NodeClass<Node, NodeWrapper>()
 			.def( "scriptNode", (ScriptNode *(Node::*)())&Node::scriptNode, return_value_policy<CastToIntrusivePtr>() )
 			.def( "plugSetSignal", &Node::plugSetSignal, return_internal_reference<1>() )
 			.def( "plugInputChangedSignal", &Node::plugInputChangedSignal, return_internal_reference<1>() )
-			.def( "plugFlagsChangedSignal", &Node::plugFlagsChangedSignal, return_internal_reference<1>() )
 			.def( "plugDirtiedSignal", &Node::plugDirtiedSignal, return_internal_reference<1>() )
 			.def( "errorSignal", (Node::ErrorSignal &(Node::*)())&Node::errorSignal, return_internal_reference<1>() )
 		;
@@ -130,13 +126,13 @@ void GafferModule::bindNode()
 
 	Serialisation::registerSerialiser( Node::staticTypeId(), new NodeSerialiser() );
 
-	typedef SerialiserWrapper<NodeSerialiser> NodeSerialiserWrapper;
+	using NodeSerialiserWrapper = SerialiserWrapper<NodeSerialiser>;
 	SerialiserClass<NodeSerialiser, Serialisation::Serialiser, NodeSerialiserWrapper>( "NodeSerialiser" );
 
-	typedef DependencyNodeWrapper<DependencyNode> DependencyNodeWrapper;
+	using DependencyNodeWrapper = DependencyNodeWrapper<DependencyNode>;
 	DependencyNodeClass<DependencyNode, DependencyNodeWrapper>();
 
-	typedef ComputeNodeWrapper<ComputeNode> ComputNodeWrapper;
-	DependencyNodeClass<ComputeNode, ComputNodeWrapper>();
+	using ComputeNodeWrapper = ComputeNodeWrapper<ComputeNode>;
+	DependencyNodeClass<ComputeNode, ComputeNodeWrapper>();
 
 }

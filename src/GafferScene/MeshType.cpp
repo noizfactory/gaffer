@@ -38,7 +38,7 @@
 
 #include "Gaffer/StringPlug.h"
 
-#include "IECoreScene/MeshNormalsOp.h"
+#include "IECoreScene/MeshAlgo.h"
 #include "IECoreScene/MeshPrimitive.h"
 
 using namespace IECore;
@@ -46,22 +46,20 @@ using namespace IECoreScene;
 using namespace Gaffer;
 using namespace GafferScene;
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( MeshType );
+GAFFER_NODE_DEFINE_TYPE( MeshType );
 
 size_t MeshType::g_firstPlugIndex = 0;
 
 MeshType::MeshType( const std::string &name )
-	:	SceneElementProcessor( name )
+	:	ObjectProcessor( name, PathMatcher::EveryMatch )
 {
 	storeIndexOfNextChild( g_firstPlugIndex );
 	addChild( new StringPlug( "meshType", Plug::In, "" ) );
 	addChild( new BoolPlug( "calculatePolygonNormals" ) );
 	addChild( new BoolPlug( "overwriteExistingNormals" ) );
-
-	// Fast pass-throughs for things we don't modify
-	outPlug()->attributesPlug()->setInput( inPlug()->attributesPlug() );
-	outPlug()->transformPlug()->setInput( inPlug()->transformPlug() );
-	outPlug()->boundPlug()->setInput( inPlug()->boundPlug() );
+	addChild( new StringPlug( "interpolateBoundary", Plug::In, "" ) );
+	addChild( new StringPlug( "faceVaryingLinearInterpolation", Plug::In, "" ) );
+	addChild( new StringPlug( "triangleSubdivisionRule", Plug::In, "" ) );
 }
 
 MeshType::~MeshType()
@@ -98,42 +96,74 @@ const Gaffer::BoolPlug *MeshType::overwriteExistingNormalsPlug() const
 	return getChild<BoolPlug>( g_firstPlugIndex + 2 );
 }
 
-void MeshType::affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const
+Gaffer::StringPlug *MeshType::interpolateBoundaryPlug()
 {
-	SceneElementProcessor::affects( input, outputs );
-
-	if( input == meshTypePlug() || input == calculatePolygonNormalsPlug() || input == overwriteExistingNormalsPlug() )
-	{
-		outputs.push_back( outPlug()->objectPlug() );
-	}
+	return getChild<StringPlug>( g_firstPlugIndex + 3 );
 }
 
-bool MeshType::processesObject() const
+const Gaffer::StringPlug *MeshType::interpolateBoundaryPlug() const
 {
-	return true;
+	return getChild<StringPlug>( g_firstPlugIndex + 3 );
+}
+
+Gaffer::StringPlug *MeshType::faceVaryingLinearInterpolationPlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 4 );
+}
+
+const Gaffer::StringPlug *MeshType::faceVaryingLinearInterpolationPlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 4 );
+}
+
+Gaffer::StringPlug *MeshType::triangleSubdivisionRulePlug()
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 5 );
+}
+
+const Gaffer::StringPlug *MeshType::triangleSubdivisionRulePlug() const
+{
+	return getChild<StringPlug>( g_firstPlugIndex + 5 );
+}
+
+bool MeshType::affectsProcessedObject( const Gaffer::Plug *input ) const
+{
+	return
+		ObjectProcessor::affectsProcessedObject( input ) ||
+		input == meshTypePlug() ||
+		input == calculatePolygonNormalsPlug() ||
+		input == overwriteExistingNormalsPlug() ||
+		input == interpolateBoundaryPlug() ||
+		input == faceVaryingLinearInterpolationPlug() ||
+		input == triangleSubdivisionRulePlug()
+	;
 }
 
 void MeshType::hashProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::MurmurHash &h ) const
 {
+	ObjectProcessor::hashProcessedObject( path, context, h );
 	meshTypePlug()->hash( h );
 	calculatePolygonNormalsPlug()->hash( h );
 	overwriteExistingNormalsPlug()->hash( h );
+	interpolateBoundaryPlug()->hash( h );
+	faceVaryingLinearInterpolationPlug()->hash( h );
+	triangleSubdivisionRulePlug()->hash( h );
 }
 
-IECore::ConstObjectPtr MeshType::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, IECore::ConstObjectPtr inputObject ) const
+IECore::ConstObjectPtr MeshType::computeProcessedObject( const ScenePath &path, const Gaffer::Context *context, const IECore::Object *inputObject ) const
 {
-	const MeshPrimitive *inputGeometry = runTimeCast<const MeshPrimitive>( inputObject.get() );
+	const MeshPrimitive *inputGeometry = runTimeCast<const MeshPrimitive>( inputObject );
 	if( !inputGeometry )
 	{
 		return inputObject;
 	}
 
-    std::string meshType = meshTypePlug()->getValue();
-	if( meshType == "" )
-	{
-		// unchanged
-		return inputObject;
-	}
+	IECore::InternedString empty( "" );
+
+	std::string meshType = meshTypePlug()->getValue();
+	IECore::InternedString interpolateBoundary = interpolateBoundaryPlug()->getValue();
+	IECore::InternedString faceVaryingLinearInterpolation = faceVaryingLinearInterpolationPlug()->getValue();
+	IECore::InternedString triangleSubdivisionRule = triangleSubdivisionRulePlug()->getValue();
 
 	// Check if we need to recompute normals
 	bool doNormals = false;
@@ -144,28 +174,51 @@ IECore::ConstObjectPtr MeshType::computeProcessedObject( const ScenePath &path, 
 	}
 
 	// If we don't need to change anything, don't bother duplicating the input
-	if( inputGeometry->interpolation() == meshType && !doNormals )
+	if(
+		( meshType == "" || meshType == inputGeometry->interpolation() ) &&
+		( interpolateBoundary == empty || interpolateBoundary == inputGeometry->getInterpolateBoundary() ) &&
+		( faceVaryingLinearInterpolation == empty || faceVaryingLinearInterpolation == inputGeometry->getFaceVaryingLinearInterpolation() ) &&
+		( triangleSubdivisionRule == empty || triangleSubdivisionRule == inputGeometry->getTriangleSubdivisionRule() ) &&
+		!doNormals
+	)
 	{
 		return inputObject;
 	}
 
 	IECoreScene::MeshPrimitivePtr result = inputGeometry->copy();
-	result->setInterpolation( meshType );
-	if( meshType != "linear" )
+
+	if( meshType != "" )
 	{
-		IECoreScene::PrimitiveVariableMap::iterator varN = result->variables.find( "N" );
-		if( varN != result->variables.end() )
+		result->setInterpolation( meshType );
+
+		if( meshType != "linear" )
 		{
-			result->variables.erase( varN );
+			IECoreScene::PrimitiveVariableMap::iterator varN = result->variables.find( "N" );
+			if( varN != result->variables.end() )
+			{
+				result->variables.erase( varN );
+			}
+		}
+
+		if( doNormals )
+		{
+			result->variables[ "N" ] = MeshAlgo::calculateNormals( result.get(), PrimitiveVariable::Interpolation::Vertex, "P", context->canceller() );
 		}
 	}
 
-	if( doNormals )
+	if( interpolateBoundary != empty )
 	{
-		IECoreScene::MeshNormalsOpPtr normalOp = new IECoreScene::MeshNormalsOp();
-		normalOp->inputParameter()->setValue( result );
-		normalOp->copyParameter()->setTypedValue( false );
-		normalOp->operate();
+		result->setInterpolateBoundary( interpolateBoundary );
+	}
+
+	if( faceVaryingLinearInterpolation != empty )
+	{
+		result->setFaceVaryingLinearInterpolation( faceVaryingLinearInterpolation );
+	}
+
+	if( triangleSubdivisionRule != empty )
+	{
+		result->setTriangleSubdivisionRule( triangleSubdivisionRule );
 	}
 
 	return result;

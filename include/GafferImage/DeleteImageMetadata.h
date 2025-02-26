@@ -34,10 +34,11 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_DELETEIMAGEMETADATA_H
-#define GAFFERIMAGE_DELETEIMAGEMETADATA_H
+#pragma once
 
 #include "GafferImage/MetadataProcessor.h"
+
+#include "Gaffer/StringPlug.h"
 
 namespace GafferImage
 {
@@ -47,10 +48,10 @@ class GAFFERIMAGE_API DeleteImageMetadata : public MetadataProcessor
 
 	public :
 
-		DeleteImageMetadata( const std::string &name=defaultName<DeleteImageMetadata>() );
+		explicit DeleteImageMetadata( const std::string &name=defaultName<DeleteImageMetadata>() );
 		~DeleteImageMetadata() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::DeleteImageMetadata, DeleteImageMetadataTypeId, MetadataProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::DeleteImageMetadata, DeleteImageMetadataTypeId, MetadataProcessor );
 
 		Gaffer::StringPlug *namesPlug();
 		const Gaffer::StringPlug *namesPlug() const;
@@ -74,5 +75,3 @@ class GAFFERIMAGE_API DeleteImageMetadata : public MetadataProcessor
 IE_CORE_DECLAREPTR( DeleteImageMetadata );
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_DELETEIMAGEMETADATA_H

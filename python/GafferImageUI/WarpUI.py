@@ -69,8 +69,10 @@ Gaffer.Metadata.registerNode(
 			"""
 			The filter used to perform the resampling. The name
 			of any OIIO filter may be specified, but this UI
-			only exposes a limited range of 4 options which perform
-			well for warping, ordered from softest to sharpest.
+			only exposes a limited range of 5 options which perform
+			well for warping, ordered from softest to sharpest. Plus
+			the extra "bilinear" mode which is lower quality, but
+			fast.
 			""",
 
 			"plugValueWidget:type", "GafferUI.PresetsPlugValueWidget",
@@ -80,6 +82,7 @@ Gaffer.Metadata.registerNode(
 			"preset:Keys", "keys",
 			"preset:Simon", "simon",
 			"preset:Rifman", "rifman",
+			"preset:Bilinear", "bilinear",
 
 		],
 
@@ -92,6 +95,9 @@ Gaffer.Metadata.registerNode(
 			that mostly preserve the size of pixels, but could have a large impact if there is
 			heavy distortion.  Fixes problems with aliasing, at the cost of some extra calculations.
 			""",
+
+			"userDefault", False,
+			"layout:activator", lambda plug : plug.node()["filter"].getValue() != "bilinear",
 		],
 
 	}

@@ -38,9 +38,14 @@
 import unittest
 import time
 import datetime
-import pwd
-import grp
+import pathlib
 import os
+if os.name !="nt" :
+
+	import pwd
+	import grp
+else :
+	from . import _WindowsUtils
 
 import IECore
 
@@ -53,32 +58,33 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 		p = Gaffer.FileSystemPath( __file__ )
 
-		self.assert_( p.isValid() )
-		self.assert_( p.isLeaf() )
+		self.assertTrue( p.isValid() )
+		self.assertTrue( p.isLeaf() )
 
 		while len( p ) :
 
 			del p[-1]
-			self.assert_( p.isValid() )
-			self.assert_( not p.isLeaf() )
+			self.assertTrue( p.isValid() )
+			self.assertFalse( p.isLeaf() )
 
 	def testIsLeaf( self ) :
 
 		path = Gaffer.FileSystemPath( "/this/path/doesnt/exist" )
-		self.assert_( not path.isLeaf() )
+		self.assertFalse( path.isLeaf() )
 
 	def testConstructWithFilter( self ) :
 
 		p = Gaffer.FileSystemPath( __file__ )
-		self.failUnless( p.getFilter() is None )
+		self.assertIsNone( p.getFilter() )
 
 		f = Gaffer.FileNamePathFilter( [ "*.exr" ] )
 		p = Gaffer.FileSystemPath( __file__, filter = f )
-		self.failUnless( p.getFilter().isSame( f ) )
+		self.assertTrue( p.getFilter().isSame( f ) )
 
+	@unittest.skipIf( os.name == "nt", "Windows does not support symbolic links." )
 	def testBrokenSymbolicLinks( self ) :
 
-		os.symlink( self.temporaryDirectory() + "/nonExistent", self.temporaryDirectory() + "/broken" )
+		os.symlink( self.temporaryDirectory() / "nonExistent", self.temporaryDirectory() / "broken" )
 
 		# we do want symlinks to appear in children, even if they're broken
 		d = Gaffer.FileSystemPath( self.temporaryDirectory() )
@@ -86,7 +92,7 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		self.assertEqual( len( c ), 1 )
 
 		l = c[0]
-		self.assertEqual( str( l ), self.temporaryDirectory() + "/broken" )
+		self.assertEqual( str( l ), ( self.temporaryDirectory() / "broken" ).as_posix() )
 
 		# we also want broken symlinks to report themselves as "valid",
 		# because having a path return a child and then claim the child
@@ -95,20 +101,20 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		self.assertEqual( l.isValid(), True )
 
 		# since we said it was valid, it ought to have some info
-		info = l.info()
-		self.failUnless( info is not None )
+		self.assertIsNotNone( l.info() )
 
+	@unittest.skipIf( os.name == "nt", "Windows does not support symbolic links." )
 	def testSymLinkInfo( self ) :
 
-		with open( self.temporaryDirectory() + "/a", "w" ) as f :
+		with open( self.temporaryDirectory() / "a", "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
-		os.symlink( self.temporaryDirectory() + "/a", self.temporaryDirectory() + "/l" )
+		os.symlink( self.temporaryDirectory() / "a", self.temporaryDirectory() / "l" )
 
 		# symlinks should report the info for the file
 		# they point to.
-		a = Gaffer.FileSystemPath( self.temporaryDirectory() + "/a" )
-		l = Gaffer.FileSystemPath( self.temporaryDirectory() + "/l" )
+		a = Gaffer.FileSystemPath( self.temporaryDirectory() / "a" )
+		l = Gaffer.FileSystemPath( self.temporaryDirectory() / "l" )
 		aInfo = a.info()
 		self.assertEqual( aInfo["fileSystem:size"], l.info()["fileSystem:size"] )
 		# unless they're broken
@@ -122,11 +128,13 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 		self.assertEqual( p, p2 )
 		self.assertEqual( str( p ), str( p2 ) )
+		self.assertEqual( p.nativeString(), p2.nativeString() )
 
 	def testEmptyPath( self ) :
 
 		p = Gaffer.FileSystemPath()
 		self.assertEqual( str( p ), "" )
+		self.assertEqual( p.nativeString(), "" )
 		self.assertTrue( p.isEmpty() )
 		self.assertFalse( p.isValid() )
 
@@ -134,26 +142,198 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 		os.chdir( self.temporaryDirectory() )
 
-		with open( self.temporaryDirectory() + "/a", "w" ) as f :
+		with open( self.temporaryDirectory() / "a", "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
 		p = Gaffer.FileSystemPath( "a" )
 
 		self.assertEqual( str( p ), "a" )
+		self.assertEqual( p.nativeString(), "a" )
 		self.assertFalse( p.isEmpty() )
 		self.assertTrue( p.isValid() )
 
 		p2 = Gaffer.FileSystemPath( "nonexistent" )
 
 		self.assertEqual( str( p2 ), "nonexistent" )
+		self.assertEqual( p2.nativeString(), "nonexistent" )
 		self.assertFalse( p2.isEmpty() )
 		self.assertFalse( p2.isValid() )
+
+	def testDriveLetterPath( self ) :
+		p = Gaffer.FileSystemPath( r"C:\this\path\does\not\exist.ext" )
+
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "C:/" )
+			self.assertEqual( str( p ), "C:/this/path/does/not/exist.ext" )
+			self.assertEqual( list( p ), [ "this", "path", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.nativeString(), r"C:\this\path\does\not\exist.ext")
+		else :
+			self.assertEqual( p.root(), "" )
+			self.assertEqual( str( p ), r"C:\this\path\does\not\exist.ext" )
+			self.assertEqual( list( p ), [ r"C:\this\path\does\not\exist.ext" ] )
+			self.assertEqual( p.nativeString(), str( p ) )
+		self.assertFalse( p.isEmpty() )
+		self.assertFalse( p.isValid() )
+
+		p = Gaffer.FileSystemPath( "/C:/leading/slash/should/be/removed/on/windows" )
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "C:/" )
+			self.assertEqual( str( p ), "C:/leading/slash/should/be/removed/on/windows" )
+			self.assertEqual( list( p ), [ "leading", "slash", "should", "be", "removed", "on", "windows" ] )
+		else :
+			self.assertEqual( p.root(), "/" )
+			self.assertEqual( str( p ), "/C:/leading/slash/should/be/removed/on/windows" )
+			self.assertEqual( list( p ), [ "C:", "leading", "slash", "should", "be", "removed", "on", "windows" ] )
+
+	def testUNCPath( self ) :
+		p = Gaffer.FileSystemPath( r"//this.server/share/does/not/exist.ext" )
+
+		if os.name == "nt" :
+			self.assertEqual( list( p ), [ "share", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "//this.server/" )
+			self.assertEqual( str( p ), "//this.server/share/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), r"\\this.server\share\does\not\exist.ext")
+		else :
+			self.assertEqual( list( p ), [ "this.server", "share", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "/" )
+			self.assertEqual( str( p ), "/this.server/share/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), str( p ) )
+		self.assertFalse( p.isEmpty() )
+		self.assertFalse( p.isValid() )
+
+		p = Gaffer.FileSystemPath( r"\\this.server\share\does\not\exist.ext" )
+
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "//this.server/" )
+			self.assertEqual( str( p ), "//this.server/share/does/not/exist.ext" )
+			self.assertEqual( list( p ), [ "share", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.nativeString(), r"\\this.server\share\does\not\exist.ext")
+		else :
+			self.assertEqual( p.root(), "" )
+			self.assertEqual( str( p ), r"\\this.server\share\does\not\exist.ext" )
+			self.assertEqual( list( p ), [ r"\\this.server\share\does\not\exist.ext" ] )
+			self.assertEqual( p.nativeString(), r"\\this.server\share\does\not\exist.ext" )
+		self.assertFalse( p.isEmpty() )
+		self.assertFalse( p.isValid() )
+
+		p = Gaffer.FileSystemPath( r"/this.server/share/does/not/exist.ext" )
+		if os.name == "nt" :
+			self.assertEqual( list( p ), [ "share", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "//this.server/" )
+			self.assertEqual( str( p ), "//this.server/share/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), r"\\this.server\share\does\not\exist.ext")
+		else :
+			self.assertEqual( list( p ), [ "this.server", "share", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "/" )
+			self.assertEqual( str( p ), "/this.server/share/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), "/this.server/share/does/not/exist.ext" )
+
+		f = Gaffer.FileSystemPath( "/" )
+		b = Gaffer.FileSystemPath( "\\" )
+		if os.name == "nt" :
+			self.assertEqual( list( f ), [] )
+			self.assertEqual( list( b ), [] )
+			self.assertEqual( f.root(), "//" )
+			self.assertEqual( b.root(), "//" )
+			self.assertEqual( str( f ), "//" )
+			self.assertEqual( str( b ), "//" )
+			self.assertEqual( f.nativeString(), r"\\" )
+			self.assertEqual( b.nativeString(), r"\\" )
+		else :
+			self.assertEqual( list( f ), [] )
+			self.assertEqual( list( b ), [ "\\" ] )
+			self.assertEqual( f.root(), "/" )
+			self.assertEqual( b.root(), "" )
+			self.assertEqual( str( f ), "/" )
+			self.assertEqual( str( b ), "\\" )
+			self.assertEqual( f.nativeString(), "/" )
+			self.assertEqual( b.nativeString(), "\\" )
+
+	def testPosixPath( self ) :
+		p = Gaffer.FileSystemPath( "/this/path/does/not/exist.ext" )
+
+		if os.name == "nt" :
+			self.assertEqual( list( p ), [ "path", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "//this/")
+			self.assertEqual( str( p ), "//this/path/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), r"\\this\path\does\not\exist.ext" )
+		else :
+			self.assertEqual( list( p ), [ "this", "path", "does", "not", "exist.ext" ] )
+			self.assertEqual( p.root(), "/")
+			self.assertEqual( str( p ), "/this/path/does/not/exist.ext" )
+			self.assertEqual( p.nativeString(), "/this/path/does/not/exist.ext")
+
+		self.assertFalse( p.isEmpty() )
+		self.assertFalse( p.isValid() )
+
+	def testMixedSlashes( self ) :
+		p = Gaffer.FileSystemPath( r"oh\my/what/a\mess" )
+		self.assertEqual( p.root(), "" )
+		if os.name == "nt" :
+			self.assertEqual( str( p ), "oh/my/what/a/mess" )
+			self.assertEqual( list( p ), [ "oh", "my", "what", "a", "mess" ] )
+			self.assertEqual( p.nativeString(), r"oh\my\what\a\mess" )
+		else :
+			self.assertEqual( str( p ), r"oh\my/what/a\mess" )
+			self.assertEqual( list( p ), [ r"oh\my", r"what", r"a\mess" ] )
+			self.assertEqual( p.nativeString(), r"oh\my/what/a\mess" )
+
+		p = Gaffer.FileSystemPath( r"C:\not/a\drive/letter\too" )
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "C:/" )
+			self.assertEqual( str( p ), "C:/not/a/drive/letter/too" )
+			self.assertEqual( list( p ), [ "not", "a", "drive", "letter", "too" ] )
+			self.assertEqual( p.nativeString(), r"C:\not\a\drive\letter\too" )
+		else :
+			self.assertEqual( p.root(), "" )
+			self.assertEqual( str( p ), r"C:\not/a\drive/letter\too" )
+			self.assertEqual( list( p ), [ r"C:\not", r"a\drive", r"letter\too" ] )
+			self.assertEqual( p.nativeString(), r"C:\not/a\drive/letter\too" )
+
+		# The inclusion of `\t` in the path is used to avoid the warning
+		# "invalid escape sequence" written to the terminal, which can
+		# cause some tests to fail.
+		p = Gaffer.FileSystemPath( r"//unc\tshare/must\twork" )
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "//unc/" )
+			self.assertEqual( str( p ), "//unc/tshare/must/twork" )
+			self.assertEqual( list( p ), [ "tshare", "must", "twork" ] )
+			self.assertEqual( p.nativeString(), r"\\unc\tshare\must\twork" )
+		else :
+			self.assertEqual( p.root(), "/" )
+			self.assertEqual( str( p ), r"/unc\tshare/must\twork" )
+			self.assertEqual( list( p ), [ r"unc\tshare", r"must\twork" ] )
+			self.assertEqual( p.nativeString(), r"/unc\tshare/must\twork")
+
+	def testSetFromStrings( self ) :
+
+		p = Gaffer.FileSystemPath( r"C:\this\path\does\not\exist" )
+
+		p.setFromString( "make/it/relative" )
+
+		self.assertEqual( p.root(), "" )
+		self.assertEqual( str( p ), "make/it/relative" )
+		if os.name == "nt" :
+			self.assertEqual( p.nativeString(), r"make\it\relative" )
+		else :
+			self.assertEqual( p.nativeString(), str( p ) )
+
+		p.setFromString( r"C:\try\drive\again" )
+		if os.name == "nt" :
+			self.assertEqual( p.root(), "C:/" )
+			self.assertEqual( str( p ), "C:/try/drive/again" )
+			self.assertEqual( p.nativeString(), r"C:\try\drive\again" )
+		else :
+			self.assertEqual( p.root(), "" )
+			self.assertEqual( str( p ), r"C:\try\drive\again" )
+			self.assertEqual( p.nativeString(), str( p ) )
+
 
 	def testRelativePathChildren( self ) :
 
 		os.chdir( self.temporaryDirectory() )
 		os.mkdir( "dir" )
-		with open( self.temporaryDirectory() + "/dir/a", "w" ) as f :
+		with open( self.temporaryDirectory() / "dir" / "a", "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
 		p = Gaffer.FileSystemPath( "dir" )
@@ -161,6 +341,11 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		c = p.children()
 		self.assertEqual( len( c ), 1 )
 		self.assertEqual( str( c[0] ), "dir/a" )
+		if os.name == "nt" :
+			self.assertEqual( c[0].nativeString(), "dir\\a" )
+		else:
+			self.assertEqual( c[0].nativeString(), "dir/a" )
+
 		self.assertTrue( c[0].isValid() )
 
 	def testChildrenOfFile( self ) :
@@ -173,7 +358,7 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		p = Gaffer.FileSystemPath( self.temporaryDirectory() )
 		p.append( "t" )
 
-		with open( str( p ), "w" ) as f :
+		with open( p.nativeString(), "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
 		mt = p.property( "fileSystem:modificationTime" )
@@ -182,7 +367,7 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 		time.sleep( 1 )
 
-		with open( str( p ), "w" ) as f :
+		with open( p.nativeString(), "w", encoding = "utf-8" ) as f :
 			f.write( "BBBB" )
 
 		mt = p.property( "fileSystem:modificationTime" )
@@ -194,24 +379,25 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		p = Gaffer.FileSystemPath( self.temporaryDirectory() )
 		p.append( "t" )
 
-		with open( str( p ), "w" ) as f :
+		with open( p.nativeString(), "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
 		o = p.property( "fileSystem:owner" )
 		self.assertTrue( isinstance( o, str ) )
-		self.assertEqual( o, pwd.getpwuid( os.stat( str( p ) ).st_uid ).pw_name )
+
+		self.assertEqual( o, self.getFileOwner( p.nativeString() ) )
 
 	def testGroup( self ) :
 
 		p = Gaffer.FileSystemPath( self.temporaryDirectory() )
 		p.append( "t" )
 
-		with open( str( p ), "w" ) as f :
+		with open( p.nativeString(), "w", encoding = "utf-8" ) as f :
 			f.write( "AAAA" )
 
 		g = p.property( "fileSystem:group" )
 		self.assertTrue( isinstance( g, str ) )
-		self.assertEqual( g, grp.getgrgid( os.stat( str( p ) ).st_gid ).gr_name )
+		self.assertEqual( g, self.getFileGroup( p.nativeString() ) )
 
 	def testPropertyNames( self ) :
 
@@ -231,9 +417,9 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 	def testSequences( self ) :
 
-		os.mkdir( self.temporaryDirectory() + "/dir" )
+		os.mkdir( self.temporaryDirectory() / "dir" )
 		for n in [ "singleFile.txt", "a.001.txt", "a.002.txt", "a.004.txt", "b.003.txt" ] :
-			with open( self.temporaryDirectory() + "/" + n, "w" ) as f :
+			with open( self.temporaryDirectory() / n, "w", encoding = "utf-8" ) as f :
 				f.write( "AAAA" )
 
 		p = Gaffer.FileSystemPath( self.temporaryDirectory(), includeSequences = True )
@@ -243,29 +429,37 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		self.assertEqual( len( c ), 8 )
 
 		s = sorted( c, key=str )
-		self.assertEqual( str(s[0]), self.temporaryDirectory() + "/a.###.txt" )
-		self.assertEqual( str(s[1]), self.temporaryDirectory() + "/a.001.txt" )
-		self.assertEqual( str(s[2]), self.temporaryDirectory() + "/a.002.txt" )
-		self.assertEqual( str(s[3]), self.temporaryDirectory() + "/a.004.txt" )
-		self.assertEqual( str(s[4]), self.temporaryDirectory() + "/b.###.txt" )
-		self.assertEqual( str(s[5]), self.temporaryDirectory() + "/b.003.txt" )
-		self.assertEqual( str(s[6]), self.temporaryDirectory() + "/dir" )
-		self.assertEqual( str(s[7]), self.temporaryDirectory() + "/singleFile.txt" )
+		self.assertEqual( str(s[0]), ( self.temporaryDirectory() / "a.###.txt" ).as_posix() )
+		self.assertEqual( s[0].nativeString(), str( self.temporaryDirectory() / "a.###.txt" ) )
+		self.assertEqual( str(s[1]), ( self.temporaryDirectory() /"a.001.txt" ).as_posix() )
+		self.assertEqual( s[1].nativeString(), str( self.temporaryDirectory() / "a.001.txt" ) )
+		self.assertEqual( str(s[2]), ( self.temporaryDirectory() / "a.002.txt" ).as_posix() )
+		self.assertEqual( s[2].nativeString(), str( self.temporaryDirectory() / "a.002.txt" ) )
+		self.assertEqual( str(s[3]), ( self.temporaryDirectory() / "a.004.txt" ).as_posix() )
+		self.assertEqual( s[3].nativeString(), str( self.temporaryDirectory() / "a.004.txt" ) )
+		self.assertEqual( str(s[4]), ( self.temporaryDirectory() / "b.###.txt" ).as_posix() )
+		self.assertEqual( s[4].nativeString(), str( self.temporaryDirectory() / "b.###.txt" ) )
+		self.assertEqual( str(s[5]), ( self.temporaryDirectory() / "b.003.txt" ).as_posix() )
+		self.assertEqual( s[5].nativeString(), str( self.temporaryDirectory() / "b.003.txt" ) )
+		self.assertEqual( str(s[6]), ( self.temporaryDirectory() / "dir" ).as_posix() )
+		self.assertEqual( s[6].nativeString(), str( self.temporaryDirectory() / "dir" ) )
+		self.assertEqual( str(s[7]), ( self.temporaryDirectory() / "singleFile.txt" ).as_posix() )
+		self.assertEqual( s[7].nativeString(), str( self.temporaryDirectory() / "singleFile.txt" ) )
 
 		for x in s :
 
 			self.assertTrue( x.isValid() )
-			if not os.path.isdir( str(x) ) :
+			if not os.path.isdir( x.nativeString() ) :
 				self.assertTrue( x.isLeaf() )
 
-			self.assertEqual( x.property( "fileSystem:owner" ), pwd.getpwuid( os.stat( str( p ) ).st_uid ).pw_name )
-			self.assertEqual( x.property( "fileSystem:group" ), grp.getgrgid( os.stat( str( p ) ).st_gid ).gr_name )
+			self.assertEqual( x.property( "fileSystem:owner" ), self.getFileOwner( p.nativeString() ) )
+			self.assertEqual( x.property( "fileSystem:group" ), self.getFileGroup( p.nativeString() ) )
 			self.assertLess( (datetime.datetime.utcnow() - x.property( "fileSystem:modificationTime" )).total_seconds(), 2 )
-			if "###" not in str(x) :
+			if "###" not in str( x ) :
 				self.assertFalse( x.isFileSequence() )
 				self.assertEqual( x.fileSequence(), None )
 				self.assertEqual( x.property( "fileSystem:frameRange" ), "" )
-				if os.path.isdir( str(x) ) :
+				if os.path.isdir( x.nativeString() ) :
 					self.assertEqual( x.property( "fileSystem:size" ), 0 )
 				else :
 					self.assertEqual( x.property( "fileSystem:size" ), 4 )
@@ -273,13 +467,13 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		self.assertEqual( s[0].property( "fileSystem:frameRange" ), "1-2,4" )
 		self.assertTrue( s[0].isFileSequence() )
 		self.assertTrue( isinstance( s[0].fileSequence(), IECore.FileSequence ) )
-		self.assertEqual( s[0].fileSequence(), IECore.FileSequence( str(s[0]), IECore.frameListFromList( [ 1, 2, 4 ] ) ) )
+		self.assertEqual( s[0].fileSequence(), IECore.FileSequence( s[0].nativeString(), IECore.frameListFromList( [ 1, 2, 4 ] ) ) )
 		self.assertEqual( s[0].property( "fileSystem:size" ), 4 * 3 )
 
 		self.assertEqual( s[4].property( "fileSystem:frameRange" ), "3" )
 		self.assertTrue( s[4].isFileSequence() )
 		self.assertTrue( isinstance( s[4].fileSequence(), IECore.FileSequence ) )
-		self.assertEqual( s[4].fileSequence(), IECore.FileSequence( str(s[4]), IECore.frameListFromList( [ 3 ] ) ) )
+		self.assertEqual( s[4].fileSequence(), IECore.FileSequence( s[4].nativeString(), IECore.frameListFromList( [ 3 ] ) ) )
 		self.assertEqual( s[4].property( "fileSystem:size" ), 4 )
 
 		# make sure we can copy
@@ -295,12 +489,18 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 		self.assertEqual( len( c ), 6 )
 
 		s = sorted( c, key=str )
-		self.assertEqual( str(s[0]), self.temporaryDirectory() + "/a.001.txt" )
-		self.assertEqual( str(s[1]), self.temporaryDirectory() + "/a.002.txt" )
-		self.assertEqual( str(s[2]), self.temporaryDirectory() + "/a.004.txt" )
-		self.assertEqual( str(s[3]), self.temporaryDirectory() + "/b.003.txt" )
-		self.assertEqual( str(s[4]), self.temporaryDirectory() + "/dir" )
-		self.assertEqual( str(s[5]), self.temporaryDirectory() + "/singleFile.txt" )
+		self.assertEqual( str(s[0]), ( self.temporaryDirectory() / "a.001.txt" ).as_posix() )
+		self.assertEqual( s[0].nativeString(), str( self.temporaryDirectory() / "a.001.txt" ) )
+		self.assertEqual( str(s[1]), ( self.temporaryDirectory() / "a.002.txt" ).as_posix() )
+		self.assertEqual( s[1].nativeString(), str( self.temporaryDirectory() / "a.002.txt" ) )
+		self.assertEqual( str(s[2]), ( self.temporaryDirectory() / "a.004.txt" ).as_posix() )
+		self.assertEqual( s[2].nativeString(), str( self.temporaryDirectory() / "a.004.txt" ) )
+		self.assertEqual( str(s[3]), ( self.temporaryDirectory() / "b.003.txt" ).as_posix() )
+		self.assertEqual( s[3].nativeString(), str( self.temporaryDirectory() / "b.003.txt" ) )
+		self.assertEqual( str(s[4]), ( self.temporaryDirectory() / "dir" ).as_posix() )
+		self.assertEqual( s[4].nativeString(), str( self.temporaryDirectory() / "dir" ) )
+		self.assertEqual( str(s[5]), ( self.temporaryDirectory() / "singleFile.txt" ).as_posix() )
+		self.assertEqual( s[5].nativeString(), str( self.temporaryDirectory() / "singleFile.txt" ) )
 
 		# and we can include them again
 		p.setIncludeSequences( True )
@@ -308,6 +508,42 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 		c = p.children()
 		self.assertEqual( len( c ), 8 )
+
+	def testCancellation( self ) :
+
+		p = Gaffer.FileSystemPath( pathlib.Path( __file__ ).parent )
+
+		# Children
+
+		c = IECore.Canceller()
+		c.cancel()
+
+		with self.assertRaises( IECore.Cancelled ) :
+			p.children( c )
+
+		# Sequence properties
+
+		for f in range( 0, 100 ) :
+			with open( self.temporaryDirectory() / ( str( f ) + ".txt" ), "w", encoding = "utf-8" ) as f :
+				f.write( "x" )
+
+		p = Gaffer.FileSystemPath( ( self.temporaryDirectory() / "#.txt" ), includeSequences = True )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			p.property( "fileSystem:owner", c )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			p.property( "fileSystem:group", c )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			p.property( "fileSystem:size", c )
+
+		with self.assertRaises( IECore.Cancelled ) :
+			p.property( "fileSystem:modificationTime", c )
+
+	def testPath( self ) :
+
+		self.assertEqual( Gaffer.FileSystemPath( pathlib.Path( __file__ ) ).standardPath(), pathlib.Path( __file__ ) )
 
 	def setUp( self ) :
 
@@ -317,9 +553,28 @@ class FileSystemPathTest( GafferTest.TestCase ) :
 
 	def tearDown( self ) :
 
+		os.chdir( self.__originalCWD )
+
 		GafferTest.TestCase.tearDown( self )
 
-		os.chdir( self.__originalCWD )
+	def getFileOwner( self, filePath ):
+
+		if os.name != "nt" :
+			return pwd.getpwuid( os.stat( filePath ).st_uid ).pw_name
+		else :
+			securityDescriptor = GafferTest._WindowsUtils.getFileSecurity( filePath )
+			owner, domain = securityDescriptor.owner()
+			return owner
+
+	def getFileGroup( self, filePath ) :
+
+		if os.name != "nt" :
+			return grp.getgrgid( os.stat( filePath ).st_gid ).gr_name
+		else :
+			securityDescriptor = GafferTest._WindowsUtils.getFileSecurity( filePath )
+			group, domain = securityDescriptor.group()
+			return group
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -34,8 +34,7 @@
 #
 ##########################################################################
 
-import os
-import subprocess32 as subprocess
+import pathlib
 
 import IECore
 import GafferScene
@@ -43,12 +42,9 @@ import GafferSceneTest
 
 class VDBTestCase( GafferSceneTest.SceneTestCase ) :
 
-	def assertEqualTolerance(self, a, b, tolerance):
-		self.assertTrue( abs(a - b) < tolerance)
-
 	def setUp( self ) :
 		GafferSceneTest.SceneTestCase.setUp( self )
-		self.dataDir = os.path.join( os.path.dirname( __file__ ),  "data")
+		self.dataDir = pathlib.Path( __file__ ).parent / "data"
 		self.filters = [] # need to keep hold of the filters for the duration of the test
 
 	def setFilter(self, node, path = '/vdb'):

@@ -34,10 +34,12 @@
 #
 ##########################################################################
 
+import re
 import functools
 
 import IECore
 
+import Gaffer
 import GafferScene
 import GafferSceneTest
 
@@ -132,6 +134,26 @@ class SetAlgoTest( GafferSceneTest.SceneTestCase ) :
 		expressionCheck( '(setA - ((setC /group/group/sphere2) & setB))', [ '/group/group/sphere1' ] )
 		expressionCheck( 'setA - (/group/group/sphere1 /group/group/sphere2) | (setA setB setC) & setC', [ '/group/sphere3' ] )
 
+		# Test a selection of the above expressions with tab and newline whitespace characters inserted
+		expressionCheck( 'setA\nsetC', [ '/group/group/sphere1', '/group/group/sphere2', '/group/sphere3' ] )
+		expressionCheck( '\n\nsetA\tsetC\n\n\t', [ '/group/group/sphere1', '/group/group/sphere2', '/group/sphere3' ] )
+		expressionCheck( 'setA\t-\tsetB\n|\nsetC', [ '/group/group/sphere1', '/group/sphere3' ] )
+		expressionCheck( 'setA\n| setB\n& setC', [ '/group/group/sphere1', '/group/group/sphere2' ] )
+		expressionCheck( '/group/light1\n/group/light2', [ '/group/light1', '/group/light2' ] )
+		expressionCheck( '/group/light1\t/group/light2\n', [ '/group/light1', '/group/light2' ] )
+		expressionCheck( '(\n\t/group/light1\n\t/group/light2\n)\n|\nsetA', [ '/group/light1', '/group/light2', '/group/group/sphere1', '/group/group/sphere2' ] )
+		expressionCheck( '(\nsetA - \n(\n\t(\n\t\tsetC /group/group/sphere2\n\t)\n & setB)\n)\n', [ '/group/group/sphere1' ] )
+
+		# Test expressions containing only whitespace are treated as empty
+		expressionCheck( '', [] )
+		expressionCheck( ' ', [] )
+		expressionCheck( '\n', [] )
+		expressionCheck( ' \n ', [] )
+		expressionCheck( '\t', [] )
+		expressionCheck( ' \t ', [] )
+		expressionCheck( '\n \t', [] )
+		expressionCheck( '\t\n\t \n  \t\n', [] )
+
 		# Test if proper exception is thrown for invalid expression
 		with self.assertRaises( RuntimeError ) as e :
 			# note the missing )
@@ -203,8 +225,111 @@ class SetAlgoTest( GafferSceneTest.SceneTestCase ) :
 
 		sphereC2["sets"].setValue( 'sphere?' )
 
-		self.assertCorrectEvaluation( group["out"], "sphere\?", ["/group/sphereC2"] )
+		self.assertCorrectEvaluation( group["out"], r"sphere\?", ["/group/sphereC2"] )
 		self.assertNotEqual( oldHash, GafferScene.SetAlgo.setExpressionHash( "sphere*", group["out"] ) )
+
+	def testInterestingSetNames( self ) :
+
+		sphere = GafferScene.Sphere()
+
+		for setName in ( ":", "a:", "a:b", "!", "0", "]A" ) :
+			sphere["sets"].setValue( setName )
+			self.assertCorrectEvaluation( sphere["out"], setName, { "/sphere" } )
+
+	def testInAndContaining( self ) :
+
+		# /group
+		#    /sphere
+		#    /group
+		#       /sphere
+		#       /sphere1
+		# /sphere
+
+		sphere = GafferScene.Sphere()
+		sphere["sets"].setValue( "indubitablyASet containingThings" )
+
+		group = GafferScene.Group()
+		group["in"][0].setInput( sphere["out"] )
+		group["in"][0].setInput( sphere["out"] )
+
+		group2 = GafferScene.Group()
+		group2["in"][0].setInput( sphere["out"] )
+		group2["in"][1].setInput( group["out"] )
+
+		parent = GafferScene.Parent()
+		parent["in"].setInput( group2["out"] )
+		parent["child"].setInput( sphere["out"] )
+
+		setA = GafferScene.Set()
+		setA["in"].setInput( parent["out"] )
+		setA["name"].setValue( "A" )
+		setA["paths"].setValue( IECore.StringVectorData( [
+			"/group/group",
+		] ) )
+
+		setB = GafferScene.Set()
+		setB["in"].setInput( setA["out"] )
+		setB["name"].setValue( "B" )
+		setB["paths"].setValue( IECore.StringVectorData( [
+			"/group/group/sphere",
+			"/group/sphere",
+		] ) )
+
+		self.assertSceneValid( setB["out"] )
+
+		# Test basic operation of `in`
+
+		self.assertCorrectEvaluation( setB["out"], "A in B", [] )
+		self.assertCorrectEvaluation( setB["out"], "A in A", setA["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "B in A", [ "/group/group/sphere" ] )
+		self.assertCorrectEvaluation( setB["out"], "B in B", setB["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "/group/group/sphere in /group", [ "/group/group/sphere" ] )
+		self.assertCorrectEvaluation( setB["out"], "B in /group/group", [ "/group/group/sphere" ] )
+		self.assertCorrectEvaluation( setB["out"], "B in ( /group/group /somewhereElse )", [ "/group/group/sphere" ] )
+
+		# Test basic operation of `containing`
+
+		self.assertCorrectEvaluation( setB["out"], "A containing B", [ "/group/group" ] )
+		self.assertCorrectEvaluation( setB["out"], "A containing A", setA["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "B containing A", [] )
+		self.assertCorrectEvaluation( setB["out"], "B containing B", setB["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "/group containing /group/sphere", [ "/group" ] )
+		self.assertCorrectEvaluation( setB["out"], "A containing /group/group/sphere", [ "/group/group" ] )
+
+		# Test various problematic parses
+
+		self.assertCorrectEvaluation( setB["out"], "A in (A)", setA["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "A in(A)", setA["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "(A)in(A)", setA["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "indubitablyASet", setB["out"].set( "indubitablyASet" ).value.paths() )
+		self.assertCorrectEvaluation( setB["out"], "A in indubitablyASet", [] )
+		self.assertCorrectEvaluation( setB["out"], "B in indubitablyASet", setB["paths"].getValue() )
+		self.assertCorrectEvaluation( setB["out"], "A in in?*", [] )
+		self.assertCorrectEvaluation( setB["out"], "containingThings", setB["out"].set( "containingThings" ).value.paths() )
+		self.assertCorrectEvaluation( setB["out"], "B in containing*", setB["paths"].getValue() )
+
+	def testWildcardsInObjectNames( self ) :
+
+		sphere = GafferScene.Sphere()
+
+		for expression in [
+			"/*",
+			"/spher[ef]",
+			"/spher?",
+		] :
+			with self.assertRaisesRegex( RuntimeError, 'Object name "{0}" contains wildcards'.format( re.escape( expression ) ) ) :
+				GafferScene.SetAlgo.evaluateSetExpression( expression, sphere["out"] )
+
+	def testAffectsSetExpression( self ) :
+
+		scenePlug = GafferScene.ScenePlug()
+		for childPlug in scenePlug :
+			self.assertEqual(
+				GafferScene.SetAlgo.affectsSetExpression( childPlug ),
+				childPlug in ( scenePlug["set"], scenePlug["setNames"] )
+			)
+
+		self.assertFalse( GafferScene.SetAlgo.affectsSetExpression( Gaffer.IntPlug() ) )
 
 	def assertCorrectEvaluation( self, scenePlug, expression, expectedContents ) :
 
@@ -213,4 +338,3 @@ class SetAlgoTest( GafferSceneTest.SceneTestCase ) :
 
 if __name__ == "__main__":
 	unittest.main()
-

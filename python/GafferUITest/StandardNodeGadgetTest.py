@@ -53,13 +53,13 @@ class StandardNodeGadgetTest( GafferUITest.TestCase ) :
 
 		g = GafferUI.StandardNodeGadget( n )
 
-		self.failUnless( isinstance( g.getContents(), GafferUI.NameGadget ) )
+		self.assertIsInstance( g.getContents(), GafferUI.NameGadget )
 		self.assertEqual( g.getContents().getText(), n.getName() )
 
 		t = GafferUI.TextGadget( "I'll choose my own label thanks" )
 		g.setContents( t )
 
-		self.failUnless( g.getContents().isSame( t ) )
+		self.assertTrue( g.getContents().isSame( t ) )
 
 	def testNestedNodules( self ) :
 
@@ -288,6 +288,67 @@ class StandardNodeGadgetTest( GafferUITest.TestCase ) :
 			g.nodule( n["a"] ).transformedBound().center().x,
 			g.nodule( n["b"] ).transformedBound().center().x
 		)
+
+	def testMinWidth( self ) :
+
+		def assertMinWidth( gadget, minWidth ) :
+
+			# Min width applies to central frame, but there is additional
+			# spacing for the left/right nodules, and an additional fudge
+			# in `StandardNodeGadget::bound()`. The `+ 1.0` accounts for this.
+			self.assertEqual( gadget.bound().size().x, minWidth + 1.0 )
+
+		n = Gaffer.Node( "I" )
+		g = GafferUI.StandardNodeGadget( n )
+		assertMinWidth( g, 10.0 ) # Default min is 10
+
+		Gaffer.Metadata.registerValue( n, "nodeGadget:minWidth", 20.0 )
+		assertMinWidth( g, 20.0 )
+
+		Gaffer.Metadata.deregisterValue( n, "nodeGadget:minWidth" )
+		assertMinWidth( g, 10.0 )
+
+	def testNoduleLabelVisibility( self ) :
+
+		n = Gaffer.Node()
+		n.addChild( Gaffer.FloatPlug( "fIn", direction = Gaffer.Plug.Direction.In ) )
+		n.addChild( Gaffer.FloatPlug( "fOut", direction = Gaffer.Plug.Direction.Out ) )
+		g = GafferUI.StandardNodeGadget( n )
+
+		fIn = g.nodule( n["fIn"] )
+		fOut = g.nodule( n["fOut"] )
+
+		self.assertFalse( fIn.getLabelVisible() )
+		self.assertFalse( fOut.getLabelVisible() )
+
+		Gaffer.Metadata.registerValue( Gaffer.Node, "nodeGadget:inputNoduleLabelsVisible", True )
+		self.assertTrue( fIn.getLabelVisible() )
+		self.assertFalse( fOut.getLabelVisible() )
+
+		Gaffer.Metadata.registerValue( Gaffer.Node, "nodeGadget:outputNoduleLabelsVisible", True )
+		self.assertTrue( fIn.getLabelVisible() )
+		self.assertTrue( fOut.getLabelVisible() )
+
+		n.addChild( Gaffer.IntPlug( "iIn", direction = Gaffer.Plug.Direction.In ) )
+		n.addChild( Gaffer.IntPlug( "iOut", direction = Gaffer.Plug.Direction.Out ) )
+
+		iIn = g.nodule( n["iIn"] )
+		iOut = g.nodule( n["iOut"] )
+
+		self.assertTrue( iIn.getLabelVisible() )
+		self.assertTrue( iOut.getLabelVisible() )
+
+		Gaffer.Metadata.registerValue( Gaffer.Node, "nodeGadget:inputNoduleLabelsVisible", False )
+		self.assertFalse( fIn.getLabelVisible() )
+		self.assertFalse( iIn.getLabelVisible() )
+		self.assertTrue( fOut.getLabelVisible() )
+		self.assertTrue( iOut.getLabelVisible() )
+
+		Gaffer.Metadata.registerValue( Gaffer.Node, "nodeGadget:outputNoduleLabelsVisible", False )
+		self.assertFalse( fIn.getLabelVisible() )
+		self.assertFalse( iIn.getLabelVisible() )
+		self.assertFalse( fOut.getLabelVisible() )
+		self.assertFalse( iOut.getLabelVisible() )
 
 if __name__ == "__main__":
 	unittest.main()

@@ -59,6 +59,12 @@ GadgetPtr getPrimaryChild( ViewportGadget &v )
 	return v.getPrimaryChild();
 }
 
+void setViewport( ViewportGadget &v, const Imath::V2i &viewport )
+{
+	IECorePython::ScopedGILRelease gilRelease;
+	v.setViewport( viewport );
+}
+
 void setCamera( ViewportGadget &v, IECoreScene::Camera &camera )
 {
 	IECorePython::ScopedGILRelease gilRelease;
@@ -96,30 +102,41 @@ void fitClippingPlanes( ViewportGadget &v, const Imath::Box3f &box )
 
 list gadgetsAt( ViewportGadget &v, const Imath::V2f &position )
 {
-	std::vector<GadgetPtr> gadgets;
-	v.gadgetsAt( position, gadgets );
+	std::vector<Gadget*> gadgets = v.gadgetsAt( position );
 
 	boost::python::list result;
-	for( std::vector<GadgetPtr>::const_iterator it=gadgets.begin(); it!=gadgets.end(); it++ )
+	for( Gadget *gadget : gadgets )
 	{
-		result.append( *it );
+		result.append( GadgetPtr( gadget ) );
 	}
 	return result;
 }
 
-struct UnarySlotCaller
+list gadgetsAt2( ViewportGadget &v, const Imath::Box2f &region, Gadget::Layer filterLayer = Gadget::Layer::None )
 {
-	boost::signals::detail::unusable operator()( boost::python::object slot, ViewportGadgetPtr g )
+	std::vector<Gadget*> gadgets = v.gadgetsAt( region, filterLayer );
+
+	boost::python::list result;
+	for( Gadget *gadget : gadgets )
+	{
+		result.append( GadgetPtr( gadget ) );
+	}
+	return result;
+}
+
+struct ViewportGadgetSlotCaller
+{
+	template<typename... Args>
+	void operator()( boost::python::object slot, ViewportGadgetPtr g, Args&&... args )
 	{
 		try
 		{
-			slot( g );
+			slot( g, std::forward<Args>( args )... );
 		}
-		catch( const error_already_set &e )
+		catch( const error_already_set & )
 		{
-			PyErr_PrintEx( 0 ); // clears the error status
+			IECorePython::ExceptionAlgo::translatePythonException();
 		}
-		return boost::signals::detail::unusable();
 	}
 };
 
@@ -128,6 +145,33 @@ void render( const ViewportGadget &v )
 	IECorePython::ScopedGILRelease gilRelease;
 	v.render();
 }
+
+class RasterScopeWrapper : boost::noncopyable
+{
+
+	public :
+
+		RasterScopeWrapper( ViewportGadget &viewportGadget )
+			:	m_viewportGadget( &viewportGadget )
+		{
+		}
+
+		void enter()
+		{
+			m_rasterScope.emplace( m_viewportGadget.get() );
+		}
+
+		void exit( object type, object value, object traceback )
+		{
+			m_rasterScope.reset();
+		}
+
+	private :
+
+		ViewportGadgetPtr m_viewportGadget;
+		std::optional<ViewportGadget::RasterScope> m_rasterScope;
+
+};
 
 } // namespace
 
@@ -139,10 +183,12 @@ void GafferUIModule::bindViewportGadget()
 		.def( "setPrimaryChild", &ViewportGadget::setPrimaryChild )
 		.def( "getPrimaryChild", &getPrimaryChild )
 		.def( "getViewport", &ViewportGadget::getViewport, return_value_policy<copy_const_reference>() )
-		.def( "setViewport", &ViewportGadget::setViewport )
+		.def( "setViewport", &setViewport )
 		.def( "viewportChangedSignal", &ViewportGadget::viewportChangedSignal, return_internal_reference<1>() )
 		.def( "getPlanarMovement", &ViewportGadget::getPlanarMovement )
 		.def( "setPlanarMovement", &ViewportGadget::setPlanarMovement )
+		.def( "getPreciseMotionAllowed", &ViewportGadget::getPreciseMotionAllowed )
+		.def( "setPreciseMotionAllowed", &ViewportGadget::setPreciseMotionAllowed )
 		.def( "getCamera", &getCamera )
 		.def( "setCamera", &setCamera )
 		.def( "getCameraTransform", &ViewportGadget::getCameraTransform, return_value_policy<copy_const_reference>() )
@@ -151,7 +197,13 @@ void GafferUIModule::bindViewportGadget()
 		.def( "getCameraEditable", &ViewportGadget::getCameraEditable )
 		.def( "setCameraEditable", &ViewportGadget::setCameraEditable )
 		.def( "setCenterOfInterest", &ViewportGadget::setCenterOfInterest )
-		.def( "getCenterOfInterest", &ViewportGadget::getCenterOfInterest )
+		.def( "getCenterOfInterest", (float (ViewportGadget::*)())&ViewportGadget::getCenterOfInterest )
+		.def( "setTumblingEnabled", &ViewportGadget::setTumblingEnabled )
+		.def( "getTumblingEnabled", &ViewportGadget::getTumblingEnabled )
+		.def( "setDollyingEnabled", &ViewportGadget::setDollyingEnabled )
+		.def( "getDollyingEnabled", &ViewportGadget::getDollyingEnabled )
+		.def( "setMaxPlanarZoom", &ViewportGadget::setMaxPlanarZoom )
+		.def( "getMaxPlanarZoom", (Imath::V2f (ViewportGadget::*)())&ViewportGadget::getMaxPlanarZoom )
 		.def( "frame", &frame1 )
 		.def( "frame", &frame2, ( arg_( "box" ), arg_( "viewDirection" ), arg_( "upVector" ) = Imath::V3f( 0, 1, 0 ) ) )
 		.def( "fitClippingPlanes", &fitClippingPlanes )
@@ -160,12 +212,24 @@ void GafferUIModule::bindViewportGadget()
 		.def( "setVariableAspectZoom", &ViewportGadget::setVariableAspectZoom )
 		.def( "getVariableAspectZoom", &ViewportGadget::getVariableAspectZoom )
 		.def( "gadgetsAt", &gadgetsAt )
+		.def( "gadgetsAt", &gadgetsAt2, ( arg_( "rasterRegion" ), arg_( "filterLayer" ) = Gadget::Layer::None )  )
 		.def( "rasterToGadgetSpace", &ViewportGadget::rasterToGadgetSpace, ( arg_( "rasterPosition" ), arg_( "gadget" ) ) )
 		.def( "gadgetToRasterSpace", &ViewportGadget::gadgetToRasterSpace, ( arg_( "gadgetPosition" ), arg_( "gadget" ) ) )
 		.def( "rasterToWorldSpace", &ViewportGadget::rasterToWorldSpace, ( arg_( "rasterPosition" ) ) )
 		.def( "worldToRasterSpace", &ViewportGadget::worldToRasterSpace, ( arg_( "worldPosition" ) ) )
 		.def( "render", &render )
 		.def( "preRenderSignal", &ViewportGadget::preRenderSignal, return_internal_reference<1>() )
+		.def( "renderRequestSignal", &ViewportGadget::renderRequestSignal, return_internal_reference<1>() )
+		.def( "setPostProcessShader", &ViewportGadget::setPostProcessShader )
+		.def( "getPostProcessShader", &ViewportGadget::getPostProcessShader )
+	;
+
+	enum_<ViewportGadget::CameraFlags>( "CameraFlags" )
+		.value( "None_", ViewportGadget::CameraFlags::None )
+		.value( "Camera", ViewportGadget::CameraFlags::Camera )
+		.value( "Transform", ViewportGadget::CameraFlags::Transform )
+		.value( "CenterOfInterest", ViewportGadget::CameraFlags::CenterOfInterest )
+		.value( "All", ViewportGadget::CameraFlags::All )
 	;
 
 	enum_<ViewportGadget::DragTracking>( "DragTracking" )
@@ -174,6 +238,13 @@ void GafferUIModule::bindViewportGadget()
 		.value( "YDragTracking", ViewportGadget::YDragTracking )
 	;
 
-	SignalClass<ViewportGadget::UnarySignal, DefaultSignalCaller<ViewportGadget::UnarySignal>, UnarySlotCaller>( "UnarySignal" );
+	class_<RasterScopeWrapper, boost::noncopyable>( "RasterScope", no_init )
+		.def( init<ViewportGadget &>() )
+		.def( "__enter__", &RasterScopeWrapper::enter )
+		.def( "__exit__", &RasterScopeWrapper::exit )
+	;
+
+	SignalClass<ViewportGadget::UnarySignal, DefaultSignalCaller<ViewportGadget::UnarySignal>, ViewportGadgetSlotCaller>( "UnarySignal" );
+	SignalClass<ViewportGadget::CameraChangedSignal, DefaultSignalCaller<ViewportGadget::CameraChangedSignal>, ViewportGadgetSlotCaller>( "UnarySignal" );
 
 }

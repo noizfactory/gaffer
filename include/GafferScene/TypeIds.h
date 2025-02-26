@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_TYPEIDS_H
-#define GAFFERSCENE_TYPEIDS_H
+#pragma once
 
 namespace GafferScene
 {
@@ -58,7 +57,7 @@ enum TypeId
 	WireframeTypeId = 110513,
 	ObjectSourceTypeId = 110514,
 	PlaneTypeId = 110515,
-	SeedsTypeId = 110516,
+	ScatterTypeId = 110516,
 	InstancerTypeId = 110517,
 	BranchCreatorTypeId = 110518,
 	ObjectToSceneTypeId = 110519,
@@ -73,7 +72,7 @@ enum TypeId
 	AttributesTypeId = 110528,
 	GlobalShaderTypeId = 110529,
 	ClippingPlaneTypeId = 110530,
-	TweaksPlugTypeId = 110531,
+	RenameTypeId = 110531,
 	StandardOptionsTypeId = 110532,
 	SubTreeTypeId = 110533,
 	OpenGLAttributesTypeId = 110534,
@@ -91,7 +90,7 @@ enum TypeId
 	PruneTypeId = 110546,
 	FreezeTransformTypeId = 110547,
 	MeshDistortionTypeId = 110548,
-	OpenGLRenderTypeId = 110549,
+	PrimitiveVariableTweaksTypeId = 110549,
 	InteractiveRenderTypeId = 110550,
 	CubeTypeId = 110551,
 	SphereTypeId = 110552,
@@ -126,21 +125,21 @@ enum TypeId
 	SceneFilterPathFilterTypeId = 110581,
 	DeleteObjectTypeId = 110582,
 	AttributeVisualiserTypeId = 110583,
-	SceneLoopTypeId = 110584, // Obsolete, available for reuse
+	CopyPrimitiveVariablesTypeId = 110584,
 	RenderTypeId = 110585,
 	FilterPlugTypeId = 110586,
 	ShaderTweaksTypeId = 110587,
-	TweakPlugTypeId = 110588,
+	ImageToPointsTypeId = 110588,
 	CopyOptionsTypeId = 110589,
 	LightToCameraTypeId = 110590,
 	FilterResultsTypeId = 110591,
-	EvaluateLightLinksTypeId = 110592, // Obsolete, available for reuse
+	ObjectProcessorTypeId = 110592,
 	MeshTangentsTypeId = 110593,
 	ResamplePrimitiveVariablesTypeId = 110594,
 	DeleteFacesTypeId = 110595,
 	DeleteCurvesTypeId = 110596,
 	DeletePointsTypeId = 110597,
-	DeleteSceneContextVariablesTypeId = 110598, // Obsolete, available for reuse
+	DeformerTypeId = 110598,
 	CollectScenesTypeId = 110599,
 	CapsuleTypeId = 110600,
 	EncapsulateTypeId = 110601,
@@ -149,7 +148,47 @@ enum TypeId
 	PrimitiveVariableExistsTypeId = 110604,
 	CollectTransformsTypeId = 110605,
 	CameraTweaksTypeId = 110606,
+	MergeScenesTypeId = 110607,
+	ShuffleAttributesTypeId = 110608,
+	ShufflePrimitiveVariablesTypeId = 110609,
+	LocaliseAttributesTypeId = 110610,
+	PrimitiveSamplerTypeId = 110611,
+	ClosestPointSamplerTypeId = 110612,
+	CurveSamplerTypeId = 110613,
+	UnencapsulateTypeId = 110614,
+	MotionPathTypeId = 110615,
+	InstancerContextVariablePlugTypeId = 110616,
+	FilterQueryTypeId = 110617,
+	TransformQueryTypeId = 110618,
+	BoundQueryTypeId = 110619,
+	ExistenceQueryTypeId = 110620,
+	AttributeQueryTypeId = 110621,
+	UVSamplerTypeId = 110622,
+	CryptomatteTypeId = 110623,
+	ShaderQueryTypeId = 110624,
+	AttributeTweaksTypeId = 110625,
+	OptionTweaksTypeId = 110626,
+	OptionQueryTypeId = 110627,
+	PrimitiveVariableQueryTypeId = 110628,
+	SetQueryTypeId = 110629,
+	MeshSegmentsTypeId = 110630,
+	VisibleSetDataTypeId = 110631,
+	MeshSplitTypeId = 110632,
+	FramingConstraintTypeId = 110633,
+	MeshNormalsTypeId = 110634,
+	ImageScatterTypeId = 110635,
+	InstancerCapsuleTypeId = 110636,
+	PassesTypeId = 110637,
+	DeletePassesTypeId = 110638,
+	MeshTessellateTypeId = 110639,
+	RenderPassShaderTypeId = 110640,
+	ShaderTweakProxyTypeId = 110641,
+	MergeObjectsTypeId = 110642,
+	MergeMeshesTypeId = 110643,
+	MergePointsTypeId = 110644,
+	MergeCurvesTypeId = 110645,
 
+	PreviewPlaceholderTypeId = 110647,
 	PreviewGeometryTypeId = 110648,
 	PreviewProceduralTypeId = 110649,
 
@@ -157,5 +196,3 @@ enum TypeId
 };
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_TYPEIDS_H

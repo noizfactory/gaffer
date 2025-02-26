@@ -41,12 +41,15 @@
 #include "CatalogueBinding.h"
 #include "ChannelDataProcessorBinding.h"
 #include "CoreBinding.h"
+#include "DeepNodeBinding.h"
 #include "FilterAlgoBinding.h"
 #include "FilterBinding.h"
 #include "IOBinding.h"
 #include "ImageAlgoBinding.h"
 #include "ImageProcessorBinding.h"
 #include "MetadataBinding.h"
+#include "MultiViewBinding.h"
+#include "OpenColorIOAlgoBinding.h"
 #include "OpenColorIOTransformBinding.h"
 #include "ShapeBinding.h"
 #include "TransformBinding.h"
@@ -69,10 +72,13 @@ BOOST_PYTHON_MODULE( _GafferImage )
 	bindFilters();
 	bindOpenColorIOTransform();
 	bindChannelDataProcessor();
+	bindDeepNodes();
 	bindUtilityNodes();
 	bindCatalogue();
 	bindImageAlgo();
 	bindBufferAlgo();
 	bindFilterAlgo();
+	bindMultiView();
+	bindOpenColorIOAlgo();
 
 }

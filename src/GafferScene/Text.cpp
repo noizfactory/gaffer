@@ -37,11 +37,11 @@
 #include "GafferScene/Text.h"
 
 #include "Gaffer/StringPlug.h"
+#include "Gaffer/Private/IECorePreview/LRUCache.h"
 
 #include "IECoreScene/Font.h"
 #include "IECoreScene/MeshPrimitive.h"
 
-#include "IECore/LRUCache.h"
 #include "IECore/SearchPath.h"
 
 using namespace Gaffer;
@@ -60,12 +60,12 @@ namespace GafferScene
 namespace Detail
 {
 
-FontPtr fontGetter( const std::string &fileName, size_t &cost )
+FontPtr fontGetter( const std::string &fileName, size_t &cost, const IECore::Canceller *canceller )
 {
 	const char *e = getenv( "IECORE_FONT_PATHS" );
 	IECore::SearchPath sp( e ? e : "" );
 
-	std::string resolvedFileName = sp.find( fileName ).string();
+	std::string resolvedFileName = sp.find( fileName ).generic_string();
 	if( !resolvedFileName.size() )
 	{
 		throw Exception( "Unable to find font" );
@@ -75,7 +75,7 @@ FontPtr fontGetter( const std::string &fileName, size_t &cost )
 	return new Font( resolvedFileName );
 }
 
-typedef LRUCache<std::string, FontPtr> FontCache;
+using FontCache = IECorePreview::LRUCache<std::string, FontPtr>;
 
 FontCache *fontCache()
 {
@@ -91,7 +91,7 @@ FontCache *fontCache()
 // Text implementation
 //////////////////////////////////////////////////////////////////////////
 
-GAFFER_GRAPHCOMPONENT_DEFINE_TYPE( Text );
+GAFFER_NODE_DEFINE_TYPE( Text );
 
 size_t Text::g_firstPlugIndex = 0;
 

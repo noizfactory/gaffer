@@ -35,6 +35,7 @@
 ##########################################################################
 
 import os
+import pathlib
 import inspect
 import unittest
 
@@ -146,10 +147,17 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 			combineGroup["in"][-1].setInput( light["out"] )
 			lights.append( light )
 
+		arnoldOptions = GafferArnold.ArnoldOptions()
+		arnoldOptions["in"].setInput( combineGroup["out"] )
+		arnoldOptions["options"]["giDiffuseDepth"]["enabled"].setValue( True )
+		arnoldOptions["options"]["giDiffuseDepth"]["value"].setValue( 0 )
+		arnoldOptions["options"]["giSpecularDepth"]["enabled"].setValue( True )
+		arnoldOptions["options"]["giSpecularDepth"]["value"].setValue( 0 )
+
 		arnoldTextureBake = GafferArnold.ArnoldTextureBake()
-		arnoldTextureBake["in"].setInput( combineGroup["out"] )
+		arnoldTextureBake["in"].setInput( arnoldOptions["out"] )
 		arnoldTextureBake["filter"].setInput( allFilter["out"] )
-		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() + '/bakeSpheres/' )
+		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() / 'bakeSpheres' )
 		arnoldTextureBake["defaultResolution"].setValue( 32 )
 		arnoldTextureBake["aovs"].setValue( 'beauty:RGBA diffuse:diffuse' )
 		arnoldTextureBake["tasks"].setValue( 3 )
@@ -158,17 +166,18 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		# Dispatch the bake
 		script = Gaffer.ScriptNode()
 		script.addChild( arnoldTextureBake )
-		dispatcher = GafferDispatch.LocalDispatcher()
-		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() )
-		dispatcher.dispatch( [ arnoldTextureBake ] )
+		script["dispatcher"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		script["dispatcher"]["tasks"][0].setInput( arnoldTextureBake["task"] )
+		script["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		script["dispatcher"]["task"].execute()
 
 		# Test that we are writing all expected files, and that we have cleaned up all temp files
 		expectedUdims = [ i + j for j in [ 1001, 1033 ] for i in [ 0, 1, 10, 11 ] ]
-		self.assertEqual( sorted( os.listdir( self.temporaryDirectory() + '/bakeSpheres/' ) ),
+		self.assertEqual( sorted( [ x.name for x in ( self.temporaryDirectory() / 'bakeSpheres' ).iterdir() ] ),
 			[ "beauty", "diffuse" ] )
-		self.assertEqual( sorted( os.listdir( self.temporaryDirectory() + '/bakeSpheres/beauty' ) ),
+		self.assertEqual( sorted( [ x.name for x in ( self.temporaryDirectory() / 'bakeSpheres' / 'beauty' ).iterdir() ] ),
 			[ "beauty.%i.tx"%i for i in expectedUdims ] )
-		self.assertEqual( sorted( os.listdir( self.temporaryDirectory() + '/bakeSpheres/diffuse' ) ),
+		self.assertEqual( sorted( [ x.name for x in ( self.temporaryDirectory() / 'bakeSpheres' / 'diffuse' ).iterdir() ] ),
 			[ "diffuse.%i.tx"%i for i in expectedUdims ] )
 
 
@@ -185,12 +194,12 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		exprBox.addChild( imageTransform )
 		exprBox.addChild( expression )
 		expression.setExpression( inspect.cleandoc(
-			"""
+			f"""
 			i = context.get( "loop:index", 0 )
 			layer = context.get( "collect:layerName", "beauty" )
 			x = i % 2
-			y = i / 2
-			parent["ImageReader"]["fileName"] = '""" + self.temporaryDirectory() + """/bakeSpheres/%s/%s.%i.tx' % ( layer, layer, 1001 + x + y * 10 )
+			y = i // 2
+			parent["ImageReader"]["fileName"] = '{(self.temporaryDirectory() / "bakeSpheres" / "%s" / "%s.%i.tx").as_posix()}' % ( layer, layer, 1001 + x + y * 10 )
 
 			parent["ImageTransform"]["transform"]["translate"] = imath.V2f( 32 * x, 32 * y )
 			"""
@@ -213,7 +222,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 
 		# We have a little reference image for how the diffuse should look
 		imageReaderRef = GafferImage.ImageReader()
-		imageReaderRef["fileName"].setValue( os.path.dirname( __file__ ) + "/images/sphereLightBake.exr" )
+		imageReaderRef["fileName"].setValue( pathlib.Path( __file__ ).parent / "images" / "sphereLightBake.exr" )
 
 		resizeRef = GafferImage.Resize()
 		resizeRef["in"].setInput( imageReaderRef["out"] )
@@ -223,9 +232,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		shuffleRef["in"].setInput( resizeRef["out"] )
 		for layer in [ "beauty", "diffuse" ]:
 			for channel in [ "R", "G", "B" ]:
-				shuffleRef["channels"].addChild( GafferImage.Shuffle.ChannelPlug() )
-				shuffleRef["channels"][-1]["in"].setValue( channel )
-				shuffleRef["channels"][-1]["out"].setValue( layer + "." + channel )
+				shuffleRef["shuffles"].addChild( Gaffer.ShufflePlug( channel, f"{layer}.{channel}" ) )
 
 		differenceMerge = GafferImage.Merge()
 		differenceMerge["in"]["in0"].setInput( aovCollect["out"] )
@@ -291,7 +298,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		arnoldTextureBake = GafferArnold.ArnoldTextureBake()
 		arnoldTextureBake["in"].setInput( combineGroup["out"] )
 		arnoldTextureBake["filter"].setInput( allFilter["out"] )
-		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() + '/bakeSpheres/' )
+		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() / 'bakeSpheres' )
 		arnoldTextureBake["defaultResolution"].setValue( 1 )
 		arnoldTextureBake["aovs"].setValue( 'beauty:RGBA diffuse:diffuse' )
 		arnoldTextureBake["tasks"].setValue( 3 )
@@ -300,19 +307,20 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		# Dispatch the bake
 		script = Gaffer.ScriptNode()
 		script.addChild( arnoldTextureBake )
-		dispatcher = GafferDispatch.LocalDispatcher()
-		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() )
-		dispatcher.dispatch( [ arnoldTextureBake ] )
+		script["dispatcher"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		script["dispatcher"]["tasks"][0].setInput( arnoldTextureBake["task"] )
+		script["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		script["dispatcher"]["task"].execute()
 
-		self.assertEqual( sorted( os.listdir( self.temporaryDirectory() + '/bakeSpheres/' ) ),
+		self.assertEqual( sorted( [ x.name for x in ( self.temporaryDirectory() / 'bakeSpheres' ).iterdir() ] ),
 			[ "BAKE_FILE_INDEX_0.0001.txt", "BAKE_FILE_INDEX_1.0001.txt", "BAKE_FILE_INDEX_2.0001.txt", "beauty", "diffuse" ] )
 		# Make sure the 16 images that need writing get divided into very approximate thirds
 		for i in range( 3 ):
-			l = len( open( self.temporaryDirectory() + '/bakeSpheres/BAKE_FILE_INDEX_%i.0001.txt'%i ).readlines() )
+			l = len( open( self.temporaryDirectory() / 'bakeSpheres' / f'BAKE_FILE_INDEX_{i}.0001.txt', encoding = "utf-8" ).readlines() )
 			self.assertGreater( l, 2 )
 			self.assertLess( l, 8 )
 
-	@unittest.skipIf( GafferTest.inCI(), "Arnold license not available" )
+	@unittest.skipIf( GafferTest.inCI() or os.environ.get( "ARNOLD_LICENSE_ORDER" ) == "none", "Arnold license not available" )
 	def testMerging( self ):
 
 		allFilter = GafferScene.PathFilter()
@@ -362,7 +370,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		pickCode = GafferOSL.OSLCode()
 		pickCode["parameters"].addChild( Gaffer.IntPlug( "targetId" ) )
 		pickCode["out"].addChild( Gaffer.IntPlug( "cull", direction = Gaffer.Plug.Direction.Out ) )
-		pickCode["code"].setValue( 'int randomId; getattribute( "randomId", randomId ); cull = randomId != targetId;' )
+		pickCode["code"].setValue( 'int randomId; getattribute( "randomId", randomId ); cull = randomId != targetId ? 1 : 0;' )
 
 		expression = Gaffer.Expression()
 		pickCode.addChild( expression )
@@ -395,7 +403,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		# First variant:  bake everything, covering the whole 1001 UDIM
 
 		customAttributes1 = GafferScene.CustomAttributes()
-		customAttributes1["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( '${bakeDirectory}/complete/<AOV>/<AOV>.<UDIM>.exr' ) ) )
+		customAttributes1["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( ( pathlib.Path( "${bakeDirectory}" ) / "complete" / "<AOV>" / "<AOV>.<UDIM>.exr" ).as_posix() ) ) )
 		customAttributes1["in"].setInput( collectScenes["out"] )
 
 		# Second vaiant: bake just 2 of the 4 meshes, leaving lots of holes that will need filling
@@ -408,14 +416,14 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 
 
 		customAttributes2 = GafferScene.CustomAttributes()
-		customAttributes2["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( '${bakeDirectory}/incomplete/<AOV>/<AOV>.<UDIM>.exr' ) ) )
+		customAttributes2["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( ( pathlib.Path( "${bakeDirectory}" ) / "incomplete" / "<AOV>" / "<AOV>.<UDIM>.exr" ).as_posix() ) ) )
 		customAttributes2["in"].setInput( prune["out"] )
 
 
 		# Third variant: bake everything, but with one mesh at a higher resolution
 
 		customAttributes3 = GafferScene.CustomAttributes()
-		customAttributes3["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( '${bakeDirectory}/mismatch/<AOV>/<AOV>.<UDIM>.exr' ) ) )
+		customAttributes3["attributes"].addChild( Gaffer.NameValuePlug( 'bake:fileName', IECore.StringData( ( pathlib.Path( "${bakeDirectory}" ) / "mismatch" / "<AOV>" / "<AOV>.<UDIM>.exr" ).as_posix() ) ) )
 		customAttributes3["in"].setInput( collectScenes["out"] )
 
 		pathFilter2 = GafferScene.PathFilter()
@@ -435,7 +443,7 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		arnoldTextureBake = GafferArnold.ArnoldTextureBake()
 		arnoldTextureBake["in"].setInput( mergeGroup["out"] )
 		arnoldTextureBake["filter"].setInput( allFilter["out"] )
-		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() + '/bakeMerge/' )
+		arnoldTextureBake["bakeDirectory"].setValue( self.temporaryDirectory() / 'bakeMerge' )
 		arnoldTextureBake["defaultResolution"].setValue( 128 )
 
 		# We want to check the intermediate results
@@ -444,9 +452,11 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 		# Dispatch the bake
 		script = Gaffer.ScriptNode()
 		script.addChild( arnoldTextureBake )
-		dispatcher = GafferDispatch.LocalDispatcher()
-		dispatcher["jobsDirectory"].setValue( self.temporaryDirectory() )
-		dispatcher.dispatch( [ arnoldTextureBake ] )
+
+		script["dispatcher"] = GafferDispatch.LocalDispatcher( jobPool = GafferDispatch.LocalDispatcher.JobPool() )
+		script["dispatcher"]["tasks"][0].setInput( arnoldTextureBake["task"] )
+		script["dispatcher"]["jobsDirectory"].setValue( self.temporaryDirectory() )
+		script["dispatcher"]["task"].execute()
 
 		# Check results
 		imageReader = GafferImage.ImageReader()
@@ -505,8 +515,8 @@ class ArnoldTextureBakeTest( GafferSceneTest.SceneTestCase ) :
 				( "complete",   128, 0.01, 0.000001, 0.000001 ),
 				( "incomplete", 128, 0.05,     0.15, 0.000001 ),
 				( "mismatch",   200, 0.01,     0.01,     0.01 ) ]:
-			imageReader["fileName"].setValue( self.temporaryDirectory() + "/bakeMerge/" + name + "/beauty/beauty.1001.tx"  )
-			oneLayerReader["fileName"].setValue( self.temporaryDirectory() + "/bakeMerge/" + name + "/beauty/beauty.1001.exr"  )
+			imageReader["fileName"].setValue( self.temporaryDirectory() / "bakeMerge" / name / "beauty" / "beauty.1001.tx"  )
+			oneLayerReader["fileName"].setValue( self.temporaryDirectory() / "bakeMerge" / name / "beauty" / "beauty.1001.exr"  )
 
 			self.assertEqual( imageReader["out"]["format"].getValue().width(), expectedSize )
 			self.assertEqual( imageReader["out"]["format"].getValue().height(), expectedSize )

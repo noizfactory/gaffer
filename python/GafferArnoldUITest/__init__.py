@@ -34,8 +34,12 @@
 #
 ##########################################################################
 
-from DocumentationTest import DocumentationTest
-from ArnoldShaderUITest import ArnoldShaderUITest
+from .DocumentationTest import DocumentationTest
+from .ArnoldShaderUITest import ArnoldShaderUITest
+from .VisualiserAlgoTest import VisualiserAlgoTest
+from .InteractiveArnoldRenderPerformanceTest import InteractiveArnoldRenderPerformanceTest
+from .NodeUITest import NodeUITest
+from .ArnoldSceneGadgetTest import ArnoldSceneGadgetTest
 
 if __name__ == "__main__":
 	unittest.main()

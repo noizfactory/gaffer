@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERIMAGE_DISPLAYTRANSFORM_H
-#define GAFFERIMAGE_DISPLAYTRANSFORM_H
+#pragma once
 
 #include "GafferImage/OpenColorIOTransform.h"
 
@@ -54,10 +53,10 @@ class GAFFERIMAGE_API DisplayTransform : public OpenColorIOTransform
 
 	public :
 
-		DisplayTransform( const std::string &name=defaultName<DisplayTransform>() );
+		explicit DisplayTransform( const std::string &name=defaultName<DisplayTransform>() );
 		~DisplayTransform() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferImage::DisplayTransform, DisplayTransformTypeId, OpenColorIOTransform );
+		GAFFER_NODE_DECLARE_TYPE( GafferImage::DisplayTransform, DisplayTransformTypeId, OpenColorIOTransform );
 
 		Gaffer::StringPlug *inputColorSpacePlug();
 		const Gaffer::StringPlug *inputColorSpacePlug() const;
@@ -72,7 +71,7 @@ class GAFFERIMAGE_API DisplayTransform : public OpenColorIOTransform
 
 		bool affectsTransform( const Gaffer::Plug *input ) const override;
 		void hashTransform( const Gaffer::Context *context, IECore::MurmurHash &h ) const override;
-		OpenColorIO::ConstTransformRcPtr transform() const override;
+		OCIO_NAMESPACE::ConstTransformRcPtr transform() const override;
 
 	private :
 
@@ -83,5 +82,3 @@ class GAFFERIMAGE_API DisplayTransform : public OpenColorIOTransform
 IE_CORE_DECLAREPTR( DisplayTransform )
 
 } // namespace GafferImage
-
-#endif // GAFFERIMAGE_DISPLAYTRANSFORM_H

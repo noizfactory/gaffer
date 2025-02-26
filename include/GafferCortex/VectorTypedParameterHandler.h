@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERCORTEX_VECTORTYPEDPARAMETERHANDLER_H
-#define GAFFERCORTEX_VECTORTYPEDPARAMETERHANDLER_H
+#pragma once
 
 #include "GafferCortex/ParameterHandler.h"
 
@@ -53,10 +52,10 @@ class GAFFERCORTEX_API VectorTypedParameterHandler : public ParameterHandler
 
 		IE_CORE_DECLAREMEMBERPTR( VectorTypedParameterHandler<ParameterType> );
 
-		typedef typename ParameterType::ObjectType DataType;
-		typedef Gaffer::TypedObjectPlug<DataType> PlugType;
+		using DataType = typename ParameterType::ObjectType;
+		using PlugType = Gaffer::TypedObjectPlug<DataType>;
 
-		VectorTypedParameterHandler( typename ParameterType::Ptr parameter );
+		explicit VectorTypedParameterHandler( typename ParameterType::Ptr parameter );
 		~VectorTypedParameterHandler() override;
 
 		IECore::Parameter *parameter() override;
@@ -78,5 +77,3 @@ class GAFFERCORTEX_API VectorTypedParameterHandler : public ParameterHandler
 };
 
 } // namespace GafferCortex
-
-#endif // GAFFERCORTEX_VECTORTYPEDPARAMETERHANDLER_H

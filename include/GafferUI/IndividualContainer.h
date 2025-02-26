@@ -35,8 +35,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUI_INDIVIDUALCONTAINER_H
-#define GAFFERUI_INDIVIDUALCONTAINER_H
+#pragma once
 
 #include "GafferUI/ContainerGadget.h"
 
@@ -50,7 +49,7 @@ class GAFFERUI_API IndividualContainer : public ContainerGadget
 
 	public :
 
-		IndividualContainer( GadgetPtr child=nullptr );
+		explicit IndividualContainer( GadgetPtr child=nullptr );
 		~IndividualContainer() override;
 
 		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferUI::IndividualContainer, IndividualContainerTypeId, ContainerGadget );
@@ -72,11 +71,6 @@ class GAFFERUI_API IndividualContainer : public ContainerGadget
 
 IE_CORE_DECLAREPTR( IndividualContainer );
 
-typedef Gaffer::FilteredChildIterator<Gaffer::TypePredicate<IndividualContainer> > IndividualContainerIterator;
-typedef Gaffer::FilteredRecursiveChildIterator<Gaffer::TypePredicate<IndividualContainer> > RecursiveIndividualContainerIterator;
-
 } // namespace GafferUI
 
 #include "GafferUI/IndividualContainer.inl"
-
-#endif // GAFFERUI_INDIVIDUALCONTAINER_H

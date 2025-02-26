@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_UNIONFILTER_H
-#define GAFFERSCENE_UNIONFILTER_H
+#pragma once
 
 #include "GafferScene/FilterProcessor.h"
 
@@ -48,9 +47,9 @@ class GAFFERSCENE_API UnionFilter : public FilterProcessor
 
 	public :
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::UnionFilter, UnionFilterTypeId, FilterProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::UnionFilter, UnionFilterTypeId, FilterProcessor );
 
-		UnionFilter( const std::string &name=defaultName<UnionFilter>() );
+		explicit UnionFilter( const std::string &name=defaultName<UnionFilter>() );
 		~UnionFilter() override;
 
 		void affects( const Gaffer::Plug *input, AffectedPlugsContainer &outputs ) const override;
@@ -65,5 +64,3 @@ class GAFFERSCENE_API UnionFilter : public FilterProcessor
 IE_CORE_DECLAREPTR( UnionFilter )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_UNIONFILTER_H

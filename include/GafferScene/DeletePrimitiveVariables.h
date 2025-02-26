@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERSCENE_DELETEPRIMITIVEVARIABLE_H
-#define GAFFERSCENE_DELETEPRIMITIVEVARIABLE_H
+#pragma once
 
 #include "GafferScene/PrimitiveVariableProcessor.h"
 
@@ -47,10 +46,10 @@ class GAFFERSCENE_API DeletePrimitiveVariables : public PrimitiveVariableProcess
 
 	public :
 
-		DeletePrimitiveVariables( const std::string &name=defaultName<DeletePrimitiveVariables>() );
+		explicit DeletePrimitiveVariables( const std::string &name=defaultName<DeletePrimitiveVariables>() );
 		~DeletePrimitiveVariables() override;
 
-		GAFFER_GRAPHCOMPONENT_DECLARE_TYPE( GafferScene::DeletePrimitiveVariables, DeletePrimitiveVariablesTypeId, PrimitiveVariableProcessor );
+		GAFFER_NODE_DECLARE_TYPE( GafferScene::DeletePrimitiveVariables, DeletePrimitiveVariablesTypeId, PrimitiveVariableProcessor );
 
 	protected :
 
@@ -61,5 +60,3 @@ class GAFFERSCENE_API DeletePrimitiveVariables : public PrimitiveVariableProcess
 IE_CORE_DECLAREPTR( DeletePrimitiveVariables )
 
 } // namespace GafferScene
-
-#endif // GAFFERSCENE_DELETEPRIMITIVEVARIABLE_H

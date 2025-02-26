@@ -32,12 +32,15 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef IECOREPREVIEW_LRUCACHE_H
-#define IECOREPREVIEW_LRUCACHE_H
+#pragma once
+
+#include "IECore/Canceller.h"
 
 #include "boost/function.hpp"
 #include "boost/noncopyable.hpp"
 #include "boost/variant.hpp"
+
+#include <optional>
 
 namespace IECorePreview
 {
@@ -95,27 +98,32 @@ class LRUCache : private boost::noncopyable
 {
 	public:
 
-		typedef size_t Cost;
-		typedef Key KeyType;
+		using Cost = size_t;
+		using KeyType = Key;
 
 		/// The GetterFunction is responsible for computing the value and cost for a cache entry
 		/// when given the key. It should throw a descriptive exception if it can't get the data for
-		/// any reason.
-		typedef boost::function<Value ( const GetterKey &key, Cost &cost )> GetterFunction;
+		/// any reason. Cancellation support requires that `IECore::Canceller::check( canceller )`
+		/// is called periodically.
+		using GetterFunction = boost::function<Value ( const GetterKey &key, Cost &cost, const IECore::Canceller *canceller )>;
 		/// The optional RemovalCallback is called whenever an item is discarded from the cache.
-		typedef boost::function<void ( const Key &key, const Value &data )> RemovalCallback;
+		using RemovalCallback = boost::function<void ( const Key &key, const Value &data )>;
 
-		LRUCache( GetterFunction getter );
-		LRUCache( GetterFunction getter, Cost maxCost );
-		LRUCache( GetterFunction getter, RemovalCallback removalCallback, Cost maxCost );
+		LRUCache( GetterFunction getter, Cost maxCost, RemovalCallback removalCallback = RemovalCallback(), bool cacheErrors = true );
 		virtual ~LRUCache();
 
 		/// Retrieves an item from the cache, computing it if necessary.
 		/// The item is returned by value, as it may be removed from the
 		/// cache at any time by operations on another thread, or may not
 		/// even be stored in the cache if it exceeds the maximum cost.
-		/// Throws if the item can not be computed.
-		Value get( const GetterKey &key );
+		/// Throws if the item can not be computed. Throws `IECore::Cancelled`
+		/// if the operation was successfully cancelled via the `canceller`
+		/// argument.
+		Value get( const GetterKey &key, const IECore::Canceller *canceller = nullptr );
+
+		/// Retrieves an item from the cache if it has been computed or set
+		/// previously. Throws if a previous call to `get()` failed.
+		std::optional<Value> getIfCached( const Key &key );
 
 		/// Adds an item to the cache directly, bypassing the GetterFunction.
 		/// Returns true for success and false on failure - failure can occur
@@ -123,6 +131,13 @@ class LRUCache : private boost::noncopyable
 		/// when true is returned, the item may be removed from the cache by a
 		/// subsequent (or concurrent) operation.
 		bool set( const Key &key, const Value &value, Cost cost );
+		/// As above, but only if the item is not cached already. This avoids
+		/// calling a potentially expensive cost function in the case that the
+		/// item is cached already.
+		/// \todo Ideally we wouldn't need the cost calculation to be duplicated
+		/// between CostFunction and GetterFunction.
+		template<typename CostFunction>
+		bool setIfUncached( const Key &key, const Value &value, CostFunction &&costFunction );
 
 		/// Returns true if the object is in the cache. Note that the
 		/// return value may be invalidated immediately by operations performed
@@ -178,8 +193,8 @@ class LRUCache : private boost::noncopyable
 			//
 			// - Uncached : A boost::blank instance
 			// - Cached : The Value itself
-			// - Failed ; The exception thrown by the GetterFn
-			typedef boost::variant<boost::blank, Value, std::exception_ptr> State;
+			// - Failed : The exception thrown by the GetterFn
+			using State = boost::variant<boost::blank, Value, std::exception_ptr>;
 
 			State state;
 			Cost cost; // the cost for this item
@@ -193,6 +208,7 @@ class LRUCache : private boost::noncopyable
 		Policy<LRUCache> m_policy;
 
 		Cost m_maxCost;
+		bool m_cacheErrors;
 
 		// Methods
 		// =======
@@ -209,12 +225,8 @@ class LRUCache : private boost::noncopyable
 		// at or below the specified limit.
 		void limitCost( Cost cost );
 
-		static void nullRemovalCallback( const Key &key, const Value &value );
-
 };
 
 } // namespace IECorePreview
 
 #include "Gaffer/Private/IECorePreview/LRUCache.inl"
-
-#endif // IECOREPREVIEW_LRUCACHE_H

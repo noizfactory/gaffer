@@ -34,8 +34,7 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
-#ifndef GAFFERUIMODULE_CONNECTIONCREATORBINDING_H
-#define GAFFERUIMODULE_CONNECTIONCREATORBINDING_H
+#pragma once
 
 #include "GafferUIBindings/GadgetBinding.h"
 
@@ -83,7 +82,7 @@ class ConnectionCreatorWrapper : public GafferUIBindings::GadgetWrapper<WrappedT
 					{
 						return f( Gaffer::PlugPtr( const_cast<Gaffer::Plug *>( endpoint ) ) );
 					}
-					catch( const boost::python::error_already_set &e )
+					catch( const boost::python::error_already_set & )
 					{
 						IECorePython::ExceptionAlgo::translatePythonException();
 					}
@@ -105,14 +104,14 @@ class ConnectionCreatorWrapper : public GafferUIBindings::GadgetWrapper<WrappedT
 						f( position, tangent );
 						return;
 					}
-					catch( const boost::python::error_already_set &e )
+					catch( const boost::python::error_already_set & )
 					{
 						IECorePython::ExceptionAlgo::translatePythonException();
 					}
 				}
 			}
 
-			if( &WrappedType::updateDragEndPoint != &GafferUI::ConnectionCreator::updateDragEndPoint )
+			if constexpr ( !std::is_same_v<decltype( &WrappedType::updateDragEndPoint ), decltype( &GafferUI::ConnectionCreator::updateDragEndPoint )> )
 			{
 				// No need to force PlugAdder derived classes to reimplement this.
 				WrappedType::updateDragEndPoint( position, tangent );
@@ -136,7 +135,7 @@ class ConnectionCreatorWrapper : public GafferUIBindings::GadgetWrapper<WrappedT
 						f( Gaffer::PlugPtr( const_cast<Gaffer::Plug *>( endpoint ) ) );
 						return;
 					}
-					catch( const boost::python::error_already_set &e )
+					catch( const boost::python::error_already_set & )
 					{
 						IECorePython::ExceptionAlgo::translatePythonException();
 					}
@@ -150,5 +149,3 @@ class ConnectionCreatorWrapper : public GafferUIBindings::GadgetWrapper<WrappedT
 } // namespace GafferUIModule
 
 #include "ConnectionCreatorBinding.inl"
-
-#endif // GAFFERUIMODULE_CONNECTIONCREATORBINDING_H
